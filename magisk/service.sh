@@ -67,6 +67,9 @@ EOF
       "http://127.0.0.1:${PORT:-18080}" >> "$LOG" 2>&1
   fi
 
+  # The zip does not preserve the exec bit; ensure the binary is runnable.
+  [ -f "$BIN" ] && chmod 0755 "$BIN"
+
   # Watchdog: restart the daemon if it dies. Backoff avoids a tight crash loop.
   while true; do
     if [ -x "$BIN" ]; then

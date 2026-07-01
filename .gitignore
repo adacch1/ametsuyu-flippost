@@ -28,3 +28,6 @@ local.properties
 # OS / editor
 .DS_Store
 *.swp
+
+# built daemon binary shipped in module (build via tools/build-daemon.sh)
+magisk/daemon/zflip5-modemd

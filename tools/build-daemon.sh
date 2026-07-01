@@ -9,6 +9,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 OUT="$ROOT/dist/zflip5-modemd"
 [ "${1:-}" = "--out" ] && OUT="$2"
+# Resolve OUT to absolute BEFORE cd (relative paths would land under daemon/).
+case "$OUT" in /*) : ;; *) OUT="$PWD/$OUT" ;; esac
 
 cd "$ROOT/daemon"
 go test ./...
