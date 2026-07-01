@@ -62,6 +62,17 @@ failures=0
     fi
   done
 
+  echo "=== GO DAEMON UNIT TESTS ==="
+  if command -v go >/dev/null 2>&1 && [ -f "$ROOT/daemon/go.mod" ]; then
+    if ( cd "$ROOT/daemon" && go test ./... ) >/dev/null 2>&1; then
+      echo "PASS go test daemon"; passes=$((passes + 1))
+    else
+      echo "FAIL go test daemon"; failures=$((failures + 1))
+    fi
+  else
+    echo "SKIP go test daemon (go toolchain absent)"
+  fi
+
   echo "=== CONTRACTS ==="
   if python3 "$ROOT/tools/validate-contracts.py" --schemas "$ROOT/schemas" --docs "$ROOT/docs" >/dev/null 2>&1; then
     echo "PASS validate-contracts"; passes=$((passes + 1))
