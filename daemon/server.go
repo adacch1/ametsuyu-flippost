@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -176,9 +177,29 @@ func (s *Server) handleSMSRecent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "sms disabled")
 		return
 	}
-	// Pull-only, redacted-by-default. Body reading is Todo 10; this proves the
-	// scope boundary and never forwards.
-	writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "redacted": true, "path": "iphone-tailscale"})
+	limit := 5
+	if q := r.URL.Query().Get("limit"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 || n > smsMaxLimit {
+			writeErr(w, http.StatusBadRequest, "limit out of range (1.."+itoa(smsMaxLimit)+")")
+			return
+		}
+		limit = n
+	}
+	// Audit every read (never logs bodies).
+	log.Printf("audit: sms.recent limit=%d path=%s", limit, s.cfg.SMS.Path)
+	msgs, err := recentSMS(limit)
+	if err != nil {
+		// Fail safe: no permission / no provider -> empty, actionable, no crash.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"messages": []SMSMessage{}, "redacted": true, "available": false,
+			"reason": "sms provider unavailable or READ_SMS not granted", "path": s.cfg.SMS.Path,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"messages": msgs, "redacted": true, "available": true, "path": s.cfg.SMS.Path,
+	})
 }
 
 func (s *Server) handleTether(w http.ResponseWriter, r *http.Request) {
