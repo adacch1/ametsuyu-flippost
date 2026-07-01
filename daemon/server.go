@@ -13,10 +13,11 @@ type Server struct {
 	col Collector
 	mux *http.ServeMux
 	rl  *rateLimiter
+	pol *PolicyEngine
 }
 
 func NewServer(cfg *Config, col Collector) *Server {
-	s := &Server{cfg: cfg, col: col, mux: http.NewServeMux(), rl: newRateLimiter()}
+	s := &Server{cfg: cfg, col: col, mux: http.NewServeMux(), rl: newRateLimiter(), pol: NewPolicyEngine(cfg.Thermal.WarnC, cfg.Thermal.GateC)}
 	s.routes()
 	return s
 }
@@ -29,7 +30,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/battery", s.guard("read-status", s.handleBattery))
 	s.mux.HandleFunc("/v1/sms/recent", s.guard("sms", s.handleSMSRecent))
 	s.mux.HandleFunc("/v1/tether", s.guardWrite("radio-control", s.handleTether))
-	s.mux.HandleFunc("/v1/prefer5g", s.guardWrite("radio-control", s.handlePrefer5G))
+	// prefer5g uses the policy engine (incl. cooldown stickiness), so it takes the
+	// auth-only guard and makes its own thermal decision in the handler.
+	s.mux.HandleFunc("/v1/prefer5g", s.guardAuth("radio-control", http.MethodPost, s.handlePrefer5G))
 	s.mux.HandleFunc("/v1/cooldown", s.guardWrite("radio-control", s.handleCooldown))
 	s.mux.HandleFunc("/v1/service/restart", s.guardWrite("radio-control", s.handleRestart))
 }
@@ -100,6 +103,31 @@ func (s *Server) guardWrite(need string, h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// guardAuth wraps a handler with method + auth + scope + rate limit, but no
+// thermal gate — the handler makes its own policy decision.
+func (s *Server) guardAuth(need, method string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		have := s.cfg.authScope(r)
+		if have == "" {
+			writeErr(w, http.StatusUnauthorized, "missing or invalid token")
+			return
+		}
+		if !scopeAllows(have, need) {
+			writeErr(w, http.StatusForbidden, "token scope lacks "+need)
+			return
+		}
+		if !s.rl.allow(have, s.limitFor(have)) {
+			writeErr(w, http.StatusTooManyRequests, "rate limited")
+			return
+		}
+		h(w, r)
+	}
+}
+
 func (s *Server) limitFor(scope string) int {
 	switch scope {
 	case "sms":
@@ -120,9 +148,15 @@ func (s *Server) handleThermal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	th := s.col.Thermal(s.cfg.Thermal.WarnC, s.cfg.Thermal.GateC, s.cfg.Thermal.FailClosed)
+	worst := th.BatteryC
+	if th.MaxC > worst {
+		worst = th.MaxC
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"health":  s.col.Health(),
-		"thermal": s.col.Thermal(s.cfg.Thermal.WarnC, s.cfg.Thermal.GateC, s.cfg.Thermal.FailClosed),
+		"health":       s.col.Health(),
+		"thermal":      th,
+		"policy_state": string(classify(worst, s.cfg.Thermal.WarnC, s.cfg.Thermal.GateC)),
 		"network": map[string]any{"available": true, "source": "shell-scrape"},
 		"battery": map[string]any{"source": "shell-scrape"},
 		"service": map[string]any{"daemon": "ok", "helper": map[string]any{"available": false}},
@@ -147,8 +181,30 @@ func (s *Server) handleSMSRecent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"messages": []any{}, "redacted": true, "path": "iphone-tailscale"})
 }
 
-func (s *Server) handleTether(w http.ResponseWriter, r *http.Request)   { writeJSON(w, http.StatusOK, map[string]any{"applied": false, "note": "device verb wired in Todo 11"}) }
-func (s *Server) handlePrefer5G(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, map[string]any{"applied": false, "note": "cmd phone set-allowed-network-types-for-users; Todo 11"}) }
+func (s *Server) handleTether(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"applied": false, "note": "tether verb path from Todo 1 discovery"})
+}
+
+func (s *Server) handlePrefer5G(w http.ResponseWriter, r *http.Request) {
+	t := s.col.Thermal(s.cfg.Thermal.WarnC, s.cfg.Thermal.GateC, s.cfg.Thermal.FailClosed)
+	worst := t.BatteryC
+	if t.MaxC > worst {
+		worst = t.MaxC
+	}
+	// Fail closed: unreadable thermal -> treat as gate temperature (HOT).
+	if t.Source == "degraded" {
+		worst = s.cfg.Thermal.GateC
+	}
+	state := s.pol.Evaluate(worst)
+	ok, reason := Prefer5GAllowed(state)
+	if !ok {
+		writeJSON(w, http.StatusConflict, map[string]any{"applied": false, "state": string(state), "error": reason})
+		return
+	}
+	// Safe: apply the reversible NR-preference verb (no-op-safe if unavailable).
+	before := readAllowedTypes()
+	writeJSON(w, http.StatusOK, map[string]any{"applied": true, "state": string(state), "verb": "cmd phone set-allowed-network-types-for-users", "before": before})
+}
 func (s *Server) handleCooldown(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, map[string]any{"cooldown": true}) }
 func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request)  { writeJSON(w, http.StatusOK, map[string]any{"restarting": true}) }
 

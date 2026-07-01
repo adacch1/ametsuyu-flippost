@@ -73,6 +73,17 @@ failures=0
     echo "SKIP go test daemon (go toolchain absent)"
   fi
 
+  echo "=== 5G THERMAL POLICY ==="
+  if command -v go >/dev/null 2>&1; then
+    if bash "$ROOT/tools/test-5g-policy.sh" >/dev/null 2>&1 && THERMAL_STATUS=severe BATTERY_TEMP_C=45 bash "$ROOT/tools/test-5g-policy.sh" >/dev/null 2>&1; then
+      echo "PASS 5g policy (safe applies, severe denied)"; passes=$((passes + 1))
+    else
+      echo "FAIL 5g policy"; failures=$((failures + 1))
+    fi
+  else
+    echo "SKIP 5g policy (go absent)"
+  fi
+
   echo "=== DISCORD RELAY ==="
   if command -v node >/dev/null 2>&1 && [ -f "$ROOT/relay/relay.test.js" ]; then
     if bash "$ROOT/tools/test-discord-relay.sh" >/dev/null 2>&1; then
