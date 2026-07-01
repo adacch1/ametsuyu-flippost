@@ -1,0 +1,195 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "zflip5-modem-module local API",
+    "version": "1.0.0",
+    "description": "Local-only, loopback-bound, bearer-authenticated control API for a rooted Z Flip 5 used as a modem. Sensitive replies are owner-only. SMS is pull-only, redacted by default, and reachable only over the iPhone/Tailscale path (never a Discord relay). Radio and tether writes are discovery-gated and thermal-gated: 'prefer 5G' means safe prefer/recover NR, never any bypass of thermal mitigation."
+  },
+  "servers": [
+    { "url": "http://127.0.0.1:18080", "description": "loopback default (api-front)" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Scoped bearer token. Scopes: read-status, sms, radio-control. Tokens are >=256-bit, 0600 under /data/adb, independently revocable."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error", "code"],
+        "additionalProperties": false,
+        "properties": {
+          "error": { "type": "string" },
+          "code": { "type": "integer" },
+          "detail": { "type": "string" }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "description": "Device host resources (CPU/RAM/temp). Keys mirror tools/collect-metrics.sh.",
+        "required": ["cpu_load1", "cpu_cores", "mem_used_pct", "temp_battery_c", "temp_max_c"],
+        "additionalProperties": false,
+        "properties": {
+          "cpu_load1": { "type": "number" },
+          "cpu_load5": { "type": "number" },
+          "cpu_load15": { "type": "number" },
+          "cpu_cores": { "type": "integer", "minimum": 1 },
+          "mem_total_kb": { "type": "integer", "minimum": 0 },
+          "mem_available_kb": { "type": "integer", "minimum": 0 },
+          "mem_used_pct": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "temp_battery_c": { "type": "number" },
+          "temp_max_c": { "type": "number" },
+          "temp_max_zone": { "type": "string" }
+        }
+      },
+      "Thermal": {
+        "type": "object",
+        "required": ["battery_c", "warn_c", "safe", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "android_status": { "type": ["string", "null"], "description": "getCurrentThermalStatus(); advisory only, often NONE on Samsung." },
+          "battery_c": { "type": "number" },
+          "zones": { "type": "object", "additionalProperties": { "type": "number" } },
+          "warn_c": { "type": "number", "const": 44 },
+          "gate_c": { "type": "number" },
+          "safe": { "type": "boolean", "description": "PRIMARY gate: battery temp + /sys/class/thermal. Fails closed." },
+          "source": { "type": "string", "enum": ["sysfs+battery", "android", "degraded"] }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "required": ["network", "battery", "thermal", "health", "service"],
+        "properties": {
+          "network": { "type": "object" },
+          "battery": { "type": "object" },
+          "thermal": { "$ref": "#/components/schemas/Thermal" },
+          "health": { "$ref": "#/components/schemas/Health" },
+          "service": {
+            "type": "object",
+            "required": ["daemon", "helper"],
+            "properties": {
+              "daemon": { "type": "string" },
+              "helper": { "type": "object", "required": ["available"], "properties": { "available": { "type": "boolean" } } }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": { "description": "missing/invalid token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Forbidden": { "description": "token lacks the required scope, or non-owner", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "TooManyRequests": { "description": "rate limited", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    }
+  },
+  "security": [ { "bearerAuth": [] } ],
+  "paths": {
+    "/v1/status": {
+      "get": {
+        "summary": "Full modem + device-host summary",
+        "security": [ { "bearerAuth": ["read-status"] } ],
+        "responses": {
+          "200": { "description": "ok", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Status" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/v1/health": {
+      "get": {
+        "summary": "Device host CPU/RAM/temperature",
+        "security": [ { "bearerAuth": ["read-status"] } ],
+        "responses": {
+          "200": { "description": "ok", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/v1/network": {
+      "get": {
+        "summary": "Detailed cellular service state (no IMEI/IMSI)",
+        "security": [ { "bearerAuth": ["read-status"] } ],
+        "responses": { "200": { "description": "ok" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/thermal": {
+      "get": {
+        "summary": "Thermal gate state (sysfs+battery primary)",
+        "security": [ { "bearerAuth": ["read-status"] } ],
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Thermal" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/battery": {
+      "get": {
+        "summary": "Battery level/temp/plugged/health",
+        "security": [ { "bearerAuth": ["read-status"] } ],
+        "responses": { "200": { "description": "ok" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/sms/recent": {
+      "get": {
+        "summary": "Recent SMS (pull-only, redacted, owner-only, iPhone/Tailscale path only)",
+        "description": "Requires the sms scope. Never exposed to the Discord relay. Redaction fails closed; an out-of-band read alert is emitted.",
+        "security": [ { "bearerAuth": ["sms"] } ],
+        "responses": {
+          "200": { "description": "redacted list" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "429": { "$ref": "#/components/responses/TooManyRequests" }
+        }
+      }
+    },
+    "/v1/tether": {
+      "post": {
+        "summary": "Tether on|off|status (discovery-gated, thermal-gated write)",
+        "security": [ { "bearerAuth": ["radio-control"] } ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["state"], "additionalProperties": false,
+            "properties": { "state": { "type": "string", "enum": ["on", "off", "status"] } }
+          } } }
+        },
+        "responses": {
+          "200": { "description": "applied or current state" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "description": "refused: thermal gate not safe", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/v1/prefer5g": {
+      "post": {
+        "summary": "Safe prefer/recover NR (thermal-gated). NOT a force; never any bypass of thermal mitigation.",
+        "security": [ { "bearerAuth": ["radio-control"] } ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object", "required": ["enable"], "additionalProperties": false,
+            "properties": { "enable": { "type": "boolean" } }
+          } } }
+        },
+        "responses": {
+          "200": { "description": "preference applied via cmd phone set-allowed-network-types-for-users" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "description": "refused: unsafe thermal state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/v1/cooldown": {
+      "post": {
+        "summary": "Suspend heavy control until thermal safe; optionally drop tether/5G preference",
+        "security": [ { "bearerAuth": ["radio-control"] } ],
+        "responses": { "200": { "description": "cooldown engaged" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/v1/service/restart": {
+      "post": {
+        "summary": "Restart module daemon/helper only (never the phone)",
+        "security": [ { "bearerAuth": ["radio-control"] } ],
+        "responses": { "200": { "description": "restarting" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    }
+  }
+}

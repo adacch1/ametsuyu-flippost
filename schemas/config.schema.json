@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/zflip5-modem-module/config.schema.json",
+  "title": "zflip5-modem-module daemon config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["bind_host", "bind_port", "tokens", "ingress", "thermal", "sms", "rate_limits"],
+  "properties": {
+    "bind_host": {
+      "type": "string",
+      "default": "127.0.0.1",
+      "description": "api-front listen address. Loopback-only unless ingress.mode enables a private tunnel. The pattern rejects any all-interfaces / public bind.",
+      "pattern": "^(127\\.0\\.0\\.1|::1|localhost)$"
+    },
+    "bind_port": { "type": "integer", "minimum": 1024, "maximum": 65535, "default": 18080 },
+    "tokens": {
+      "type": "object",
+      "description": "Scoped, independently revocable bearer tokens (>=256-bit -> >=64 hex chars). Generated at first boot, 0600 under /data/adb.",
+      "additionalProperties": false,
+      "required": ["read-status"],
+      "properties": {
+        "read-status": { "$ref": "#/$defs/token" },
+        "sms": { "$ref": "#/$defs/token" },
+        "radio-control": { "$ref": "#/$defs/token" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["loopback", "tailscale"],
+          "default": "loopback",
+          "description": "loopback = local only. tailscale = userspace tailscaled + tailscale serve for the iPhone path; a separate public relay (holding no sms token) handles Discord."
+        },
+        "relay": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Public Discord relay. MUST NOT be granted the sms scope.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "owner_user_ids": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+            "ed25519_replay_window_s": { "type": "integer", "maximum": 5, "default": 5 }
+          }
+        }
+      }
+    },
+    "thermal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["warn_c", "gate_c", "fail_closed"],
+      "properties": {
+        "warn_c": { "type": "number", "const": 44 },
+        "gate_c": { "type": "number", "description": "Above this (battery temp or hottest sysfs zone) radio/tether writes are refused." },
+        "fail_closed": { "type": "boolean", "const": true, "description": "If thermal cannot be read, treat as unsafe. PRIMARY source is battery temp + /sys/class/thermal; Android status is advisory." }
+      }
+    },
+    "sms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "redact_default", "forward"],
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "redact_default": { "type": "boolean", "const": true, "description": "Bodies redacted by default; full body is a separate off-by-default endpoint with its own credential + per-request confirm." },
+        "forward": { "type": "boolean", "const": false, "description": "No default forwarding of messages to any channel." },
+        "path": { "type": "string", "enum": ["iphone-tailscale"], "default": "iphone-tailscale", "description": "SMS never traverses the Discord relay." }
+      }
+    },
+    "rate_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default_per_min"],
+      "properties": {
+        "default_per_min": { "type": "integer", "minimum": 1, "default": 30 },
+        "sms_per_min": { "type": "integer", "minimum": 1, "default": 3 },
+        "radio_per_min": { "type": "integer", "minimum": 1, "default": 6 }
+      }
+    }
+  },
+  "$defs": {
+    "token": { "type": "string", "pattern": "^[0-9a-fA-F]{64,}$", "description": ">=256-bit hex secret" }
+  }
+}

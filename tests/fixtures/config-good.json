@@ -1,0 +1,13 @@
+{
+  "bind_host": "127.0.0.1",
+  "bind_port": 18080,
+  "tokens": {
+    "read-status": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sms": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "radio-control": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "ingress": { "mode": "loopback" },
+  "thermal": { "warn_c": 44, "gate_c": 46, "fail_closed": true },
+  "sms": { "enabled": true, "redact_default": true, "forward": false, "path": "iphone-tailscale" },
+  "rate_limits": { "default_per_min": 30, "sms_per_min": 3, "radio_per_min": 6 }
+}

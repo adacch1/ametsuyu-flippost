@@ -1,0 +1,9 @@
+{
+  "bind_host": "0.0.0.0",
+  "bind_port": 18080,
+  "tokens": {},
+  "ingress": { "mode": "loopback" },
+  "thermal": { "warn_c": 44, "gate_c": 46, "fail_closed": true },
+  "sms": { "enabled": true, "redact_default": true, "forward": false },
+  "rate_limits": { "default_per_min": 30 }
+}
