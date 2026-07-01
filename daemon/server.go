@@ -9,16 +9,22 @@ import (
 	"time"
 )
 
+// usagePath is where the data-usage buckets persist; main points it at the
+// config dir. Tests override it to a temp file.
+var usagePath = "/data/adb/zflip5-modem/usage.json"
+
 type Server struct {
-	cfg *Config
-	col Collector
-	mux *http.ServeMux
-	rl  *rateLimiter
-	pol *PolicyEngine
+	cfg   *Config
+	col   Collector
+	mux   *http.ServeMux
+	rl    *rateLimiter
+	pol   *PolicyEngine
+	usage *UsageTracker
 }
 
 func NewServer(cfg *Config, col Collector) *Server {
-	s := &Server{cfg: cfg, col: col, mux: http.NewServeMux(), rl: newRateLimiter(), pol: NewPolicyEngine(cfg.Thermal.WarnC, cfg.Thermal.GateC)}
+	s := &Server{cfg: cfg, col: col, mux: http.NewServeMux(), rl: newRateLimiter(),
+		pol: NewPolicyEngine(cfg.Thermal.WarnC, cfg.Thermal.GateC), usage: NewUsageTracker(usagePath)}
 	s.routes()
 	return s
 }
@@ -29,6 +35,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/thermal", s.guard("read-status", s.handleThermal))
 	s.mux.HandleFunc("/v1/network", s.guard("read-status", s.handleNetwork))
 	s.mux.HandleFunc("/v1/battery", s.guard("read-status", s.handleBattery))
+	s.mux.HandleFunc("/v1/usage", s.guard("read-status", s.handleUsage))
+	// Dashboard HTML (no data without a token; the page fetches /v1/* itself).
+	s.mux.HandleFunc("/", s.handleDashboard)
+	s.mux.HandleFunc("/dashboard", s.handleDashboard)
 	s.mux.HandleFunc("/v1/sms/recent", s.guard("sms", s.handleSMSRecent))
 	s.mux.HandleFunc("/v1/tether", s.guardWrite("radio-control", s.handleTether))
 	// prefer5g uses the policy engine (incl. cooldown stickiness), so it takes the
@@ -266,6 +276,13 @@ func (rl *rateLimiter) allow(key string, perMin int) bool {
 }
 
 func (s *Server) ListenAndServe() error {
+	// Background data-usage sampler so day/week/month accrue even without hits.
+	go func() {
+		for {
+			time.Sleep(60 * time.Second)
+			s.usage.Sample()
+		}
+	}()
 	addr := s.cfg.BindHost + ":" + itoa(s.cfg.BindPort)
 	log.Printf("zflip5-modemd listening on %s (loopback)", addr)
 	srv := &http.Server{Addr: addr, Handler: s, ReadHeaderTimeout: 5 * time.Second}
