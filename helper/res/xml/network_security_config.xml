@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext HTTP is permitted ONLY for the loopback daemon; every other host
+     stays HTTPS-only (the Tailscale dashboard URL is https). The kiosk loads
+     http://127.0.0.1:18080 and never contacts anything else. -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

@@ -4,7 +4,8 @@
     android:versionCode="1" android:versionName="0.1.0">
     <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="34" />
     <uses-permission android:name="android.permission.INTERNET" />
-    <application android:label="Z Flip 5 Modem" android:allowBackup="false">
+    <application android:label="Z Flip 5 Modem" android:allowBackup="false"
+        android:networkSecurityConfig="@xml/network_security_config">
         <activity android:name=".CoverKioskActivity" android:exported="true"
             android:label="Z Flip 5 Modem"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">

@@ -14,9 +14,10 @@ JC="$JAVA_HOME/bin/javac"
 OUT="$ROOT/dist/zflip5-kiosk.apk"
 W="$(mktemp -d)"
 
-# 1. link resources (none) + manifest -> base APK with compiled manifest
+# 1. compile resources (network security config) then link + manifest -> base APK
+"$BT/aapt2" compile --dir "$HERE/res" -o "$W/res.zip"
 "$BT/aapt2" link -I "$PLAT" --manifest "$HERE/AndroidManifest.xml" \
-  --min-sdk-version 33 --target-sdk-version 34 -o "$W/base.apk"
+  --min-sdk-version 33 --target-sdk-version 34 -o "$W/base.apk" "$W/res.zip"
 
 # 2. compile Java -> 3. dex
 mkdir -p "$W/classes"
