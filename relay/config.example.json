@@ -1,0 +1,10 @@
+{
+  "discord_public_key": "REPLACE_WITH_DISCORD_APP_ED25519_PUBLIC_KEY_HEX",
+  "owner_user_ids": ["REPLACE_WITH_YOUR_DISCORD_USER_ID"],
+  "replay_window_s": 5,
+  "daemon_base_url": "http://127.0.0.1:18080",
+  "daemon_tokens": {
+    "read-status": "REPLACE_WITH_READ_STATUS_TOKEN",
+    "radio-control": "REPLACE_WITH_RADIO_CONTROL_TOKEN"
+  }
+}

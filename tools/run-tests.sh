@@ -73,6 +73,17 @@ failures=0
     echo "SKIP go test daemon (go toolchain absent)"
   fi
 
+  echo "=== DISCORD RELAY ==="
+  if command -v node >/dev/null 2>&1 && [ -f "$ROOT/relay/relay.test.js" ]; then
+    if bash "$ROOT/tools/test-discord-relay.sh" >/dev/null 2>&1; then
+      echo "PASS discord relay"; passes=$((passes + 1))
+    else
+      echo "FAIL discord relay"; failures=$((failures + 1))
+    fi
+  else
+    echo "SKIP discord relay (node absent)"
+  fi
+
   echo "=== CONTRACTS ==="
   if python3 "$ROOT/tools/validate-contracts.py" --schemas "$ROOT/schemas" --docs "$ROOT/docs" >/dev/null 2>&1; then
     echo "PASS validate-contracts"; passes=$((passes + 1))
