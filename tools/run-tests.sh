@@ -102,6 +102,13 @@ failures=0
     echo "FAIL validate-contracts"; failures=$((failures + 1))
   fi
 
+  echo "=== SECURITY CHECK ==="
+  if bash "$ROOT/tools/security-check.sh" >/dev/null 2>&1; then
+    echo "PASS security-check"; passes=$((passes + 1))
+  else
+    echo "FAIL security-check"; failures=$((failures + 1))
+  fi
+
   echo "=== SKIPPED (device acceptance — real hardware) ==="
   echo "$DEVICE_TESTS" | sed '/^$/d;s/^/SKIP /'
 
