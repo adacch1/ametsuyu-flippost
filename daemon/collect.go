@@ -85,11 +85,20 @@ func (deviceCollector) Health() Health {
 	return h
 }
 
+// thermalRoot is the sysfs thermal path; overridable for host-side tests via
+// ZF5_THERMAL_ROOT. In production it is always the real /sys/class/thermal.
+func thermalRoot() string {
+	if r := os.Getenv("ZF5_THERMAL_ROOT"); r != "" {
+		return r
+	}
+	return "/sys/class/thermal"
+}
+
 // readThermalZones returns (batteryC, hottestC, hottestZone) from sysfs milli-C.
 func readThermalZones() (float64, float64, string) {
 	var bat, max float64
 	var zone string
-	zones, _ := filepath.Glob("/sys/class/thermal/thermal_zone*")
+	zones, _ := filepath.Glob(filepath.Join(thermalRoot(), "thermal_zone*"))
 	for _, z := range zones {
 		tb, err := os.ReadFile(filepath.Join(z, "temp"))
 		if err != nil {
