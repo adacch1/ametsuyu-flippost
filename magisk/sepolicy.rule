@@ -1,0 +1,7 @@
+# sepolicy.rule — intentionally EMPTY at v0.1.
+#
+# Policy is added here ONLY when a real on-device `avc: denied` proves the daemon
+# needs it, and each rule is scoped to the daemon domain — never a broad
+# permissive mode and never untrusted_app-scoped. Todo 1 ran the daemon context
+# discovery as read-only; any required rule lands here with the denial that
+# justified it recorded in docs/.
