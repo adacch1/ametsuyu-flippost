@@ -1,0 +1,30 @@
+# Secrets — never commit
+*.token
+*.secret
+*.key
+*.pem
+secrets/
+config.local.*
+**/config.local.*
+
+# Build artifacts
+dist/
+build/
+*.zip
+*.apk
+*.aab
+*.idsig
+
+# Android / Gradle
+.gradle/
+local.properties
+
+# Evidence can contain SMS metadata, IMEI/IMSI/ICCID/MSISDN, and tokens.
+# Ignore the whole dir by default; commit vetted, redacted evidence explicitly
+# with `git add -f <file>` after a secret-pattern scan passes.
+.omo/evidence/*
+!.omo/evidence/.gitkeep
+
+# OS / editor
+.DS_Store
+*.swp
