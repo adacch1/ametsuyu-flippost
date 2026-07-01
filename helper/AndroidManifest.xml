@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.zflip5.modem"
+    android:versionCode="1" android:versionName="0.1.0">
+    <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="34" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="Z Flip 5 Modem" android:allowBackup="false">
+        <activity android:name=".CoverKioskActivity" android:exported="true"
+            android:label="Z Flip 5 Modem"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
