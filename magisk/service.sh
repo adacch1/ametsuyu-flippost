@@ -44,6 +44,29 @@ EOF
     chmod 600 "$CONFIG"
   fi
 
+  # Private ingress: when ingress.mode == "tailscale", bring up userspace
+  # tailscaled (no TUN needed) and expose ONLY the loopback daemon port over the
+  # tailnet via `tailscale serve`. Requires the arm64 tailscaled/tailscale
+  # binaries under $MODDIR/tailscale and a one-time auth key (see docs/tailscale.md).
+  # Loopback mode (default) skips this entirely — no public exposure either way.
+  MODE=$(grep -o '"mode"[^,}]*' "$CONFIG" | head -n1 | sed 's/.*"mode"[^"]*"\([^"]*\)".*/\1/')
+  if [ "$MODE" = "tailscale" ] && [ -x "$MODDIR/tailscale/tailscaled" ]; then
+    TS="$MODDIR/tailscale"
+    STATE="$DATADIR/tailscaled.state"
+    "$TS/tailscaled" --tun=userspace-networking --state="$STATE" \
+      --socket="$DATADIR/tailscaled.sock" >> "$LOG" 2>&1 &
+    sleep 3
+    # authkey file is 0600 and consumed once; never logged.
+    if [ -f "$DATADIR/tailscale.authkey" ]; then
+      "$TS/tailscale" --socket="$DATADIR/tailscaled.sock" up \
+        --authkey="$(cat "$DATADIR/tailscale.authkey")" --hostname=zflip5 >> "$LOG" 2>&1
+      rm -f "$DATADIR/tailscale.authkey"
+    fi
+    PORT=$(grep -o '"bind_port"[^,}]*' "$CONFIG" | grep -o '[0-9]\+')
+    "$TS/tailscale" --socket="$DATADIR/tailscaled.sock" serve --bg \
+      "http://127.0.0.1:${PORT:-18080}" >> "$LOG" 2>&1
+  fi
+
   # Watchdog: restart the daemon if it dies. Backoff avoids a tight crash loop.
   while true; do
     if [ -x "$BIN" ]; then
