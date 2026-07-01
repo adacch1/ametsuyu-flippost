@@ -31,3 +31,6 @@ local.properties
 
 # built daemon binary shipped in module (build via tools/build-daemon.sh)
 magisk/daemon/zflip5-modemd
+
+# built tether helper dex shipped in module (build via tools/build-tether.sh)
+magisk/tether/tether.jar

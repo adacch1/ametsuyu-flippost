@@ -36,6 +36,7 @@ BIN="$MODDIR/daemon/zflip5-modemd"
   "bind_port": 18080,
   "tokens": { "read-status": "$RS", "sms": "$SM", "radio-control": "$RC" },
   "ingress": { "mode": "loopback" },
+  "hotspot": { "enable_on_boot": true },
   "thermal": { "warn_c": 44, "gate_c": 46, "fail_closed": true },
   "sms": { "enabled": true, "redact_default": true, "forward": false, "path": "iphone-tailscale" },
   "rate_limits": { "default_per_min": 30, "sms_per_min": 3, "radio_per_min": 6 }
@@ -65,6 +66,27 @@ EOF
     PORT=$(grep -o '"bind_port"[^,}]*' "$CONFIG" | grep -o '[0-9]\+')
     "$TS/tailscale" --socket="$DATADIR/tailscaled.sock" serve --bg \
       "http://127.0.0.1:${PORT:-18080}" >> "$LOG" 2>&1
+  fi
+
+  # Hotspot on boot (owner request): enable the data-sharing Wi-Fi hotspot using
+  # the phone's SAVED SoftAP config (SSID/passphrase already set in Settings).
+  # The root tether helper runs through app_process and calls the framework
+  # TetheringManager; TETHERING_WIFI with no SoftApConfiguration reuses the
+  # stored config. Enabled unless config sets hotspot.enable_on_boot=false.
+  # This does NOT disable thermal mitigation — the phone still throttles when
+  # hot; per owner request it only skips our own extra gate. Non-fatal: failure
+  # is logged and boot continues. Retries while the Wi-Fi stack finishes booting.
+  HS=$(grep -o '"enable_on_boot"[^,}]*' "$CONFIG" | grep -o 'true\|false' | head -n1)
+  if [ "$HS" != "false" ] && [ -f "$MODDIR/tether/tether.jar" ]; then
+    n=0
+    while [ "$n" -lt 6 ]; do
+      OUT=$(CLASSPATH="$MODDIR/tether/tether.jar" app_process /system/bin com.zflip5.tether.TetherStart 2>&1)
+      echo "$(date): hotspot try $n: $(printf '%s' "$OUT" | tr '\n' ' ')" >> "$LOG"
+      case "$OUT" in
+        *RESULT=STARTED*|*code=5*) break ;;  # started, or already active
+      esac
+      n=$((n + 1)); sleep 10
+    done
   fi
 
   # The zip does not preserve the exec bit; ensure the binary is runnable.
