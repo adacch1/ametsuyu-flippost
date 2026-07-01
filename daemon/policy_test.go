@@ -82,3 +82,5 @@ func (hotCollector) Health() Health { return Health{} }
 func (hotCollector) Thermal(warnC, gateC float64, failClosed bool) Thermal {
 	return Thermal{BatteryC: 48, MaxC: 55, WarnC: warnC, GateC: gateC, Safe: false, Source: "sysfs+battery"}
 }
+func (hotCollector) Battery() Battery { return Battery{Available: false} }
+func (hotCollector) Network() Network { return Network{Available: false} }

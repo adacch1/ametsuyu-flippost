@@ -28,5 +28,5 @@ skips all of this.
 ## Verify no public exposure
 
 On the device: `su -c 'ss -ltn'` must show the daemon on `127.0.0.1` only — never
-`0.0.0.0`. `tools/security-check.sh --device` asserts this once the module is
-installed.
+a public / all-interfaces address. `tools/security-check.sh --device` asserts
+this once the module is installed.

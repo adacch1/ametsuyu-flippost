@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -31,12 +32,88 @@ type Thermal struct {
 	Source   string  `json:"source"`
 }
 
+type Battery struct {
+	Level     int     `json:"level"`
+	TempC     float64 `json:"temp_c"`
+	Plugged   string  `json:"plugged"`
+	Available bool    `json:"available"`
+}
+
+type Network struct {
+	Type      string `json:"type"`
+	Override  string `json:"override"`
+	NrState   string `json:"nr_state"`
+	Operator  string `json:"operator"`
+	Available bool   `json:"available"`
+}
+
 // Collector reads device host + thermal facts. Split behind an interface so the
 // HTTP/auth layer is unit-tested with a fake, no device required.
 type Collector interface {
 	Health() Health
 	// Thermal returns the gate state given the configured thresholds.
 	Thermal(warnC, gateC float64, failClosed bool) Thermal
+	Battery() Battery
+	Network() Network
+}
+
+var (
+	batLevelRe  = regexp.MustCompile(`(?m)^\s*level:\s*(\d+)`)
+	batTempRe   = regexp.MustCompile(`(?m)^\s*temperature:\s*(-?\d+)`)
+	batUsbRe    = regexp.MustCompile(`(?m)^\s*USB powered:\s*(true|false)`)
+	batAcRe     = regexp.MustCompile(`(?m)^\s*AC powered:\s*(true|false)`)
+	netDisplayRe = regexp.MustCompile(`network=([A-Za-z0-9_+]+),\s*overrideNetwork=([A-Za-z0-9_+]+)`)
+	nrStateRe   = regexp.MustCompile(`nrState=([A-Z_]+)`)
+	operatorRe  = regexp.MustCompile(`mOperatorAlphaLong=([^,}]+)`)
+)
+
+// parseBattery extracts level/temp/plugged from `dumpsys battery`. Android
+// reports temperature in deci-Celsius (337 -> 33.7).
+func parseBattery(raw string) Battery {
+	b := Battery{}
+	if m := batLevelRe.FindStringSubmatch(raw); m != nil {
+		b.Level, _ = strconv.Atoi(m[1])
+		b.Available = true
+	}
+	if m := batTempRe.FindStringSubmatch(raw); m != nil {
+		deci, _ := strconv.Atoi(m[1])
+		b.TempC = float64(deci) / 10.0
+	}
+	switch {
+	case batAcRe.FindStringSubmatch(raw) != nil && batAcRe.FindStringSubmatch(raw)[1] == "true":
+		b.Plugged = "ac"
+	case batUsbRe.FindStringSubmatch(raw) != nil && batUsbRe.FindStringSubmatch(raw)[1] == "true":
+		b.Plugged = "usb"
+	default:
+		b.Plugged = "unplugged"
+	}
+	return b
+}
+
+// parseNetwork extracts display type / NR state / operator from
+// `dumpsys telephony.registry`. Never claims 5G unless nrState/override says so.
+func parseNetwork(raw string) Network {
+	n := Network{}
+	if m := netDisplayRe.FindStringSubmatch(raw); m != nil {
+		n.Type = m[1]
+		n.Override = m[2]
+		n.Available = true
+	}
+	if m := nrStateRe.FindStringSubmatch(raw); m != nil {
+		n.NrState = m[1]
+	}
+	if m := operatorRe.FindStringSubmatch(raw); m != nil {
+		n.Operator = strings.TrimSpace(m[1])
+	}
+	return n
+}
+
+func (deviceCollector) Battery() Battery {
+	return parseBattery(runCmd("dumpsys", "battery"))
+}
+
+func (deviceCollector) Network() Network {
+	return parseNetwork(runCmd("dumpsys", "telephony.registry"))
 }
 
 // deviceCollector reads /proc and /sys directly (daemon runs on-device as root).

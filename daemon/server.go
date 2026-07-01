@@ -158,18 +158,18 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"health":       s.col.Health(),
 		"thermal":      th,
 		"policy_state": string(classify(worst, s.cfg.Thermal.WarnC, s.cfg.Thermal.GateC)),
-		"network": map[string]any{"available": true, "source": "shell-scrape"},
-		"battery": map[string]any{"source": "shell-scrape"},
-		"service": map[string]any{"daemon": "ok", "helper": map[string]any{"available": false}},
+		"network":      s.col.Network(),
+		"battery":      s.col.Battery(),
+		"service":      map[string]any{"daemon": "ok", "helper": map[string]any{"available": false}},
 	})
 }
 
 func (s *Server) handleNetwork(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "source": "shell-scrape"})
+	writeJSON(w, http.StatusOK, s.col.Network())
 }
 
 func (s *Server) handleBattery(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"source": "shell-scrape"})
+	writeJSON(w, http.StatusOK, s.col.Battery())
 }
 
 func (s *Server) handleSMSRecent(w http.ResponseWriter, r *http.Request) {
