@@ -1,0 +1,19 @@
+# Self-hosted ntfy config. Private by default: publishing/subscribing requires a
+# token (auth-default-access deny-all). The server itself is only reachable on
+# your tailnet. Set base-url to the host's tailnet address.
+#
+# After first `docker compose up -d`, create an access token (see README.md §ntfy):
+#   docker exec -it zf5-ntfy ntfy user add --role=admin zf5
+#   docker exec -it zf5-ntfy ntfy token add zf5
+# Put that token in bot/.env (NTFY_TOKEN) and in the phone alert path.
+
+base-url: "http://100.64.0.0:8080"   # <-- replace with THIS host's tailnet IP
+listen-http: ":80"
+
+cache-file: "/var/cache/ntfy/cache.db"
+cache-duration: "168h"
+auth-file: "/var/lib/ntfy/auth.db"
+auth-default-access: "deny-all"      # private; tokens grant access per topic
+
+attachment-cache-dir: "/var/cache/ntfy/attachments"
+behind-proxy: false

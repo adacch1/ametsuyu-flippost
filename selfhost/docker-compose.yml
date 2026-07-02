@@ -1,0 +1,41 @@
+# Self-hosted control + notification plane for the Z Flip 5 modem.
+#   ntfy  — private push-notification server (thermal / data-cap alerts)
+#   bot   — self-hosted Discord Gateway bot: /modem commands -> daemon,
+#           daemon alerts -> ntfy, ntfy -> Discord channel
+#
+# The host MUST be joined to the same tailnet as the phone (tailscale up), so the
+# bot can reach the phone's `tailscale serve` URL. See README.md.
+services:
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: zf5-ntfy
+    command: serve
+    volumes:
+      - ./ntfy/server.yml:/etc/ntfy/server.yml:ro
+      - ntfy-cache:/var/cache/ntfy
+      - ntfy-lib:/var/lib/ntfy
+    ports:
+      # Bind to loopback only; expose over the tailnet with `tailscale serve`
+      # rather than publishing on every host interface (0.0.0.0). This removes
+      # the LAN/public attack surface even before any host firewall.
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:80/v1/health | grep -q healthy || exit 1"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  bot:
+    build: ./bot
+    container_name: zf5-bot
+    env_file: ./bot/.env
+    depends_on: [ntfy]
+    # If the bridge-network container can't reach the phone's tailnet IP, switch
+    # to host networking (and point NTFY_URL at http://127.0.0.1:8080):
+    #   network_mode: host
+    restart: unless-stopped
+
+volumes:
+  ntfy-cache:
+  ntfy-lib:

@@ -1,0 +1,14 @@
+{
+  "name": "zf5-discord-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted Discord Gateway bot for the Z Flip 5 modem daemon",
+  "scripts": {
+    "register": "node register.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3"
+  }
+}
