@@ -1,9 +1,15 @@
-# Self-hosted control + notifications (ntfy + Discord bot)
+# Self-hosted control + notifications (ntfy + Telegram bot)
 
 A fully self-hosted plane for the Z Flip 5 modem: a private **ntfy** server for
-push notifications and a self-hosted **Discord Gateway bot** that drives the
-daemon and mirrors alerts. Nothing depends on a third-party cloud, and the phone
-daemon stays loopback-bound — the only path in is your tailnet.
+push notifications and a self-hosted **Telegram bot** that drives the daemon and
+sends alerts. Nothing depends on a third-party cloud, and the phone daemon stays
+loopback-bound — the only path in is your tailnet.
+
+> **Default bot is now Telegram** — see [docs/telegram-bot.md](../docs/telegram-bot.md).
+> The old Discord bot still ships under a compose profile (`--profile discord`);
+> the diagram below shows the Discord topology but Telegram is identical (swap
+> "Discord ⇄ Gateway" for "Telegram ⇄ long-poll", alerts also go to your chat).
+> Related: [docs/ntfy.md](../docs/ntfy.md) · [docs/scrcpy-remote.md](../docs/scrcpy-remote.md).
 
 ```
                          your server (on the tailnet)

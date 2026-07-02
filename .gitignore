@@ -39,4 +39,5 @@ magisk/tether/tether.jar
 
 # self-hosted stack secrets + deps
 selfhost/bot/.env
+selfhost/telegram-bot/.env
 selfhost/**/node_modules/

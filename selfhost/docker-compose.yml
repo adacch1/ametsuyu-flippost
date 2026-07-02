@@ -1,10 +1,10 @@
 # Self-hosted control + notification plane for the Z Flip 5 modem.
-#   ntfy  — private push-notification server (thermal / data-cap alerts)
-#   bot   — self-hosted Discord Gateway bot: /modem commands -> daemon,
-#           daemon alerts -> ntfy, ntfy -> Discord channel
+#   ntfy      — private push-notification server (thermal / data-cap alerts)
+#   telegram  — Telegram bot (default): commands -> daemon, alerts -> owner chat + ntfy
+#   bot       — Discord Gateway bot (legacy; disabled by default, see profile below)
 #
 # The host MUST be joined to the same tailnet as the phone (tailscale up), so the
-# bot can reach the phone's `tailscale serve` URL. See README.md.
+# bot can reach the phone's `tailscale serve` URL. See docs/telegram-bot.md.
 services:
   ntfy:
     image: binwiederhier/ntfy:latest
@@ -26,14 +26,24 @@ services:
       timeout: 5s
       retries: 3
 
+  telegram:
+    build: ./telegram-bot
+    container_name: zf5-telegram
+    env_file: ./telegram-bot/.env
+    depends_on: [ntfy]
+    # If the bridge-network container can't reach the phone's tailnet IP, switch
+    # to host networking (and point NTFY_URL at http://127.0.0.1:8080):
+    #   network_mode: host
+    restart: unless-stopped
+
+  # Legacy Discord bot — disabled by default. Enable with:
+  #   docker compose --profile discord up -d
   bot:
     build: ./bot
     container_name: zf5-bot
     env_file: ./bot/.env
     depends_on: [ntfy]
-    # If the bridge-network container can't reach the phone's tailnet IP, switch
-    # to host networking (and point NTFY_URL at http://127.0.0.1:8080):
-    #   network_mode: host
+    profiles: [discord]
     restart: unless-stopped
 
 volumes:
