@@ -16,6 +16,12 @@ public class CoverKioskActivity extends Activity {
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+        // Cover-screen comfort: appear directly over the (insecure) cover
+        // keyguard and wake the panel, so the Action button opens the dashboard
+        // in one press with no swiping.
+        setShowWhenLocked(true);
+        setTurnScreenOn(true);
+
         SharedPreferences sp = getSharedPreferences("zf5", MODE_PRIVATE);
         String token = getIntent() != null ? getIntent().getStringExtra("token") : null;
         if (token != null && token.length() > 0) {
@@ -29,6 +35,16 @@ public class CoverKioskActivity extends Activity {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         setContentView(wv);
+
+        // Reclaim the status/nav bars only AFTER setContentView — the DecorView
+        // (and its WindowInsetsController) doesn't exist before then, so calling
+        // getInsetsController() earlier NPEs and crashes the activity.
+        android.view.WindowInsetsController ic = getWindow().getInsetsController();
+        if (ic != null) {
+            ic.hide(android.view.WindowInsets.Type.systemBars());
+            ic.setSystemBarsBehavior(
+                android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        }
 
         String url = BASE;
         if (token.length() > 0) {

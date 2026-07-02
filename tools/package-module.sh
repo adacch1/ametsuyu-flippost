@@ -22,6 +22,8 @@ mkdir -p "$(dirname "$OUT")"
 OUT_ABS="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 rm -f "$OUT_ABS"
 
-# zip from inside SRC so module.prop is at the archive root.
-( cd "$SRC" && zip -qr -X "$OUT_ABS" . -x '.*' ) || { echo "error: zip failed" >&2; exit 1; }
+# zip from inside SRC so module.prop is at the archive root. Exclude dotfiles at
+# every depth: '.*' alone only skips top-level ones, so nested cruft
+# (daemon/.gitkeep, **/.DS_Store) would otherwise ship inside the module.
+( cd "$SRC" && zip -qr -X "$OUT_ABS" . -x '.*' -x '*/.*' ) || { echo "error: zip failed" >&2; exit 1; }
 echo "module packaged: $OUT ($(unzip -l "$OUT_ABS" 2>/dev/null | tail -n1 | awk '{print $2}') files)" >&2

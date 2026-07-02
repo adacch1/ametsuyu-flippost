@@ -35,6 +35,16 @@ public final class TetherStart {
         Object tm = getSvc.invoke(ctx, tmClass);
         if (tm == null) { System.out.println("RESULT=FAILED code=no_tethering_manager"); System.exit(2); }
 
+        // "stop" arg: tear the hotspot down (SSID-whitelist auto-toggle). The
+        // stopTethering(int) verb is fire-and-forget; the caller re-checks the
+        // swlan0 interface for ground truth.
+        if (args.length > 0 && args[0].equals("stop")) {
+            tmClass.getMethod("stopTethering", int.class).invoke(tm, TETHERING_WIFI);
+            Thread.sleep(1500); // let the teardown land before we exit
+            System.out.println("RESULT=STOPPED");
+            System.exit(0);
+        }
+
         Class<?> builderClass = Class.forName("android.net.TetheringManager$TetheringRequest$Builder");
         Constructor<?> bctor = builderClass.getConstructor(int.class);
         Object builder = bctor.newInstance(TETHERING_WIFI);

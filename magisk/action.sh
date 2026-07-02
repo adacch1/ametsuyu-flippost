@@ -21,7 +21,7 @@ RS=$(grep -o '"read-status"[^,}]*' "$CONFIG" | head -n1 | sed 's/.*"read-status"
 [ -n "$RS" ] || { echo "read-status token missing from config"; exit 1; }
 
 # bind_port (default 18080), for the listen check.
-PORT=$(grep -o '"bind_port"[^,}]*' "$CONFIG" | grep -o '[0-9]\+' | head -n1)
+PORT=$(grep -o '"bind_port"[^,}]*' "$CONFIG" | grep -oE '[0-9]+' | head -n1)
 [ -n "$PORT" ] || PORT=18080
 
 # Guard: the daemon must actually be listening before we launch a WebView at it,

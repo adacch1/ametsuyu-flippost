@@ -36,10 +36,11 @@ BIN="$MODDIR/daemon/zflip5-modemd"
   "bind_port": 18080,
   "tokens": { "read-status": "$RS", "sms": "$SM", "radio-control": "$RC" },
   "ingress": { "mode": "loopback" },
-  "hotspot": { "enable_on_boot": true },
+  "hotspot": { "enable_on_boot": true, "ssid_whitelist": [] },
+  "cpu": { "mode": "auto" },
   "thermal": { "warn_c": 44, "gate_c": 46, "fail_closed": true },
   "sms": { "enabled": true, "redact_default": true, "forward": false, "path": "iphone-tailscale" },
-  "rate_limits": { "default_per_min": 30, "sms_per_min": 3, "radio_per_min": 6 }
+  "rate_limits": { "default_per_min": 120, "sms_per_min": 3, "radio_per_min": 6 }
 }
 EOF
     chmod 600 "$CONFIG"
@@ -50,20 +51,31 @@ EOF
   # tailnet via `tailscale serve`. Requires the arm64 tailscaled/tailscale
   # binaries under $MODDIR/tailscale and a one-time auth key (see docs/tailscale.md).
   # Loopback mode (default) skips this entirely — no public exposure either way.
-  MODE=$(grep -o '"mode"[^,}]*' "$CONFIG" | head -n1 | sed 's/.*"mode"[^"]*"\([^"]*\)".*/\1/')
+  # Read ingress.mode specifically. The daemon rewrites config.json via Go's
+  # json.MarshalIndent (keys sorted alphabetically: cpu.mode sorts before
+  # ingress.mode), so a bare `grep '"mode"' | head -1` would return cpu.mode
+  # after any settings write. Anchor to the ingress object.
+  MODE=$(sed -n '/"ingress"/,/}/p' "$CONFIG" | grep -o '"mode"[^,}]*' | head -n1 | sed 's/.*"mode"[^"]*"\([^"]*\)".*/\1/')
   if [ "$MODE" = "tailscale" ] && [ -x "$MODDIR/tailscale/tailscaled" ]; then
     TS="$MODDIR/tailscale"
+    # The zip does not preserve exec bits; ensure the tailscale binaries run.
+    chmod 0755 "$TS/tailscaled" "$TS/tailscale" 2>/dev/null
     STATE="$DATADIR/tailscaled.state"
     "$TS/tailscaled" --tun=userspace-networking --state="$STATE" \
       --socket="$DATADIR/tailscaled.sock" >> "$LOG" 2>&1 &
     sleep 3
-    # authkey file is 0600 and consumed once; never logged.
+    # authkey file is 0600 and consumed once; never logged. Only delete it if
+    # `up` succeeded — otherwise a transient failure (no network yet at boot)
+    # would burn the one-time key and require re-provisioning.
     if [ -f "$DATADIR/tailscale.authkey" ]; then
-      "$TS/tailscale" --socket="$DATADIR/tailscaled.sock" up \
-        --authkey="$(cat "$DATADIR/tailscale.authkey")" --hostname=zflip5 >> "$LOG" 2>&1
-      rm -f "$DATADIR/tailscale.authkey"
+      if "$TS/tailscale" --socket="$DATADIR/tailscaled.sock" up \
+        --authkey="$(cat "$DATADIR/tailscale.authkey")" --hostname=zflip5 >> "$LOG" 2>&1; then
+        rm -f "$DATADIR/tailscale.authkey"
+      else
+        echo "$(date): tailscale up failed; keeping authkey for retry" >> "$LOG"
+      fi
     fi
-    PORT=$(grep -o '"bind_port"[^,}]*' "$CONFIG" | grep -o '[0-9]\+')
+    PORT=$(grep -o '"bind_port"[^,}]*' "$CONFIG" | grep -oE '[0-9]+')
     "$TS/tailscale" --socket="$DATADIR/tailscaled.sock" serve --bg \
       "http://127.0.0.1:${PORT:-18080}" >> "$LOG" 2>&1
   fi
@@ -76,7 +88,7 @@ EOF
   # This does NOT disable thermal mitigation — the phone still throttles when
   # hot; per owner request it only skips our own extra gate. Non-fatal: failure
   # is logged and boot continues. Retries while the Wi-Fi stack finishes booting.
-  HS=$(grep -o '"enable_on_boot"[^,}]*' "$CONFIG" | grep -o 'true\|false' | head -n1)
+  HS=$(grep -o '"enable_on_boot"[^,}]*' "$CONFIG" | grep -oE 'true|false' | head -n1)
   if [ "$HS" != "false" ] && [ -f "$MODDIR/tether/tether.jar" ]; then
     n=0
     while [ "$n" -lt 6 ]; do
@@ -93,9 +105,22 @@ EOF
   [ -f "$BIN" ] && chmod 0755 "$BIN"
 
   # Watchdog: restart the daemon if it dies. Backoff avoids a tight crash loop.
+  # ZF5_MODDIR lets the daemon find the helper jar (tether/wifi-scan).
+  # Honors Magisk's disable/remove flags: if the owner disables or removes the
+  # module, stop respawning (Magisk only skips service.sh at the NEXT boot, so
+  # without this the daemon would keep running until reboot). Also caps the log
+  # so a crash loop can't fill /data.
   while true; do
+    if [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ]; then
+      echo "$(date): module disabled/removed; watchdog exiting" >> "$LOG"
+      break
+    fi
+    # Trim the log if it grows past ~1MB (keep the last ~500 lines).
+    if [ -f "$LOG" ] && [ "$(wc -c < "$LOG")" -gt 1048576 ]; then
+      tail -n 500 "$LOG" > "$LOG.trim" && mv "$LOG.trim" "$LOG"
+    fi
     if [ -x "$BIN" ]; then
-      /system/bin/sh -c "$BIN --config $CONFIG >> $LOG 2>&1"
+      ZF5_MODDIR="$MODDIR" /system/bin/sh -c "$BIN --config $CONFIG >> $LOG 2>&1"
     else
       echo "$(date): daemon binary missing at $BIN" >> "$LOG"
     fi

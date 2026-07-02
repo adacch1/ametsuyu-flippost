@@ -8,6 +8,7 @@
         android:networkSecurityConfig="@xml/network_security_config">
         <activity android:name=".CoverKioskActivity" android:exported="true"
             android:label="Z Flip 5 Modem"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

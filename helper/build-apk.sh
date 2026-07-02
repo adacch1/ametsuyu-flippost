@@ -19,23 +19,27 @@ W="$(mktemp -d)"
 "$BT/aapt2" link -I "$PLAT" --manifest "$HERE/AndroidManifest.xml" \
   --min-sdk-version 33 --target-sdk-version 34 -o "$W/base.apk" "$W/res.zip"
 
-# 2. compile Java -> 3. dex
+# 2. compile Java -> 3. dex. Arrays (not unquoted $(find)) so a repo path with
+# spaces doesn't word-split filenames into broken javac/d8 args.
 mkdir -p "$W/classes"
-"$JC" --release 17 -classpath "$PLAT" \
-  -d "$W/classes" $(find "$HERE/src" -name '*.java')
-"$BT/d8" --min-api 33 --output "$W" $(find "$W/classes" -name '*.class')
+SRCS=(); while IFS= read -r f; do SRCS+=("$f"); done < <(find "$HERE/src" -name '*.java')
+"$JC" --release 17 -classpath "$PLAT" -d "$W/classes" "${SRCS[@]}"
+CLS=(); while IFS= read -r f; do CLS+=("$f"); done < <(find "$W/classes" -name '*.class')
+"$BT/d8" --min-api 33 --output "$W" "${CLS[@]}"
 
 # 4. add classes.dex into the apk
 ( cd "$W" && "$BT/aapt2" version >/dev/null; zip -qj base.apk classes.dex )
 
-# 5. align + 6. sign with a local debug keystore (generated once)
+# 5. align + 6. sign with a local debug keystore (generated once).
+# mkdir the output dir BEFORE keytool writes the keystore into it, or the first
+# clean build fails silently (keytool can't create the file in a missing dir).
+mkdir -p "$ROOT/dist"
 KS="$ROOT/dist/debug.keystore"
 if [ ! -f "$KS" ]; then
   "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KS" -storepass android \
     -keypass android -alias zf5 -keyalg RSA -keysize 2048 -validity 10000 \
     -dname "CN=zflip5" >/dev/null 2>&1
 fi
-mkdir -p "$ROOT/dist"
 "$BT/zipalign" -f 4 "$W/base.apk" "$W/aligned.apk"
 "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
   --out "$OUT" "$W/aligned.apk"
