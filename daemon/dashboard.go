@@ -127,6 +127,8 @@ const dashboardHTML = `<!DOCTYPE html>
   .setbtn:disabled{opacity:.5;cursor:default}
   .minibtn{background:var(--card-2);border:1px solid var(--line);color:var(--teal);border-radius:8px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;min-height:34px}
   .minibtn:disabled{opacity:.5;cursor:default}
+  .apbtns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .apbtns .minibtn{min-height:44px}
   /* nearby-networks list (tap a row to add/remove from the whitelist) */
   .nrow{display:flex;align-items:center;gap:11px;width:100%;background:none;border:0;border-top:1px solid var(--line-soft);padding:11px 2px;min-height:48px;cursor:pointer;color:var(--text);font-family:inherit;text-align:left}
   .nrow:first-child{border-top:0}
@@ -180,9 +182,10 @@ const dashboardHTML = `<!DOCTYPE html>
   <header>
     <div class="sigind">
       <span class="bars" id="bars"><i></i><i></i><i></i><i></i></span>
-      <div><div class="lab" id="tech">—</div><div class="op" id="op">—</div></div>
+      <div><div class="lab" id="tech">—</div><div class="op mono" id="wanip">—</div></div>
     </div>
     <div class="netbadge"><span class="dot amber" id="statusDot"></span><span id="netType">—</span></div>
+    <!-- op kept for the operator name, shown on the Network signal card -->
   </header>
   <div class="errslot" id="errSlot" role="alert"></div>
 
@@ -229,6 +232,17 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="state-row"><span class="k">Auto (SSID whitelist)</span><span class="v" id="hsAuto">off</span></div>
       <div class="state-row" id="hsMatchRow" style="display:none"><span class="k">Seen nearby</span><span class="v" id="hsMatch">—</span></div>
       <div class="stat-sub" id="hsSub"></div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><span>Connectivity</span><span class="accent" id="apAccent" style="background:var(--blue)"></span></div>
+      <div class="state-row"><span class="k">WAN IP</span><span class="v mono" id="wanIp">—</span></div>
+      <div class="state-row"><span class="k">Airplane</span><span class="v"><span class="dot off" id="apDot"></span><span id="apState">off</span></span></div>
+      <button class="setbtn" id="rotateBtn">Rotate IP (airplane cycle)</button>
+      <div class="apbtns">
+        <button class="minibtn" id="apOnBtn">Airplane On</button>
+        <button class="minibtn" id="apOffBtn">Airplane Off + hotspot</button>
+      </div>
+      <div class="setmsg" id="apMsg">Cycles airplane to pull a fresh carrier IP, then restarts the hotspot. ~15–30s; clients drop briefly.</div>
     </div>
     <div class="card">
       <div class="state-row"><span class="k">Bands</span><span class="v"><span class="dot off" id="bandDot"></span><span id="bandsv">—</span></span></div>
@@ -373,8 +387,12 @@ const dashboardHTML = `<!DOCTYPE html>
   // transitional-but-safe state (radio writes are allowed), so it must not read red.
   function polColor(p){return (p==="SAFE"||p==="RECOVERY")?"green":(p==="WARM"?"amber":"red");}
   function renderStatus(s){
-    var net=s.network||{}, bat=s.battery||{}, th=s.thermal||{};
+    var net=s.network||{}, bat=s.battery||{}, th=s.thermal||{}, ip=s.wan_ip||{};
     document.getElementById("netType").textContent=net.display||net.type||"—";
+    // Always show the WAN IP (header). Airplane on / no data -> explicit label.
+    document.getElementById("wanip").textContent=s.airplane?"airplane ✈":(ip.available&&ip.ip?ip.ip:"no data");
+    var ipEl=document.getElementById("wanIp"); if(ipEl){ipEl.textContent=ip.available&&ip.ip?ip.ip:(s.airplane?"— (airplane on)":"— (no data)");}
+    var apEl=document.getElementById("apState"); if(apEl){apEl.textContent=s.airplane?"ON":"off";document.getElementById("apDot").className="dot "+(s.airplane?"amber":"off");}
     var pol=s.policy_state||"—", dc=polColor(pol);
     document.getElementById("statusDot").className="dot "+dc;
     document.getElementById("policyDot").className="dot "+dc;
@@ -428,9 +446,9 @@ const dashboardHTML = `<!DOCTYPE html>
     bars.className="bars "+cls;
     var ch=bars.children;for(var i=0;i<4;i++)ch[i].className=i<lvl?"on":"";
     document.getElementById("tech").textContent=sig.display||sig.tech||"—";
-    document.getElementById("op").textContent=sig.operator||"";
     var is5g=(sig.display||"").indexOf("5G")===0;
-    document.getElementById("sigTech").textContent=is5g?"NR "+(sig.nr_state||""):(sig.carrier_aggregation?"LTE-CA":"");
+    var tag=is5g?"NR "+(sig.nr_state||""):(sig.carrier_aggregation?"LTE-CA":"");
+    document.getElementById("sigTech").textContent=(sig.operator||"")+(tag?" · "+tag:"");
     var box=document.getElementById("sig");
     if(!sig.available){box.innerHTML='<div class="stat-sub">unavailable</div>';return;}
     function row(k,v,c){return '<div class="sgrow"><span>'+esc(k)+'</span><b class="'+(c||"")+'">'+esc(v)+'</b></div>';}
@@ -612,6 +630,36 @@ const dashboardHTML = `<!DOCTYPE html>
       renderHotspot(res.j);
     }).catch(function(e){nearbyMsg.textContent="Error: "+e.message;});
   }
+
+  // Airplane trigger + IP rotate. The cycle blocks ~15-30s (radio drop + PDP
+  // re-attach + hotspot restart); disable all three buttons while it runs.
+  var apMsg=document.getElementById("apMsg");
+  var apBtns=[document.getElementById("rotateBtn"),document.getElementById("apOnBtn"),document.getElementById("apOffBtn")];
+  function apBusy(on){apBtns.forEach(function(b){b.disabled=on;});}
+  function apPost(mode,pending,done){
+    var rt=rtok(apMsg); if(!rt)return;
+    apMsg.textContent=pending; apBusy(true);
+    post("/v1/airplane",{mode:mode},rt).then(function(res){
+      apBusy(false);
+      if(!res.ok){apMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      apMsg.textContent=done(res.j);
+      tick(); // refresh header IP + airplane state now
+    }).catch(function(e){apBusy(false);apMsg.textContent="Error: "+e.message;});
+  }
+  document.getElementById("rotateBtn").addEventListener("click",function(){
+    apPost("cycle","rotating IP… (~20s, clients drop briefly)",function(j){
+      var line=j.changed?("IP changed: "+j.old_ip+" → "+j.new_ip)
+        :(j.data_back?("IP unchanged ("+(j.new_ip||"?")+") — carrier reused it")
+        :"data did not come back — check the connection");
+      return line+(j.hotspot_active?" · hotspot back up":(j.note||" · hotspot NOT up"));
+    });
+  });
+  document.getElementById("apOnBtn").addEventListener("click",function(){
+    apPost("on","enabling airplane…",function(){return "Airplane ON — radio + hotspot off.";});
+  });
+  document.getElementById("apOffBtn").addEventListener("click",function(){
+    apPost("off","disabling airplane…",function(j){return "Airplane OFF"+(j.hotspot_active?" · hotspot back up":(j.note||"")); });
+  });
 
   // Per-tab polling: status+signal always (header indicator), plus only what
   // the visible tab shows. Small screen, small request budget (~36-48/min,

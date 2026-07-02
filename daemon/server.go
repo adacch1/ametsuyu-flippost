@@ -33,6 +33,9 @@ type Server struct {
 	// gate at runtime; seeded from config, clamped to a safe range on write.
 	warnBits atomic.Uint64
 	gateBits atomic.Uint64
+	// airplaneBusy serializes /v1/airplane so overlapping cycles/toggles can't
+	// interleave airplane on/off.
+	airplaneBusy atomic.Bool
 	// cfgMu serializes the two config-mutating handlers (thermal limits, hotspot
 	// whitelist): they read-modify-write both s.cfg fields and config.json, so
 	// concurrent POSTs would otherwise race and lose updates.
@@ -147,6 +150,11 @@ func (s *Server) routes() {
 	// On-demand scan-only refresh of the nearby-networks list (radio-control:
 	// it drives the radio off-channel briefly and is rate-limited like a write).
 	s.mux.HandleFunc("/v1/hotspot/scan", s.guardAuth("radio-control", http.MethodPost, s.handleHotspotScan))
+	// Airplane trigger + IP-rotation cycle. Airplane on/off always works (turning
+	// the radio OFF must work while hot); a fresh hotspot start ("off" mode) is
+	// thermal-gated like /v1/tether, while the cycle restores a pre-existing
+	// hotspot regardless (status quo). Serialized via airplaneBusy.
+	s.mux.HandleFunc("/v1/airplane", s.guardAuth("radio-control", http.MethodPost, s.handleAirplane))
 	// Retune the thermal gate: radio-control write, but NOT thermal-gated itself
 	// (you must be able to adjust limits while hot), and hard-clamped server-side.
 	s.mux.HandleFunc("/v1/thermal/limits", s.guardAuth("radio-control", http.MethodPost, s.handleThermalLimits))
@@ -163,6 +171,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/prefer5g", s.guardAuth("radio-control", http.MethodPost, s.handlePrefer5G))
 	s.mux.HandleFunc("/v1/cooldown", s.guardAuth("radio-control", http.MethodPost, s.handleCooldown))
 	s.mux.HandleFunc("/v1/service/restart", s.guardAuth("radio-control", http.MethodPost, s.handleRestart))
+	// Full DEVICE reboot (not just the daemon). radio-control; the module's
+	// service.sh brings the daemon + hotspot back on boot.
+	s.mux.HandleFunc("/v1/device/reboot", s.guardAuth("radio-control", http.MethodPost, s.handleDeviceReboot))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
@@ -287,6 +298,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"policy_state": string(classify(worst, s.warnC(), s.gateC())),
 		"network":      s.col.Network(),
 		"battery":      s.col.Battery(),
+		"wan_ip":       deviceWanIP(),
+		"airplane":     airplaneOn(),
 		"service":      map[string]any{"daemon": "ok", "helper": map[string]any{"available": false}},
 	})
 }
@@ -374,6 +387,54 @@ func (s *Server) handleCPU(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHotspot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.hs.Status())
+}
+
+// handleAirplane toggles airplane mode or runs an IP-rotation cycle.
+// Body: {"mode":"on"|"off"|"cycle"}.
+//
+//	on    - airplane on (drops radio + hotspot).
+//	off   - airplane off, then re-enable the hotspot (thermal-gated).
+//	cycle - on, wait, off, wait for data, re-enable hotspot; confirms IP change.
+//
+// The cycle blocks ~10-30s while the PDP context re-establishes.
+func (s *Server) handleAirplane(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	// Serialize airplane operations: a cycle blocks for tens of seconds, and
+	// overlapping toggles would interleave airplane on/off messily.
+	if !s.airplaneBusy.CompareAndSwap(false, true) {
+		writeErr(w, http.StatusConflict, "an airplane operation is already in progress")
+		return
+	}
+	defer s.airplaneBusy.Store(false)
+	safe := s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed).Safe
+	switch body.Mode {
+	case "on":
+		airplaneSet(true)
+		writeJSON(w, http.StatusOK, map[string]any{"airplane": true, "hotspot_active": hotspotActive(), "wan_ip": deviceWanIP()})
+	case "off":
+		airplaneSet(false)
+		res := map[string]any{"airplane": false}
+		// A standalone "off" is an explicit fresh hotspot start (not a status-quo
+		// restore like the cycle), so it IS thermal-gated, same as /v1/tether start.
+		if safe {
+			res["hotspot_active"] = restartHotspotRetry()
+		} else {
+			res["hotspot_active"] = hotspotActive()
+			res["note"] = "hotspot not started (thermal gate) — device too warm"
+		}
+		res["wan_ip"] = deviceWanIP()
+		writeJSON(w, http.StatusOK, res)
+	case "cycle":
+		writeJSON(w, http.StatusOK, airplaneCycle(safe))
+	default:
+		writeErr(w, http.StatusBadRequest, "mode must be on, off, or cycle")
+	}
 }
 
 // handleHotspotScan runs an immediate scan and returns the refreshed status
@@ -500,6 +561,18 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond) // let the response flush
 		log.Printf("restart requested via API; exiting for watchdog respawn")
 		os.Exit(0)
+	}()
+}
+
+// handleDeviceReboot reboots the whole phone after replying. The module's
+// late-start service restores the daemon + hotspot on boot (verified). Used by
+// the Telegram /reboot command and scheduled auto-reboot.
+func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"rebooting": true, "note": "device reboot in ~2s; back in ~60s."})
+	go func() {
+		time.Sleep(2 * time.Second) // let the response flush before the radio drops
+		log.Printf("device reboot requested via API")
+		runCmd("reboot")
 	}()
 }
 

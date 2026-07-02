@@ -761,6 +761,69 @@
      }
     }
    }
+  },
+  "/v1/airplane": {
+   "post": {
+    "summary": "Airplane on/off or IP-rotation cycle (body {\"mode\":\"on|off|cycle\"}); serialized, 409 if busy",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "airplane state / rotate result",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "409": {
+      "description": "an airplane operation is already in progress"
+     }
+    }
+   }
+  },
+  "/v1/device/reboot": {
+   "post": {
+    "summary": "Reboot the whole phone; module restores daemon+hotspot on boot",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "rebooting",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
   }
  }
 }
