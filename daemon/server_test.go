@@ -15,8 +15,12 @@ func (f fakeCollector) Health() Health {
 func (f fakeCollector) Thermal(warnC, gateC float64, failClosed bool) Thermal {
 	return Thermal{BatteryC: 30, MaxC: 40, WarnC: warnC, GateC: gateC, Safe: f.safe, Source: "sysfs+battery"}
 }
-func (f fakeCollector) Battery() Battery { return Battery{Level: 80, TempC: 30, Plugged: "usb", Available: true} }
-func (f fakeCollector) Network() Network { return Network{Type: "LTE", Override: "LTE_CA", NrState: "NONE", Available: true} }
+func (f fakeCollector) Battery() Battery {
+	return Battery{Level: 80, TempC: 30, Plugged: "usb", Available: true}
+}
+func (f fakeCollector) Network() Network {
+	return Network{Type: "LTE", Override: "LTE_CA", NrState: "NONE", Available: true}
+}
 
 func testCfg() *Config {
 	c := &Config{BindHost: "127.0.0.1", BindPort: 18080}

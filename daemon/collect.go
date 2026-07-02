@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Health struct {
@@ -21,6 +23,7 @@ type Health struct {
 	TempBattery float64 `json:"temp_battery_c"`
 	TempMax     float64 `json:"temp_max_c"`
 	TempMaxZone string  `json:"temp_max_zone"`
+	PerCorePct  []int   `json:"per_core_pct"`
 }
 
 type Thermal struct {
@@ -43,6 +46,7 @@ type Network struct {
 	Type      string `json:"type"`
 	Override  string `json:"override"`
 	NrState   string `json:"nr_state"`
+	Display   string `json:"display"` // human tech: 5G+/5G/4G+/4G/3G/...
 	Operator  string `json:"operator"`
 	Available bool   `json:"available"`
 }
@@ -58,13 +62,17 @@ type Collector interface {
 }
 
 var (
-	batLevelRe  = regexp.MustCompile(`(?m)^\s*level:\s*(\d+)`)
-	batTempRe   = regexp.MustCompile(`(?m)^\s*temperature:\s*(-?\d+)`)
-	batUsbRe    = regexp.MustCompile(`(?m)^\s*USB powered:\s*(true|false)`)
-	batAcRe     = regexp.MustCompile(`(?m)^\s*AC powered:\s*(true|false)`)
+	batLevelRe   = regexp.MustCompile(`(?m)^\s*level:\s*(\d+)`)
+	batTempRe    = regexp.MustCompile(`(?m)^\s*temperature:\s*(-?\d+)`)
+	batUsbRe     = regexp.MustCompile(`(?m)^\s*USB powered:\s*(true|false)`)
+	batAcRe      = regexp.MustCompile(`(?m)^\s*AC powered:\s*(true|false)`)
 	netDisplayRe = regexp.MustCompile(`network=([A-Za-z0-9_+]+),\s*overrideNetwork=([A-Za-z0-9_+]+)`)
-	nrStateRe   = regexp.MustCompile(`nrState=([A-Z_]+)`)
-	operatorRe  = regexp.MustCompile(`mOperatorAlphaLong=([^,}]+)`)
+	// The dump lists several NetworkRegistrationInfo blocks; the IWLAN one comes
+	// first and always says nrState=NONE, which masked real NSA attachment. Only
+	// the cellular packet-switched (PS/WWAN) registration carries the NR state.
+	nrStateWwanRe = regexp.MustCompile(`(?s)domain=PS transportType=WWAN.*?nrState=([A-Z_]+)`)
+	nrStateRe     = regexp.MustCompile(`nrState=([A-Z_]+)`)
+	operatorRe    = regexp.MustCompile(`mOperatorAlphaLong=([^,}]+)`)
 )
 
 // parseBattery extracts level/temp/plugged from `dumpsys battery`. Android
@@ -99,13 +107,44 @@ func parseNetwork(raw string) Network {
 		n.Override = m[2]
 		n.Available = true
 	}
-	if m := nrStateRe.FindStringSubmatch(raw); m != nil {
+	if m := nrStateWwanRe.FindStringSubmatch(raw); m != nil {
 		n.NrState = m[1]
+	} else if m := nrStateRe.FindStringSubmatch(raw); m != nil {
+		n.NrState = m[1] // older dump format without registration blocks
 	}
 	if m := operatorRe.FindStringSubmatch(raw); m != nil {
 		n.Operator = strings.TrimSpace(m[1])
 	}
+	n.Display = displayTech(n.Type, n.Override, n.NrState)
 	return n
+}
+
+// displayTech maps raw network/override/NR state to what the status bar would
+// show. NSA 5G keeps network=LTE (the anchor) with overrideNetwork=NR_NSA or
+// nrState=CONNECTED — reporting raw LTE there is what made 5G zones show 4G.
+func displayTech(network, override, nrState string) string {
+	switch override {
+	case "NR_ADVANCED":
+		return "5G+"
+	case "NR_NSA", "NR_NSA_MMWAVE":
+		return "5G"
+	}
+	if network == "NR" || nrState == "CONNECTED" {
+		return "5G"
+	}
+	switch override {
+	case "LTE_CA", "LTE_ADVANCED_PRO":
+		return "4G+"
+	}
+	switch network {
+	case "LTE":
+		return "4G"
+	case "UMTS", "HSDPA", "HSUPA", "HSPA", "HSPAP", "TD_SCDMA":
+		return "3G"
+	case "GPRS", "EDGE", "GSM":
+		return "2G"
+	}
+	return network
 }
 
 func (deviceCollector) Battery() Battery {
@@ -159,6 +198,7 @@ func (deviceCollector) Health() Health {
 	h.TempBattery = bat
 	h.TempMax = maxc
 	h.TempMaxZone = zone
+	h.PerCorePct = perCorePct()
 	return h
 }
 
@@ -219,8 +259,12 @@ func (deviceCollector) Thermal(warnC, gateC float64, failClosed bool) Thermal {
 }
 
 // runCmd is a small helper for framework scrapes (dumpsys/cmd). Errors yield "".
+// A hard timeout keeps a wedged dumpsys/ip/settings from hanging an HTTP handler
+// or a background loop forever (which would leak goroutines and stall polling).
 func runCmd(name string, args ...string) string {
-	out, err := exec.Command(name, args...).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, name, args...).Output()
 	if err != nil {
 		return ""
 	}

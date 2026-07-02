@@ -33,10 +33,10 @@ func classify(worstC, warnC, gateC float64) ThermalState {
 
 // PolicyEngine tracks cooldown stickiness across requests.
 type PolicyEngine struct {
-	mu        sync.Mutex
-	cooling   bool
-	warnC     float64
-	gateC     float64
+	mu      sync.Mutex
+	cooling bool
+	warnC   float64
+	gateC   float64
 }
 
 func NewPolicyEngine(warnC, gateC float64) *PolicyEngine {
@@ -63,6 +63,14 @@ func (p *PolicyEngine) Evaluate(worstC float64) ThermalState {
 		return StateCooldown // still warm while cooling
 	}
 	return base
+}
+
+// SetLimits retunes the policy engine's thresholds when the owner adjusts the
+// thermal gate at runtime.
+func (p *PolicyEngine) SetLimits(warnC, gateC float64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.warnC, p.gateC = warnC, gateC
 }
 
 // Prefer5GAllowed reports whether an NR-preference write may proceed in `st`.

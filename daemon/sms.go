@@ -5,13 +5,14 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // SMS reader: root `content query` on content://sms/inbox, redacted by default.
 // Owner-only + rate-limited enforced at the HTTP layer. Never forwarded.
 
 const (
-	smsMaxLimit   = 20
+	smsMaxLimit    = 20
 	smsBodyPreview = 120
 )
 
@@ -34,7 +35,13 @@ func redactSMS(body string) string {
 	b = otpRe.ReplaceAllString(b, "[REDACTED-CODE]")
 	b = strings.ReplaceAll(b, "\n", " ")
 	if len(b) > smsBodyPreview {
-		b = b[:smsBodyPreview] + "…"
+		// Truncate on a rune boundary so a multi-byte character (e.g. Vietnamese
+		// diacritics) is never split into a mojibake half-rune.
+		cut := smsBodyPreview
+		for cut > 0 && !utf8.RuneStart(b[cut]) {
+			cut--
+		}
+		b = b[:cut] + "…"
 	}
 	return b
 }

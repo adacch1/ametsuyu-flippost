@@ -33,6 +33,86 @@ type Config struct {
 		SMSPerMin     int `json:"sms_per_min"`
 		RadioPerMin   int `json:"radio_per_min"`
 	} `json:"rate_limits"`
+	CPU struct {
+		Mode string `json:"mode"` // auto | performance | balanced | eco | off
+	} `json:"cpu"`
+	Hotspot struct {
+		SSIDWhitelist []string `json:"ssid_whitelist"` // auto-toggle: off when seen, on when absent
+	} `json:"hotspot"`
+}
+
+// CPUMode returns the configured CPU policy mode, defaulting to "auto".
+func (c *Config) CPUMode() string {
+	if c.CPU.Mode == "" {
+		return "auto"
+	}
+	return c.CPU.Mode
+}
+
+// persistThermalLimits rewrites only thermal.warn_c/gate_c in the config file,
+// preserving every other key (including ones not in the Config struct, e.g.
+// hotspot). Marshaling the struct would drop those, so we edit the raw JSON.
+func persistThermalLimits(path string, warnC, gateC float64) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	th, _ := m["thermal"].(map[string]any)
+	if th == nil {
+		th = map[string]any{}
+		m["thermal"] = th
+	}
+	th["warn_c"] = warnC
+	th["gate_c"] = gateC
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(path, out)
+}
+
+// writeConfigAtomic writes via a temp file + rename so a crash mid-write can
+// never leave a truncated config.json that fails to parse at next boot (which
+// would strand the headless device). The temp file is created 0600 in the same
+// dir so the rename stays on one filesystem.
+func writeConfigAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// persistHotspotWhitelist rewrites only hotspot.ssid_whitelist, preserving
+// every other key (enable_on_boot lives in the same object).
+func persistHotspotWhitelist(path string, ssids []string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	hs, _ := m["hotspot"].(map[string]any)
+	if hs == nil {
+		hs = map[string]any{}
+		m["hotspot"] = hs
+	}
+	hs["ssid_whitelist"] = ssids
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(path, out)
 }
 
 func LoadConfig(path string) (*Config, error) {

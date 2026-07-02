@@ -17,5 +17,6 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 	srv := NewServer(cfg, deviceCollector{})
+	srv.cfgPath = *cfgPath
 	log.Fatal(srv.ListenAndServe())
 }
