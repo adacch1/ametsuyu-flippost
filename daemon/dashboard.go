@@ -327,8 +327,13 @@ const dashboardHTML = `<!DOCTYPE html>
 
   var token="";
   try{
-    var url=new URL(window.location.href), t=url.searchParams.get("token");
-    if(t){localStorage.setItem("zf5tok",t);url.searchParams.delete("token");window.history.replaceState({},"",url.pathname);}
+    var url=new URL(window.location.href), t=url.searchParams.get("token"), rt=url.searchParams.get("rtoken");
+    if(t){localStorage.setItem("zf5tok",t);}
+    // radio-control token is seeded by the owner's kiosk (action.sh) so writes
+    // auto-fill. Stored in this WebView's sandboxed localStorage; a plain
+    // browser opening the dashboard without &rtoken keeps the paste-once flow.
+    if(rt){localStorage.setItem("zf5rtok",rt);}
+    if(t||rt){url.searchParams.delete("token");url.searchParams.delete("rtoken");window.history.replaceState({},"",url.pathname);}
     token=localStorage.getItem("zf5tok")||"";
   }catch(e){}
 

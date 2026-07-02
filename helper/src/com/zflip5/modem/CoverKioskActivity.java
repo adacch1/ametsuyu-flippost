@@ -29,6 +29,14 @@ public class CoverKioskActivity extends Activity {
         } else {
             token = sp.getString("token", "");
         }
+        // radio-control token (optional): cached in the app's sandboxed prefs so
+        // owner writes auto-fill on every launch. Seeded by action.sh only.
+        String rtoken = getIntent() != null ? getIntent().getStringExtra("rtoken") : null;
+        if (rtoken != null && rtoken.length() > 0) {
+            sp.edit().putString("rtoken", rtoken).apply();
+        } else {
+            rtoken = sp.getString("rtoken", "");
+        }
 
         WebView wv = new WebView(this);
         WebSettings s = wv.getSettings();
@@ -49,6 +57,9 @@ public class CoverKioskActivity extends Activity {
         String url = BASE;
         if (token.length() > 0) {
             url = BASE + "?token=" + token;
+            if (rtoken.length() > 0) {
+                url = url + "&rtoken=" + rtoken;
+            }
         }
         wv.loadUrl(url);
     }

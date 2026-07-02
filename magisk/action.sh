@@ -1,13 +1,18 @@
 #!/system/bin/sh
 # action.sh — Magisk Manager "Action" button. Runs on demand as root when the
 # owner taps Action on this module. Opens the admin dashboard by launching the
-# WebView kiosk activity (helper APK) seeded with the read-status token.
+# WebView kiosk activity (helper APK) seeded with the read-status token and,
+# for the owner's own kiosk, the radio-control token so writes (thermal gate,
+# hotspot whitelist) work without pasting it every time.
 #
-# Scope: read-status ONLY. This never exposes the sms or radio-control tokens.
-# The token is read from the root-only config and handed to the kiosk via an
-# intent extra; the activity stashes it in SharedPreferences and strips it from
-# the URL. It is NOT echoed here (it would still be transiently visible in the
-# am argv via ps/logcat — the documented, local-only tradeoff).
+# Scope: read-status + radio-control (NOT sms). Both tokens are read from the
+# root-only config and handed to the kiosk via intent extras; the activity
+# stashes them in its sandboxed SharedPreferences and strips them from the URL.
+# radio-control is only seeded THIS way (the owner's Action launch) — the plain
+# dashboard served to a browser over Tailscale never receives it, so a
+# read-only remote view stays read-only. Tradeoff: like read-status, the tokens
+# are transiently visible in the am argv (ps/logcat) to the local shell uid —
+# the documented, owner-only, on-device cost of one-tap launch.
 MODDIR=${0%/*}
 DATADIR=/data/adb/zflip5-modem
 CONFIG="$DATADIR/config.json"
@@ -19,6 +24,10 @@ ACT=.CoverKioskActivity
 # read-status token: "tokens": { "read-status": "<hex>", ... }
 RS=$(grep -o '"read-status"[^,}]*' "$CONFIG" | head -n1 | sed 's/.*"read-status"[^"]*"\([^"]*\)".*/\1/')
 [ -n "$RS" ] || { echo "read-status token missing from config"; exit 1; }
+
+# radio-control token (optional): seeded into the kiosk so owner writes work
+# without pasting. Missing token just means the kiosk asks for it as before.
+RC=$(grep -o '"radio-control"[^,}]*' "$CONFIG" | head -n1 | sed 's/.*"radio-control"[^"]*"\([^"]*\)".*/\1/')
 
 # bind_port (default 18080), for the listen check.
 PORT=$(grep -o '"bind_port"[^,}]*' "$CONFIG" | grep -oE '[0-9]+' | head -n1)
@@ -41,7 +50,16 @@ if [ "$i" -ge 5 ]; then
   exit 1
 fi
 
-# Launch the kiosk on the primary user. exported=true, so a root am can start it.
-am start --user 0 -n "$PKG/$ACT" -e token "$RS" >/dev/null 2>&1 \
-  && echo "dashboard opened (kiosk, read-status scope, 127.0.0.1:${PORT})" \
-  || echo "am start failed — is the kiosk APK (dist/zflip5-kiosk.apk) installed?"
+# Launch the kiosk on the COVER display (id 1). Pinning the display matters once
+# the inner panel is gone/dead: without it the activity can land on display 0
+# (inner) instead of the cover. exported=true, so a root am can start it.
+# Pass radio-control only when present (extra omitted otherwise).
+if [ -n "$RC" ]; then
+  am start --user 0 --display 1 -n "$PKG/$ACT" -e token "$RS" -e rtoken "$RC" >/dev/null 2>&1 \
+    && echo "dashboard opened (kiosk, read-status + radio-control, cover, 127.0.0.1:${PORT})" \
+    || echo "am start failed — is the kiosk APK (dist/zflip5-kiosk.apk) installed?"
+else
+  am start --user 0 --display 1 -n "$PKG/$ACT" -e token "$RS" >/dev/null 2>&1 \
+    && echo "dashboard opened (kiosk, read-status scope, cover, 127.0.0.1:${PORT})" \
+    || echo "am start failed — is the kiosk APK (dist/zflip5-kiosk.apk) installed?"
+fi
