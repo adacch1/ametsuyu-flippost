@@ -6,9 +6,9 @@ It reports network, tethering, thermal, battery, and recent SMS state, and can s
 
 ## Status
 
-Project bootstrap. Plan written; implementation not started.
+Implemented and running on-device. The Go daemon (`daemon/`), Magisk module (`magisk/`), WebView cover-screen kiosk (`helper/`), and self-hosted ntfy + Discord bot (`selfhost/`) are all built and deployed.
 
-The authoritative work plan lives at [`.omo/plans/zflip5-modem-module.md`](.omo/plans/zflip5-modem-module.md) (14 todos across 4 waves + a final audit). The original draft is kept at `dwkpnx6.md`.
+The authoritative work plan lives at [`.omo/plans/zflip5-modem-module.md`](.omo/plans/zflip5-modem-module.md). The original draft is kept at `dwkpnx6.md`.
 
 ## Safety guarantees (non-negotiable)
 
@@ -21,13 +21,10 @@ The authoritative work plan lives at [`.omo/plans/zflip5-modem-module.md`](.omo/
 
 | Path | Purpose |
 | --- | --- |
-| `.omo/plans/` | Canonical work plan |
-| `.omo/drafts/` | Design drafts and interview notes |
-| `.omo/evidence/` | Agent-executed QA evidence (per-todo) |
-| `tools/` | Discovery, packaging, test, and verification scripts |
+| `daemon/` | Go root daemon: loopback API, thermal/CPU policy, served dashboard |
+| `magisk/` | Magisk module: `service.sh`, `action.sh`, packaged daemon + `tether.jar` |
+| `helper/` | WebView cover-screen kiosk APK + root tether/wifi-scan helpers |
+| `selfhost/` | Self-hosted ntfy + Discord Gateway bot (docker-compose) |
+| `tools/` | Build, packaging, and verification scripts |
 | `docs/` | Architecture, threat model, install, safety, troubleshooting |
 | `schemas/` | API (OpenAPI) and config JSON schemas |
-| `fixtures/` | Test fixtures (e.g. signed Discord interaction payloads) |
-| `tests/` | Offline unit/policy tests |
-
-Component source directories (Magisk module, daemon, Android helper, Discord relay) are intentionally **not** created yet — their structure is decided by the architecture contract (Todo 2) and the runtime decision still open.

@@ -1,0 +1,5 @@
+{
+  "projectId": "8e3118ef-8c33-4e98-a73e-51d94df5f20f",
+  "seedOnly": true,
+  "note": "This repo is not a component-library design system. This project was seeded with a one-off dashboard design brief (docs/dashboard-design-prompt.md) for the Claude Design agent to build from. No dist/Storybook converter sync applies here."
+}

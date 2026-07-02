@@ -31,6 +31,12 @@ local.properties
 
 # built daemon binary shipped in module (build via tools/build-daemon.sh)
 magisk/daemon/zflip5-modemd
+# stray host build artifact from `go build` inside daemon/ (binary = module name)
+daemon/modemd
 
 # built tether helper dex shipped in module (build via tools/build-tether.sh)
 magisk/tether/tether.jar
+
+# self-hosted stack secrets + deps
+selfhost/bot/.env
+selfhost/**/node_modules/

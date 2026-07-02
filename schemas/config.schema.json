@@ -5,6 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["bind_host", "bind_port", "tokens", "ingress", "thermal", "sms", "rate_limits"],
+  "$comment": "cpu and hotspot are written by the first-boot template and persisted by the daemon; they are optional so older configs still validate.",
   "properties": {
     "bind_host": {
       "type": "string",
@@ -52,9 +53,26 @@
       "additionalProperties": false,
       "required": ["warn_c", "gate_c", "fail_closed"],
       "properties": {
-        "warn_c": { "type": "number", "const": 44 },
-        "gate_c": { "type": "number", "description": "Above this (battery temp or hottest sysfs zone) radio/tether writes are refused." },
+        "warn_c": { "type": "number", "minimum": 30, "default": 44, "description": "Owner-adjustable warn threshold (floor 30C, must stay below gate_c). Clamped by the daemon on load and on every retune." },
+        "gate_c": { "type": "number", "minimum": 31, "maximum": 48, "description": "Above this (battery temp or hottest sysfs zone) radio/tether writes are refused. Hard-capped at 48C: the gate can be retuned but never disabled." },
         "fail_closed": { "type": "boolean", "const": true, "description": "If thermal cannot be read, treat as unsafe. PRIMARY source is battery temp + /sys/class/thermal; Android status is advisory." }
+      }
+    },
+    "cpu": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Reversible CPU power/perf policy. Only ever reduces when hot; never offlines the little cluster (cpu0-2).",
+      "properties": {
+        "mode": { "type": "string", "enum": ["auto", "performance", "balanced", "eco", "off"], "default": "auto" }
+      }
+    },
+    "hotspot": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Data-sharing Wi-Fi hotspot behavior.",
+      "properties": {
+        "enable_on_boot": { "type": "boolean", "default": true, "description": "Bring the hotspot up at boot from the saved SoftAP config." },
+        "ssid_whitelist": { "type": "array", "items": { "type": "string", "maxLength": 32 }, "maxItems": 16, "default": [], "description": "Auto-toggle: hotspot turns OFF when any listed SSID is scanned nearby, back ON when none is seen. Empty disables the feature." }
       }
     },
     "sms": {
@@ -73,7 +91,7 @@
       "additionalProperties": false,
       "required": ["default_per_min"],
       "properties": {
-        "default_per_min": { "type": "integer", "minimum": 1, "default": 30 },
+        "default_per_min": { "type": "integer", "minimum": 1, "default": 120 },
         "sms_per_min": { "type": "integer", "minimum": 1, "default": 3 },
         "radio_per_min": { "type": "integer", "minimum": 1, "default": 6 }
       }

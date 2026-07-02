@@ -46,7 +46,9 @@ Recommended path:
 3. Point it at the dashboard URL above (local loopback or the Tailscale URL) and
    pin it. Keep the screen-timeout long or use an always-on setting.
 
-A minimal WebView kiosk APK that hard-loads `http://127.0.0.1:18080/` can be
-bundled later (helper APK, Todo 6); until then Good Lock + a browser is the
-no-code route. Keep the token in the browser's `localStorage` (open the
-`?token=` URL once) so shared views never expose it.
+The WebView kiosk APK now ships: `helper/build-apk.sh` builds
+`dist/zflip5-kiosk.apk` (`CoverKioskActivity`, fullscreen, shows-when-locked),
+and the Magisk **Action** button launches it on the cover screen via
+`magisk/action.sh`. Good Lock + a browser remains a no-code fallback. The token
+is seeded once via the `?token=` URL and kept in the WebView's `localStorage`,
+so shared views never expose it.
