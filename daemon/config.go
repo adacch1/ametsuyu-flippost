@@ -39,6 +39,11 @@ type Config struct {
 	Hotspot struct {
 		SSIDWhitelist []string `json:"ssid_whitelist"` // auto-toggle: off when seen, on when absent
 	} `json:"hotspot"`
+	Dashboard struct {
+		// OpenReads: serve read-status GETs WITHOUT a token (tailnet convenience).
+		// Reads only — radio-control and sms always keep their tokens. Off by default.
+		OpenReads bool `json:"open_reads"`
+	} `json:"dashboard"`
 }
 
 // CPUMode returns the configured CPU policy mode, defaulting to "auto".
@@ -89,6 +94,29 @@ func writeConfigAtomic(path string, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+// persistOpenReads rewrites only dashboard.open_reads, preserving other keys.
+func persistOpenReads(path string, open bool) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	dash, _ := m["dashboard"].(map[string]any)
+	if dash == nil {
+		dash = map[string]any{}
+		m["dashboard"] = dash
+	}
+	dash["open_reads"] = open
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(path, out)
 }
 
 // persistHotspotWhitelist rewrites only hotspot.ssid_whitelist, preserving

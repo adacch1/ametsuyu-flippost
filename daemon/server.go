@@ -36,6 +36,9 @@ type Server struct {
 	// airplaneBusy serializes /v1/airplane so overlapping cycles/toggles can't
 	// interleave airplane on/off.
 	airplaneBusy atomic.Bool
+	// openReads: when true, read-status GETs need no token (tailnet convenience).
+	// Seeded from config, toggled at runtime. Reads only; never radio/sms.
+	openReads atomic.Bool
 	// cfgMu serializes the two config-mutating handlers (thermal limits, hotspot
 	// whitelist): they read-modify-write both s.cfg fields and config.json, so
 	// concurrent POSTs would otherwise race and lose updates.
@@ -81,6 +84,7 @@ func NewServer(cfg *Config, col Collector) *Server {
 		cpu: NewCPUController(), hs: NewHotspotController(cfg.Hotspot.SSIDWhitelist)}
 	s.warnBits.Store(math.Float64bits(warn))
 	s.gateBits.Store(math.Float64bits(gate))
+	s.openReads.Store(cfg.Dashboard.OpenReads)
 	s.routes()
 	return s
 }
@@ -122,13 +126,17 @@ func (s *Server) runCPUPolicy() {
 	}
 }
 
-// runHotspotAuto is the background SSID-whitelist loop; the thermal check only
-// gates auto-START (stopping while hot is always allowed).
+// runHotspotAuto is the background SSID-whitelist loop. Not thermal-gated: the
+// hotspot is the modem's primary function (see decideHotspot). The cadence is
+// adaptive — fast when the hotspot is off, gentle when it's on.
 func (s *Server) runHotspotAuto() {
 	for {
-		t := s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed)
-		s.hs.step(t.Safe)
-		time.Sleep(hotspotScanInterval)
+		s.hs.step()
+		if hotspotActive() {
+			time.Sleep(hotspotScanActive)
+		} else {
+			time.Sleep(hotspotScanIdle)
+		}
 	}
 }
 
@@ -161,6 +169,17 @@ func (s *Server) routes() {
 	// Dashboard HTML (no data without a token; the page fetches /v1/* itself).
 	s.mux.HandleFunc("/", s.handleDashboard)
 	s.mux.HandleFunc("/dashboard", s.handleDashboard)
+	// PWA: manifest + service worker so the dashboard installs to the home screen.
+	// Static, no token (they carry no device data).
+	s.mux.HandleFunc("/manifest.webmanifest", s.handleManifest)
+	s.mux.HandleFunc("/sw.js", s.handleServiceWorker)
+	s.mux.HandleFunc("/icon.svg", s.handleIcon)
+	// QR of "<this dashboard's origin>/?token=<read-status>" so a new device
+	// scans instead of typing the token. read-status guarded (you must already
+	// be able to read to share access).
+	s.mux.HandleFunc("/v1/qr", s.guard("read-status", s.handleQR))
+	// Toggle open-reads (tokenless read-status over the tailnet). radio-control.
+	s.mux.HandleFunc("/v1/dashboard/open", s.guardAuth("radio-control", http.MethodPost, s.handleDashboardOpen))
 	s.mux.HandleFunc("/v1/sms/recent", s.guard("sms", s.handleSMSRecent))
 	// tether/cooldown/restart make their own thermal decision (stopping the
 	// hotspot or cooling down must work WHILE hot), so they take the auth-only
@@ -197,6 +216,16 @@ func (s *Server) guard(need string, h http.HandlerFunc) http.HandlerFunc {
 		}
 		have := s.cfg.authScope(r)
 		if have == "" {
+			// Open-reads mode: read-status GETs allowed WITHOUT a token (tailnet
+			// convenience). Reads only — radio-control/sms never take this path.
+			if need == "read-status" && s.openReads.Load() {
+				if !s.rl.allow("open-reads", s.cfg.RateLimits.DefaultPerMin) {
+					writeErr(w, http.StatusTooManyRequests, "rate limited")
+					return
+				}
+				h(w, r)
+				return
+			}
 			writeErr(w, http.StatusUnauthorized, "missing or invalid token")
 			return
 		}
@@ -300,6 +329,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"battery":      s.col.Battery(),
 		"wan_ip":       deviceWanIP(),
 		"airplane":     airplaneOn(),
+		"open_reads":   s.openReads.Load(),
 		"service":      map[string]any{"daemon": "ok", "helper": map[string]any{"available": false}},
 	})
 }
@@ -344,8 +374,10 @@ func (s *Server) handleSMSRecent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTether(w http.ResponseWriter, r *http.Request) {
 	// Toggle the data-sharing hotspot via the root helper. ?action=start|stop
-	// (default start). Starting is thermal-gated (never bring the radio up while
-	// hot); stopping is always allowed since it reduces load.
+	// (default start). Not app-thermal-gated: the hotspot is the modem's primary
+	// function and the app heat source is CPU compute (throttled by the eco CPU
+	// policy), not the Wi-Fi radio; Samsung's own mitigation shuts the AP at
+	// genuinely dangerous temperatures regardless.
 	action := r.URL.Query().Get("action")
 	if action == "" {
 		action = "start"
@@ -355,11 +387,6 @@ func (s *Server) handleTether(w http.ResponseWriter, r *http.Request) {
 		ok := stopHotspot()
 		writeJSON(w, http.StatusOK, map[string]any{"applied": ok, "action": "stop", "active": hotspotActive()})
 	case "start":
-		t := s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed)
-		if !t.Safe {
-			writeErr(w, http.StatusConflict, "refused: unsafe thermal state")
-			return
-		}
 		ok := startHotspot()
 		writeJSON(w, http.StatusOK, map[string]any{"applied": ok, "action": "start", "active": hotspotActive()})
 	default:
@@ -419,16 +446,10 @@ func (s *Server) handleAirplane(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"airplane": true, "hotspot_active": hotspotActive(), "wan_ip": deviceWanIP()})
 	case "off":
 		airplaneSet(false)
-		res := map[string]any{"airplane": false}
-		// A standalone "off" is an explicit fresh hotspot start (not a status-quo
-		// restore like the cycle), so it IS thermal-gated, same as /v1/tether start.
-		if safe {
-			res["hotspot_active"] = restartHotspotRetry()
-		} else {
-			res["hotspot_active"] = hotspotActive()
-			res["note"] = "hotspot not started (thermal gate) — device too warm"
-		}
-		res["wan_ip"] = deviceWanIP()
+		// Restore the hotspot (not app-thermal-gated; the hotspot is the modem's
+		// primary function — see handleTether). Retry: the Wi-Fi stack needs a
+		// moment to settle after airplane-off.
+		res := map[string]any{"airplane": false, "hotspot_active": restartHotspotRetry(), "wan_ip": deviceWanIP()}
 		writeJSON(w, http.StatusOK, res)
 	case "cycle":
 		writeJSON(w, http.StatusOK, airplaneCycle(safe))

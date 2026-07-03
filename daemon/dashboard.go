@@ -1,6 +1,13 @@
 package main
 
-import "net/http"
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"strings"
+
+	qrcode "github.com/skip2/go-qrcode"
+)
 
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.usage.Report())
@@ -17,6 +24,105 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(dashboardHTML))
 }
 
+// handleQR returns a PNG QR of the URL a new device should open to onboard:
+// "<origin>/?token=<read-status>". The origin comes from the request Host, so a
+// dashboard opened over Tailscale QRs the shareable tailnet URL (not 127.0.0.1).
+func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
+	host := r.Host
+	scheme := "http"
+	if r.Header.Get("X-Forwarded-Proto") == "https" || strings.Contains(host, ".ts.net") {
+		scheme = "https"
+	}
+	url := scheme + "://" + host + "/?token=" + s.cfg.Tokens["read-status"]
+	png, err := qrcode.Encode(url, qrcode.Medium, 480)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "qr encode failed")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(png)
+}
+
+// handleDashboardOpen toggles open-reads (tokenless read-status over the tailnet).
+// Body: {"open": true|false}. radio-control, so only the owner flips it.
+func (s *Server) handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Open bool `json:"open"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	s.cfgMu.Lock()
+	s.openReads.Store(body.Open)
+	s.cfg.Dashboard.OpenReads = body.Open
+	if s.cfgPath != "" {
+		if err := persistOpenReads(s.cfgPath, body.Open); err != nil {
+			log.Printf("open_reads: persist failed: %v", err)
+		}
+	}
+	s.cfgMu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"open_reads": body.Open})
+}
+
+// handleIcon serves the home-screen app icon (a maskable signal glyph on the
+// app's dark ground). SVG scales to any size iOS/Android asks for.
+func (s *Server) handleIcon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml")
+	_, _ = w.Write([]byte(appIconSVG))
+}
+
+const appIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="112" fill="#0b0d10"/>
+<g transform="translate(150 300)">
+<rect x="0" y="-40" width="34" height="40" rx="6" fill="#3fb8af"/>
+<rect x="58" y="-80" width="34" height="80" rx="6" fill="#3fb8af"/>
+<rect x="116" y="-128" width="34" height="128" rx="6" fill="#3fb8af"/>
+<rect x="174" y="-184" width="34" height="184" rx="6" fill="#3fb8af"/>
+</g></svg>`
+
+// handleManifest serves the PWA manifest so the dashboard installs as an app.
+func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/manifest+json")
+	_, _ = w.Write([]byte(webManifest))
+}
+
+// handleServiceWorker serves a minimal service worker (installability + a cached
+// app shell so the UI opens instantly and offline shows the last shell).
+func (s *Server) handleServiceWorker(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	_, _ = w.Write([]byte(serviceWorkerJS))
+}
+
+const webManifest = `{
+  "name": "Z Flip 5 Modem",
+  "short_name": "ZF5 Modem",
+  "description": "Admin dashboard for the Z Flip 5 modem",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10",
+  "icons": [
+    {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
+}`
+
+// Minimal SW: takes control, and network-first for navigations with a cached
+// shell fallback. It never caches /v1/* (live data must not be stale).
+const serviceWorkerJS = `self.addEventListener('install',e=>self.skipWaiting());
+self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch',e=>{
+  var u=new URL(e.request.url);
+  if(u.pathname.startsWith('/v1/'))return;               // never cache live data
+  if(e.request.mode==='navigate'){
+    e.respondWith(fetch(e.request).then(r=>{caches.open('zf5').then(c=>c.put('/',r.clone()));return r})
+      .catch(()=>caches.open('zf5').then(c=>c.match('/'))));
+  }
+});`
+
 // dashboardHTML is the Claude Design-built dashboard, integrated into the daemon
 // (fonts dropped for the single-file self-contained build; the system font stack
 // is the fallback). Restructured for the Z Flip 5 cover screen (~352×308 CSS px
@@ -31,6 +137,14 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Z Flip 5 Modem</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0b0d10">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="icon" href="/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ZF5 Modem">
 <style>
   :root{
     --bg:#0b0d10; --card:#161b22; --card-2:#1b212a; --line:#21262d; --line-soft:#1a1f27;
@@ -238,6 +352,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="state-row"><span class="k">WAN IP</span><span class="v mono" id="wanIp">—</span></div>
       <div class="state-row"><span class="k">Airplane</span><span class="v"><span class="dot off" id="apDot"></span><span id="apState">off</span></span></div>
       <button class="setbtn" id="rotateBtn">Rotate IP (airplane cycle)</button>
+      <button class="setbtn" id="hotspotOnBtn" style="margin-top:8px;background:var(--green);color:#04211f">Hotspot On</button>
       <div class="apbtns">
         <button class="minibtn" id="apOnBtn">Airplane On</button>
         <button class="minibtn" id="apOffBtn">Airplane Off + hotspot</button>
@@ -304,6 +419,24 @@ const dashboardHTML = `<!DOCTYPE html>
       <label class="f" for="setTok">radio-control token (stored locally, used by both forms)</label>
       <input id="setTok" type="password" placeholder="paste once">
     </div>
+    <div class="card">
+      <div class="stat-head"><span>Add a device</span><span class="accent" style="background:var(--teal)"></span></div>
+      <div id="qrWrap" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+        <img id="qrImg" alt="Scan to open on another device" width="200" height="200" style="border-radius:10px;background:#fff;padding:8px;display:none">
+        <div class="stat-sub" id="qrHint">Point another phone's camera here — it opens the dashboard and remembers the token.</div>
+      </div>
+      <button class="setbtn" id="installBtn" style="display:none">Install app (add to home screen)</button>
+      <div class="setmsg" id="qrMsg"></div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><span>Open reads (no token on the tailnet)</span><span class="accent" id="orAccent" style="background:#30363d"></span></div>
+      <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="orDot"></span><span id="orState">off</span></span></div>
+      <div class="setgrid" style="grid-template-columns:1fr 1fr">
+        <button class="minibtn" id="orOnBtn" style="min-height:44px">Turn on</button>
+        <button class="minibtn" id="orOffBtn" style="min-height:44px">Turn off</button>
+      </div>
+      <div class="setmsg" id="orMsg">On: any device on your tailnet opens the dashboard with no token — read-only. Off: a token (or the QR) is required. Needs the radio-control token to change.</div>
+    </div>
     <div class="sec-label">Integrations</div>
     <div class="card">
       <div class="intg">
@@ -359,6 +492,7 @@ const dashboardHTML = `<!DOCTYPE html>
     document.querySelectorAll(".screen").forEach(function(sc){sc.classList.toggle("active",sc.id===id);});
     window.scrollTo(0,0);
     active=id;
+    if(id==="settings"&&typeof loadQR==="function")loadQR();
     // Refresh the newly shown tab, but throttle: rapid tab-hopping must not burst
     // past the read-status rate limit (each tick is 2-3 requests).
     var now=Date.now();
@@ -369,7 +503,7 @@ const dashboardHTML = `<!DOCTYPE html>
   function buildCores(n){coresEl.innerHTML="";coreEls=[];for(var i=0;i<n;i++){var c=document.createElement("div");c.className="core";var tr=document.createElement("div");tr.className="track";var f=document.createElement("div");f.className="fill";f.style.height="0%";var idx=document.createElement("div");idx.className="idx num";idx.textContent=i;tr.appendChild(f);c.appendChild(tr);c.appendChild(idx);coresEl.appendChild(c);coreEls.push({core:c,fill:f});}}
   buildCores(8);
 
-  function get(p){return fetch(API+p,{headers:{Authorization:"Bearer "+token}}).then(function(r){if(!r.ok)throw new Error(p+" "+r.status);return r.json();});}
+  function get(p){var h={};if(token)h.Authorization="Bearer "+token;return fetch(API+p,{headers:h}).then(function(r){if(!r.ok)throw new Error(p+" "+r.status);return r.json();});}
   var errEl=document.getElementById("errSlot");
   function showErr(m){errEl.textContent=m;errEl.classList.add("show");}
   function clearErr(){errEl.classList.remove("show");}
@@ -388,6 +522,7 @@ const dashboardHTML = `<!DOCTYPE html>
   function polColor(p){return (p==="SAFE"||p==="RECOVERY")?"green":(p==="WARM"?"amber":"red");}
   function renderStatus(s){
     var net=s.network||{}, bat=s.battery||{}, th=s.thermal||{}, ip=s.wan_ip||{};
+    if(typeof s.open_reads==="boolean"&&document.getElementById("orState"))renderOpenReads(s.open_reads);
     document.getElementById("netType").textContent=net.display||net.type||"—";
     // Always show the WAN IP (header). Airplane on / no data -> explicit label.
     document.getElementById("wanip").textContent=s.airplane?"airplane ✈":(ip.available&&ip.ip?ip.ip:"no data");
@@ -577,6 +712,47 @@ const dashboardHTML = `<!DOCTYPE html>
     return fetch(API+path,{method:"POST",headers:{Authorization:"Bearer "+rt,"Content-Type":"application/json"},body:JSON.stringify(body)})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});});
   }
+
+  // --- Add a device: QR of this dashboard's URL + token, fetched as a blob so
+  // the token rides the auth header, not the <img> src.
+  var qrLoaded=false;
+  function loadQR(){
+    if(qrLoaded)return;
+    var h={};if(token)h.Authorization="Bearer "+token;
+    fetch(API+"/v1/qr",{headers:h}).then(function(r){if(!r.ok)throw new Error(r.status);return r.blob();})
+      .then(function(b){var img=document.getElementById("qrImg");img.src=URL.createObjectURL(b);img.style.display="";qrLoaded=true;})
+      .catch(function(){document.getElementById("qrHint").textContent="QR needs a token or Open reads on. (You're seeing this because reads are open, or your token isn't set.)";});
+  }
+
+  // --- Install (Add to Home Screen). Chrome/Android fires beforeinstallprompt;
+  // iOS has no event — show the manual hint there.
+  var deferredPrompt=null, installBtn=document.getElementById("installBtn"), qrMsg=document.getElementById("qrMsg");
+  window.addEventListener("beforeinstallprompt",function(e){e.preventDefault();deferredPrompt=e;installBtn.style.display="";});
+  installBtn.addEventListener("click",function(){
+    if(!deferredPrompt)return; deferredPrompt.prompt();
+    deferredPrompt.userChoice.then(function(){deferredPrompt=null;installBtn.style.display="none";});
+  });
+  (function(){var ios=/iP(hone|ad|od)/.test(navigator.userAgent), standalone=window.navigator.standalone||matchMedia("(display-mode: standalone)").matches;
+    if(ios&&!standalone)qrMsg.textContent="On iPhone: Share → Add to Home Screen for a one-tap app.";})();
+
+  // --- Open reads toggle (radio-control).
+  var orMsg=document.getElementById("orMsg");
+  function setOpenReads(open){
+    var rt=rtok(orMsg); if(!rt)return;
+    orMsg.textContent="applying…";
+    post("/v1/dashboard/open",{open:open},rt).then(function(res){
+      if(!res.ok){orMsg.textContent="Error: "+(res.j.error||"failed")+(res.j.code===403?" (needs radio-control token)":"");return;}
+      orMsg.textContent=res.j.open_reads?"Open reads ON — any tailnet device can view without a token (read-only).":"Open reads OFF — a token or the QR is required.";
+      renderOpenReads(res.j.open_reads);
+    }).catch(function(e){orMsg.textContent="Error: "+e.message;});
+  }
+  document.getElementById("orOnBtn").addEventListener("click",function(){setOpenReads(true);});
+  document.getElementById("orOffBtn").addEventListener("click",function(){setOpenReads(false);});
+  function renderOpenReads(on){
+    document.getElementById("orState").textContent=on?"on":"off";
+    document.getElementById("orDot").className="dot "+(on?"amber":"off");
+    document.getElementById("orAccent").style.background=on?"var(--amber)":"#30363d";
+  }
   document.getElementById("setBtn").addEventListener("click",function(){
     var rt=rtok(setMsg); if(!rt)return;
     var warn=parseFloat(document.getElementById("setWarn").value), gate=parseFloat(document.getElementById("setGate").value);
@@ -660,6 +836,18 @@ const dashboardHTML = `<!DOCTYPE html>
   document.getElementById("apOffBtn").addEventListener("click",function(){
     apPost("off","disabling airplane…",function(j){return "Airplane OFF"+(j.hotspot_active?" · hotspot back up":(j.note||"")); });
   });
+  // Manual "Hotspot On" — turn the data hotspot on now (not thermal-gated).
+  document.getElementById("hotspotOnBtn").addEventListener("click",function(){
+    var rt=rtok(apMsg); if(!rt)return;
+    apMsg.textContent="starting hotspot…"; apBtns.forEach(function(b){b.disabled=true;});
+    document.getElementById("hotspotOnBtn").disabled=true;
+    post("/v1/tether?action=start",{},rt).then(function(res){
+      apBtns.forEach(function(b){b.disabled=false;}); document.getElementById("hotspotOnBtn").disabled=false;
+      if(!res.ok){apMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      apMsg.textContent=res.j.active?"📶 hotspot on":"⚠️ hotspot did not come up — retry";
+      tick();
+    }).catch(function(e){apBtns.forEach(function(b){b.disabled=false;});document.getElementById("hotspotOnBtn").disabled=false;apMsg.textContent="Error: "+e.message;});
+  });
 
   // Per-tab polling: status+signal always (header indicator), plus only what
   // the visible tab shows. Small screen, small request budget (~36-48/min,
@@ -673,7 +861,8 @@ const dashboardHTML = `<!DOCTYPE html>
   };
   var inFlight=false, seq=0, gateSeeded=false;
   function tick(){
-    if(!token){showErr("No token. Open with ?token=YOUR_READ_STATUS_TOKEN once.");return;}
+    // No early return without a token: try anyway. If "open reads" is on, the
+    // daemon serves reads tokenless; only a real 401 means we need the token.
     if(inFlight)return; // don't stack overlapping ticks on a slow daemon
     inFlight=true;
     var mine=++seq, activeAtStart=active;
@@ -687,13 +876,19 @@ const dashboardHTML = `<!DOCTYPE html>
       if(st)renderStatus(st); if(sg)renderSignal(sg);
       if(activeAtStart===active)ex.forEach(function(e,i){var v=val(2+i);if(v)e[1](v);});
       if(st){clearErr();}
-      else{var e=rs[0].reason;showErr("Live data unavailable — "+(e&&e.message||"status failed"));}
+      else{var e=rs[0].reason,m=e&&e.message||"";
+        if(/ 401/.test(m))showErr("Needs a token. Scan the “Add a device” QR in Settings, open with ?token=…, or turn on Open reads.");
+        else showErr("Live data unavailable — "+(m||"status failed"));}
       // Seed the adjust inputs once from live limits; don't clobber a field the
       // owner is editing on later ticks.
       if(!gateSeeded&&st){document.getElementById("setGate").value=GATE_C;document.getElementById("setWarn").value=WARN_C;gateSeeded=true;}
     }).catch(function(){inFlight=false;});
   }
   tick();setInterval(tick,5000);
+
+  // PWA: register the service worker (installability + instant app-shell). Safe
+  // to fail — the dashboard works without it.
+  if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(function(){});}
 })();
 </script>
 </body>
