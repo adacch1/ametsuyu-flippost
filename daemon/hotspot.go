@@ -18,7 +18,14 @@ import (
 // because Samsung blocks the public scan API while the SoftAP is up. Scans need
 // location services ON — when off, the loop pauses visibly instead of toggling.
 
-const hotspotScanInterval = 2 * time.Minute
+// Adaptive, device-comfortable scan cadence: scan often while the hotspot is
+// OFF (react quickly to leaving a whitelisted network — no clients to disrupt),
+// and back off while it's ON (a scan is off-channel and dips client throughput;
+// we only need to catch arriving at a whitelisted network, which isn't urgent).
+const (
+	hotspotScanIdle   = 60 * time.Second // hotspot off: responsive
+	hotspotScanActive = 3 * time.Minute  // hotspot on: gentle on clients
+)
 
 // moduleDir locates the installed Magisk module (for the helper jar). The
 // watchdog exports ZF5_MODDIR; the fallback is the module's install path.
@@ -133,9 +140,14 @@ func (h *HotspotController) Scan(now string) string {
 // decideHotspot is the pure toggle policy. matched = whitelisted SSIDs seen in
 // this scan; misses = consecutive all-miss scans BEFORE this one. Turning off
 // is immediate (positive evidence); turning on waits for a second consecutive
-// miss so one flaky scan can't bounce the hotspot. Auto-start defers to the
-// thermal gate — never brings the radio up while hot.
-func decideHotspot(matched int, active bool, misses int, thermalSafe bool) (action string, newMisses int) {
+// miss so one flaky scan can't bounce the hotspot.
+//
+// Auto-start is NOT app-thermal-gated: the hotspot is the modem's primary
+// function, the app-level heat source is CPU compute (throttled by the eco CPU
+// policy) not the Wi-Fi radio, and Samsung's own thermal mitigation shuts the
+// AP at genuinely dangerous temperatures regardless. Gating it on the 46 °C
+// app limit just left the modem unable to share internet whenever it ran warm.
+func decideHotspot(matched int, active bool, misses int) (action string, newMisses int) {
 	if matched > 0 {
 		if active {
 			return "stop", 0
@@ -143,7 +155,7 @@ func decideHotspot(matched int, active bool, misses int, thermalSafe bool) (acti
 		return "", 0
 	}
 	misses++
-	if misses >= 2 && !active && thermalSafe {
+	if misses >= 2 && !active {
 		return "start", misses
 	}
 	return "", misses
@@ -241,8 +253,8 @@ func stopHotspot() bool {
 	return strings.Contains(runHelper("com.zflip5.tether.TetherStart", "stop"), "RESULT=STOPPED")
 }
 
-// step runs one scan/decide/act cycle. thermalSafe gates auto-start only.
-func (h *HotspotController) step(thermalSafe bool) {
+// step runs one scan/decide/act cycle.
+func (h *HotspotController) step() {
 	h.mu.Lock()
 	wl := append([]string(nil), h.whitelist...)
 	misses := h.misses
@@ -275,7 +287,7 @@ func (h *HotspotController) step(thermalSafe bool) {
 	st.APCount = len(aps)
 	st.Matched = matchWhitelist(seen, wl)
 	active := hotspotActive()
-	action, newMisses := decideHotspot(len(st.Matched), active, misses, thermalSafe)
+	action, newMisses := decideHotspot(len(st.Matched), active, misses)
 
 	h.mu.Lock()
 	h.lastNearby = aps // feed the Settings "Nearby networks" list from the auto loop too

@@ -5,23 +5,22 @@ import "testing"
 func TestDecideHotspot(t *testing.T) {
 	cases := []struct {
 		matched, misses int
-		active, safe    bool
+		active          bool
 		wantAction      string
 		wantMisses      int
 	}{
-		{1, 0, true, true, "stop", 0}, // whitelisted SSID visible -> stop now
-		{2, 5, false, true, "", 0},    // visible, already off -> stay off, reset misses
-		{0, 0, true, true, "", 1},     // first miss -> wait (hysteresis)
-		{0, 1, false, true, "start", 2},
-		{0, 1, true, true, "", 2},   // already on -> nothing to start
-		{0, 1, false, false, "", 2}, // hot -> never auto-start
-		{0, 9, false, true, "start", 10},
+		{1, 0, true, "stop", 0}, // whitelisted SSID visible -> stop now
+		{2, 5, false, "", 0},    // visible, already off -> stay off, reset misses
+		{0, 0, true, "", 1},     // first miss -> wait (hysteresis)
+		{0, 1, false, "start", 2},
+		{0, 1, true, "", 2}, // already on -> nothing to start
+		{0, 9, false, "start", 10},
 	}
 	for _, c := range cases {
-		action, misses := decideHotspot(c.matched, c.active, c.misses, c.safe)
+		action, misses := decideHotspot(c.matched, c.active, c.misses)
 		if action != c.wantAction || misses != c.wantMisses {
-			t.Errorf("decideHotspot(%d,%v,%d,%v) = (%q,%d) want (%q,%d)",
-				c.matched, c.active, c.misses, c.safe, action, misses, c.wantAction, c.wantMisses)
+			t.Errorf("decideHotspot(%d,%v,%d) = (%q,%d) want (%q,%d)",
+				c.matched, c.active, c.misses, action, misses, c.wantAction, c.wantMisses)
 		}
 	}
 }

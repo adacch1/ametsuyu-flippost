@@ -106,10 +106,13 @@ func TestWrongScope403(t *testing.T) {
 	}
 }
 
-func TestThermalGate409(t *testing.T) {
+func TestHotspotNotThermalGated(t *testing.T) {
+	// The hotspot is the modem's primary function and is NOT app-thermal-gated:
+	// /v1/tether start succeeds even when the collector reports unsafe (Samsung's
+	// own mitigation is the thermal backstop).
 	s := NewServer(testCfg(), fakeCollector{safe: false})
-	if w := do(s, "POST", "/v1/tether", strings.Repeat("c", 64)); w.Code != 409 {
-		t.Fatalf("want 409 unsafe thermal, got %d", w.Code)
+	if w := do(s, "POST", "/v1/tether", strings.Repeat("c", 64)); w.Code != 200 {
+		t.Fatalf("tether must not be thermal-gated, got %d", w.Code)
 	}
 }
 
