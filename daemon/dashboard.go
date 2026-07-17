@@ -20,6 +20,9 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
 	}
+	// Never cache the HTML: the WebView/browser otherwise serves a stale page
+	// after a daemon update (e.g. a new card wouldn't appear until cache expiry).
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(dashboardHTML))
 }
@@ -58,12 +61,34 @@ func (s *Server) handleDashboardOpen(w http.ResponseWriter, r *http.Request) {
 	s.openReads.Store(body.Open)
 	s.cfg.Dashboard.OpenReads = body.Open
 	if s.cfgPath != "" {
-		if err := persistOpenReads(s.cfgPath, body.Open); err != nil {
+		if err := persistDashboardFlag(s.cfgPath, "open_reads", body.Open); err != nil {
 			log.Printf("open_reads: persist failed: %v", err)
 		}
 	}
 	s.cfgMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"open_reads": body.Open})
+}
+
+// handleDashboardControl toggles open-control (tokenless radio-control WRITES
+// over the tailnet). Body: {"open": true|false}. SMS is never affected.
+func (s *Server) handleDashboardControl(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Open bool `json:"open"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	s.cfgMu.Lock()
+	s.openControl.Store(body.Open)
+	s.cfg.Dashboard.OpenControl = body.Open
+	if s.cfgPath != "" {
+		if err := persistDashboardFlag(s.cfgPath, "open_control", body.Open); err != nil {
+			log.Printf("open_control: persist failed: %v", err)
+		}
+	}
+	s.cfgMu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"open_control": body.Open})
 }
 
 // handleIcon serves the home-screen app icon (a maskable signal glyph on the
@@ -110,18 +135,16 @@ const webManifest = `{
   ]
 }`
 
-// Minimal SW: takes control, and network-first for navigations with a cached
-// shell fallback. It never caches /v1/* (live data must not be stale).
-const serviceWorkerJS = `self.addEventListener('install',e=>self.skipWaiting());
-self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));
-self.addEventListener('fetch',e=>{
-  var u=new URL(e.request.url);
-  if(u.pathname.startsWith('/v1/'))return;               // never cache live data
-  if(e.request.mode==='navigate'){
-    e.respondWith(fetch(e.request).then(r=>{caches.open('zf5').then(c=>c.put('/',r.clone()));return r})
-      .catch(()=>caches.open('zf5').then(c=>c.match('/'))));
-  }
-});`
+// Kill switch. A previous version shipped a caching SW that could serve a stale
+// page. This one unregisters itself and wipes all caches, then reloads open
+// windows — so any client still running the old SW self-heals on the next update
+// check. New clients never register a SW at all (see the page script).
+const serviceWorkerJS = `self.addEventListener('install',function(){self.skipWaiting();});
+self.addEventListener('activate',function(e){e.waitUntil((async function(){
+  try{var ks=await caches.keys();await Promise.all(ks.map(function(k){return caches.delete(k);}));}catch(err){}
+  try{await self.registration.unregister();}catch(err){}
+  try{var cs=await self.clients.matchAll({type:'window'});cs.forEach(function(c){c.navigate(c.url);});}catch(err){}
+})());});`
 
 // dashboardHTML is the Claude Design-built dashboard, integrated into the daemon
 // (fonts dropped for the single-file self-contained build; the system font stack
@@ -196,10 +219,7 @@ const dashboardHTML = `<!DOCTYPE html>
   .stat-val small{font-size:.5em;font-weight:600;color:var(--text-2);margin-left:1px}
   .stat-sub{margin-top:6px;font-size:12px;color:var(--text-2)}
   .bar{margin-top:12px;height:6px;border-radius:3px;background:var(--track);overflow:hidden}
-  .bar>i{display:block;height:100%;border-radius:3px;background:var(--blue);transition:width .5s ease}
-  .stat-flex{display:flex;align-items:center;justify-content:space-between;gap:10px}
-  .mini-ring{position:relative;width:52px;height:52px;flex:none}
-  .mini-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+  .bar>i{display:block;height:100%;border-radius:3px;background:var(--teal);transition:width .5s ease}
   .cpu-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:12px}
   .cpu-load{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
   .cpu-load small{font-size:.4em;font-weight:600;color:var(--text-2);margin-left:3px}
@@ -234,11 +254,19 @@ const dashboardHTML = `<!DOCTYPE html>
   /* settings */
   .setgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}
   label.f{font-size:10.5px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px}
-  .setgrid input,.settok input,textarea{width:100%;background:var(--card-2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:11px 12px;font-size:14px;font-family:inherit;min-height:44px}
+  input,textarea{width:100%;background:var(--card-2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:11px 12px;font-size:14px;font-family:inherit;min-height:44px}
   textarea{min-height:76px;resize:vertical;line-height:1.5}
   .settok{margin-top:10px}
   .setbtn{margin-top:12px;width:100%;background:var(--teal);color:#04211f;border:0;border-radius:9px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;min-height:46px}
   .setbtn:disabled{opacity:.5;cursor:default}
+  /* secondary/trigger button: quiet, for occasional actions (speedtest, rotate) so
+     they don't outshout the data. Filled teal stays for commit actions only. */
+  .setbtn.sec{background:var(--card-2);color:var(--teal);border:1px solid var(--line);font-weight:600}
+  .setbtn.sec:active{background:#232a33}
+  .spd{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:4px}
+  .spdcell{text-align:center;background:var(--card-2);border:1px solid var(--line);border-radius:9px;padding:12px 6px}
+  .spdv{font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1}
+  .spdl{font-size:10.5px;color:var(--text-3);font-weight:600;margin-top:5px;text-transform:uppercase;letter-spacing:.04em}
   .minibtn{background:var(--card-2);border:1px solid var(--line);color:var(--teal);border-radius:8px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;min-height:34px}
   .minibtn:disabled{opacity:.5;cursor:default}
   .apbtns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
@@ -258,9 +286,25 @@ const dashboardHTML = `<!DOCTYPE html>
   .wlhead{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin:14px 0 8px}
   .wlchip{display:flex;align-items:center;gap:8px;background:var(--card-2);border:1px solid var(--line);border-radius:8px;padding:6px 6px 6px 12px;margin-bottom:6px;min-height:44px}
   .wlname{flex:1;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .wlx{flex:none;background:none;border:0;color:var(--text-3);font-size:22px;line-height:1;cursor:pointer;width:40px;height:40px;border-radius:7px;font-family:inherit}
+  .wlx{flex:none;background:none;border:0;color:var(--text-3);font-size:22px;line-height:1;cursor:pointer;width:44px;height:44px;border-radius:7px;font-family:inherit}
   .wlx:active,.wlx:focus-visible{color:var(--red);outline:none;background:rgba(240,82,78,.12)}
-  .setmsg{margin-top:9px;font-size:12px;color:var(--text-2);min-height:14px}
+  /* selects share the input look; native arrow hidden for a consistent field */
+  select{width:100%;background:var(--card-2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:11px 34px 11px 12px;font-size:14px;font-family:inherit;min-height:44px;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d8794' stroke-width='2.4' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+  select:focus{outline:none;border-color:var(--teal)}
+  /* preset rows: name+meta open the editor, then Apply, then delete */
+  .prow{display:flex;align-items:center;gap:9px;padding:9px 0;border-top:1px solid var(--line-soft)}
+  .prow:first-child{border-top:0}
+  .pmain{flex:1;min-width:0;background:none;border:0;text-align:left;color:var(--text);font-family:inherit;cursor:pointer;padding:2px 0}
+  .pname{font-size:14px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pname .tag{flex:none;font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--teal);background:rgba(63,184,175,.12);border:1px solid rgba(63,184,175,.3);border-radius:999px;padding:1px 7px}
+  .pmeta{font-size:11.5px;color:var(--text-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .papply{flex:none}
+  .pmain:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:6px}
+  /* nearby add-chips in the trigger picker */
+  .pchips{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+  .pchip{background:var(--card-2);border:1px solid var(--line);color:var(--text-2);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;min-height:36px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pchip.added{color:var(--teal);border-color:rgba(63,184,175,.4)}
+  .setmsg{margin-top:8px;font-size:12px;color:var(--text-2);min-height:14px}
   .footer{margin-top:14px;text-align:center;font-size:11px;color:var(--text-3);font-weight:500}
   .errslot{margin-top:12px;display:none;background:rgba(240,82,78,.09);border:1px solid rgba(240,82,78,.32);color:#ff9b98;border-radius:10px;padding:10px 13px;font-size:12.5px;font-weight:500}
   .errslot.show{display:block}
@@ -276,8 +320,21 @@ const dashboardHTML = `<!DOCTYPE html>
   nav .tab{flex:1;background:none;border:0;cursor:pointer;color:var(--text-3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10px;font-weight:600;transition:color .18s ease}
   nav .tab svg{width:21px;height:21px}
   nav .tab.active{color:var(--text)}nav .tab.active svg{color:var(--teal)}
-  nav .tab:focus-visible,.setbtn:focus-visible,details.cli summary:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:8px}
+  nav .tab:focus-visible,.setbtn:focus-visible,.minibtn:focus-visible,details.cli summary:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:8px}
   input:focus,textarea:focus{outline:none;border-color:var(--teal)}
+  input::placeholder,textarea::placeholder{color:var(--text-3);opacity:1}
+  /* press + hover feedback. Hover is gated so a tap on a touch screen doesn't
+     leave a stuck hover state. */
+  .setbtn:active:not(:disabled),.minibtn:active:not(:disabled){transform:translateY(1px)}
+  .minibtn:active:not(:disabled){background:#232a33}
+  @media (hover:hover){
+    .setbtn:hover:not(:disabled){filter:brightness(1.06)}
+    .minibtn:hover:not(:disabled){border-color:var(--teal)}
+    nav .tab:hover{color:var(--text-2)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
+  }
   /* Cover screen (~352×308): trim chrome so each tab is at most a short scroll */
   @media (max-height:420px){
     header{padding:6px 0 6px}
@@ -321,16 +378,29 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="duo">
       <div class="card">
         <div class="stat-head"><span>Battery</span><span class="accent" id="battAccent" style="background:var(--green)"></span></div>
-        <div class="stat-flex">
-          <div><div class="stat-val num"><span id="battLevel">—</span><small>%</small></div><div class="stat-sub num" id="battSub">—</div></div>
-          <div class="mini-ring"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" fill="none" stroke="var(--track)" stroke-width="5"/><circle id="battRing" cx="22" cy="22" r="18" fill="none" stroke="var(--green)" stroke-width="5" stroke-linecap="round" stroke-dasharray="113.1" stroke-dashoffset="0" style="transition:stroke-dashoffset .6s ease,stroke .4s ease"/></svg></div>
-        </div>
+        <div class="stat-val num"><span id="battLevel">—</span><small>%</small></div>
+        <div class="stat-sub num" id="battSub">—</div>
       </div>
       <div class="card">
         <div class="stat-head"><span>Temp</span><span class="accent" id="tempAccent" style="background:var(--amber)"></span></div>
         <div class="stat-val num" id="tempVal" style="color:var(--amber)"><span id="tempMax">—</span><small>°C</small></div>
         <div class="stat-sub num" id="tempSub">—</div>
       </div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><span>Hotspot preset</span><span id="hpActive" style="color:var(--text-2)">—</span></div>
+      <div id="hpQuick" class="pchips"><div class="stat-sub">No presets — add them in the Presets tab.</div></div>
+      <div class="setmsg" id="hpMsg">Tap to switch the hotspot. Clients drop briefly (~5s), then reconnect.</div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><span>Speedtest</span></div>
+      <div class="spd" id="spdRes">
+        <div class="spdcell"><div class="spdv num" id="spdDown">—</div><div class="spdl">↓ Mbps</div></div>
+        <div class="spdcell"><div class="spdv num" id="spdUp">—</div><div class="spdl">↑ Mbps</div></div>
+        <div class="spdcell"><div class="spdv num" id="spdPing">—</div><div class="spdl">ping ms</div></div>
+      </div>
+      <button class="setbtn sec" id="spdBtn">Run speedtest</button>
+      <div class="setmsg" id="spdMsg">Uses mobile data (tens–hundreds of MB) and heats the radio — run it deliberately. ~15–40s.</div>
     </div>
     <div class="footer">updated <span id="updated">—</span></div>
   </section>
@@ -348,14 +418,14 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="stat-sub" id="hsSub"></div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Connectivity</span><span class="accent" id="apAccent" style="background:var(--blue)"></span></div>
+      <div class="stat-head"><span>Connectivity</span></div>
       <div class="state-row"><span class="k">WAN IP</span><span class="v mono" id="wanIp">—</span></div>
       <div class="state-row"><span class="k">Airplane</span><span class="v"><span class="dot off" id="apDot"></span><span id="apState">off</span></span></div>
-      <button class="setbtn" id="rotateBtn">Rotate IP (airplane cycle)</button>
-      <button class="setbtn" id="hotspotOnBtn" style="margin-top:8px;background:var(--green);color:#04211f">Hotspot On</button>
+      <button class="setbtn sec" id="rotateBtn">Rotate IP (airplane cycle)</button>
+      <button class="setbtn" id="hotspotOnBtn" style="margin-top:8px;background:var(--green);color:#04211f">Turn hotspot on</button>
       <div class="apbtns">
-        <button class="minibtn" id="apOnBtn">Airplane On</button>
-        <button class="minibtn" id="apOffBtn">Airplane Off + hotspot</button>
+        <button class="minibtn" id="apOnBtn">Airplane on</button>
+        <button class="minibtn" id="apOffBtn">Airplane off</button>
       </div>
       <div class="setmsg" id="apMsg">Cycles airplane to pull a fresh carrier IP, then restarts the hotspot. ~15–30s; clients drop briefly.</div>
     </div>
@@ -374,7 +444,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <section class="screen" id="system">
     <div class="card">
-      <div class="stat-head"><span>CPU · per core</span><span class="accent" style="background:var(--violet)"></span></div>
+      <div class="stat-head"><span>CPU · per core</span></div>
       <div class="cpu-head">
         <div class="cpu-load num"><span id="cpuLoad">—</span><small>load 5m</small></div>
         <div class="cpu-meta"><span id="cpuMode">—</span> · <span id="cpuCores">8</span> cores</div>
@@ -382,7 +452,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="cores" id="cores"></div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Memory</span><span class="accent" style="background:var(--blue)"></span></div>
+      <div class="stat-head"><span>Memory</span></div>
       <div class="stat-val num"><span id="memPct">—</span><small>%</small></div>
       <div class="bar"><i id="memBar" style="width:0%"></i></div>
     </div>
@@ -392,9 +462,44 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
   </section>
 
+  <section class="screen" id="presets">
+    <div class="card">
+      <div class="stat-head"><span>Auto-switch by location</span><span class="accent" id="paAccent" style="background:#30363d"></span></div>
+      <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="paDot"></span><span id="paState">off</span></span></div>
+      <div class="setgrid" style="grid-template-columns:1fr 1fr">
+        <button class="minibtn" id="paOnBtn" style="min-height:44px">Turn on</button>
+        <button class="minibtn" id="paOffBtn" style="min-height:44px">Turn off</button>
+      </div>
+      <div class="setmsg">Switches the hotspot preset when a preset's trigger Wi-Fi comes into range. Rides the hotspot scan; needs location services ON.</div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><span>Presets</span><span id="pCount" style="color:var(--text-2)"></span></div>
+      <div id="pList"><div class="stat-sub">No presets yet — create one below.</div></div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><span id="pFormTitle">Create preset</span><button class="minibtn" id="pNewBtn" style="display:none">New</button></div>
+      <label class="f" for="pName">Preset name</label>
+      <input id="pName" type="text" placeholder="Home, Cafe, Event…" maxlength="32">
+      <div class="settok"><label class="f" for="pSsid">Network name (SSID)</label>
+      <input id="pSsid" type="text" placeholder="What devices see" maxlength="32"></div>
+      <div class="settok"><label class="f" for="pPass">Password</label>
+      <input id="pPass" type="password" placeholder="8–63 chars" autocomplete="new-password"></div>
+      <div class="setgrid">
+        <div><label class="f" for="pSec">Security</label><select id="pSec"><option value="wpa2">WPA2</option><option value="wpa3">WPA3</option><option value="open">Open (no password)</option></select></div>
+        <div><label class="f" for="pBand">Band</label><select id="pBand"><option value="5">5 GHz · faster</option><option value="2">2.4 GHz · range</option><option value="6">6 GHz</option></select></div>
+      </div>
+      <div class="settok"><label class="f" for="pTrig">Trigger networks — seeing any one switches to this preset (one per line)</label>
+      <textarea id="pTrig" placeholder="CafeWifi&#10;ACME-staff"></textarea></div>
+      <button class="minibtn" id="pScanBtn">Scan nearby to add</button>
+      <div id="pNearby"></div>
+      <button class="setbtn" id="pSaveBtn">Save preset</button>
+      <div class="setmsg" id="pMsg">Applying a preset briefly bounces the hotspot — connected devices reconnect to the new name.</div>
+    </div>
+  </section>
+
   <section class="screen" id="settings">
     <div class="card">
-      <div class="stat-head"><span>Thermal gate · adjust</span><span class="accent" style="background:var(--red)"></span></div>
+      <div class="stat-head"><span>Thermal gate · adjust</span></div>
       <div class="setgrid">
         <div><label class="f" for="setWarn">Warn °C</label><input id="setWarn" type="number" step="0.5" inputmode="decimal"></div>
         <div><label class="f" for="setGate">Gate °C</label><input id="setGate" type="number" step="0.5" inputmode="decimal"></div>
@@ -408,7 +513,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg" id="nearbyMsg"></div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Hotspot auto-toggle</span><span class="accent" style="background:var(--teal)"></span></div>
+      <div class="stat-head"><span>Hotspot auto-toggle</span></div>
       <label class="f" for="wlBox">SSID whitelist (one per line — hotspot turns OFF when seen, back ON when absent)</label>
       <textarea id="wlBox" placeholder="HomeWifi&#10;OfficeWifi"></textarea>
       <button class="setbtn" id="wlBtn">Save whitelist</button>
@@ -420,7 +525,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <input id="setTok" type="password" placeholder="paste once">
     </div>
     <div class="card">
-      <div class="stat-head"><span>Add a device</span><span class="accent" style="background:var(--teal)"></span></div>
+      <div class="stat-head"><span>Add a device</span></div>
       <div id="qrWrap" style="display:flex;flex-direction:column;align-items:center;gap:10px">
         <img id="qrImg" alt="Scan to open on another device" width="200" height="200" style="border-radius:10px;background:#fff;padding:8px;display:none">
         <div class="stat-sub" id="qrHint">Point another phone's camera here — it opens the dashboard and remembers the token.</div>
@@ -436,6 +541,15 @@ const dashboardHTML = `<!DOCTYPE html>
         <button class="minibtn" id="orOffBtn" style="min-height:44px">Turn off</button>
       </div>
       <div class="setmsg" id="orMsg">On: any device on your tailnet opens the dashboard with no token — read-only. Off: a token (or the QR) is required. Needs the radio-control token to change.</div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><span>Open control (no token for writes)</span><span class="accent" id="ocAccent" style="background:#30363d"></span></div>
+      <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="ocDot"></span><span id="ocState">off</span></span></div>
+      <div class="setgrid" style="grid-template-columns:1fr 1fr">
+        <button class="minibtn" id="ocOnBtn" style="min-height:44px">Turn on</button>
+        <button class="minibtn" id="ocOffBtn" style="min-height:44px">Turn off</button>
+      </div>
+      <div class="setmsg" id="ocMsg">On: writes (airplane, thermal, whitelist, reboot…) need no token on your tailnet. SMS always keeps its token. Enabling needs the radio-control token once.</div>
     </div>
     <div class="sec-label">Integrations</div>
     <div class="card">
@@ -460,6 +574,7 @@ const dashboardHTML = `<!DOCTYPE html>
   <button class="tab" data-screen="net"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 20V4"/></svg>Network</button>
   <button class="tab" data-screen="clientsScr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Clients</button>
   <button class="tab" data-screen="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>System</button>
+  <button class="tab" data-screen="presets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Presets</button>
   <button class="tab" data-screen="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
 </nav>
 
@@ -511,7 +626,7 @@ const dashboardHTML = `<!DOCTYPE html>
   function fmtBytes(b){var gb=b/GIB;if(gb>=1000)return (gb/1024).toFixed(2)+" TB";return (gb>=10?Math.round(gb):gb.toFixed(1))+" GB";}
   function tempColor(c){return c>=GATE_C?"var(--red)":(c>=WARN_C?"var(--amber)":"var(--teal)");}
   function usageColor(p){return p>0.9?"var(--red)":(p>=0.7?"var(--amber)":"var(--teal)");}
-  var CIRC=2*Math.PI*52, BCIRC=2*Math.PI*18;
+  var CIRC=2*Math.PI*52;
 
   function rsrpCls(v){return v>=-95?"good":(v>=-110?"mid":"low");}
   function sinrCls(v){return v>=13?"good":(v>=0?"mid":"low");}
@@ -523,28 +638,31 @@ const dashboardHTML = `<!DOCTYPE html>
   function renderStatus(s){
     var net=s.network||{}, bat=s.battery||{}, th=s.thermal||{}, ip=s.wan_ip||{};
     if(typeof s.open_reads==="boolean"&&document.getElementById("orState"))renderOpenReads(s.open_reads);
-    document.getElementById("netType").textContent=net.display||net.type||"—";
+    if(typeof s.open_control==="boolean"){openControl=s.open_control;if(document.getElementById("ocState"))renderOpenControl(s.open_control);}
+    if(s.hotspot_presets)renderPresets(s.hotspot_presets);
     // Always show the WAN IP (header). Airplane on / no data -> explicit label.
     document.getElementById("wanip").textContent=s.airplane?"airplane ✈":(ip.available&&ip.ip?ip.ip:"no data");
     var ipEl=document.getElementById("wanIp"); if(ipEl){ipEl.textContent=ip.available&&ip.ip?ip.ip:(s.airplane?"— (airplane on)":"— (no data)");}
     var apEl=document.getElementById("apState"); if(apEl){apEl.textContent=s.airplane?"ON":"off";document.getElementById("apDot").className="dot "+(s.airplane?"amber":"off");}
     var pol=s.policy_state||"—", dc=polColor(pol);
+    // Header badge shows thermal-policy health (the device's key risk), not a second
+    // copy of the radio tech that already sits on the left.
+    document.getElementById("netType").textContent=pol;
     document.getElementById("statusDot").className="dot "+dc;
     document.getElementById("policyDot").className="dot "+dc;
     document.getElementById("policyState").textContent=pol;
     if(th.warn_c)WARN_C=th.warn_c; if(th.gate_c)GATE_C=th.gate_c;
 
     // Collector unavailable -> show em-dash, not a fake 0% red battery.
-    var battEl=document.getElementById("battLevel"), bRing=document.getElementById("battRing");
+    var battEl=document.getElementById("battLevel");
     if(bat.available===false||bat.level==null){
       battEl.textContent="—";document.getElementById("battSub").textContent="unavailable";
-      bRing.style.strokeDashoffset=BCIRC.toFixed(1);document.getElementById("battAccent").style.background="#30363d";
+      document.getElementById("battAccent").style.background="#30363d";
     }else{
       var lvl=Math.round(bat.level);
       battEl.textContent=lvl;
       document.getElementById("battSub").textContent=(bat.plugged||"")+" · "+(bat.temp_c!=null?bat.temp_c.toFixed(1)+"°C":"");
       var bcol=lvl<=10?"var(--red)":(lvl<=20?"var(--amber)":"var(--green)");
-      bRing.style.stroke=bcol;bRing.style.strokeDashoffset=(BCIRC*(1-Math.max(0,Math.min(100,lvl))/100)).toFixed(1);
       document.getElementById("battAccent").style.background=bcol;
     }
 
@@ -653,6 +771,17 @@ const dashboardHTML = `<!DOCTYPE html>
     if(!wlLoaded&&h.whitelist){document.getElementById("wlBox").value=h.whitelist.join("\n");wlLoaded=true;}
     renderWhitelist(h.whitelist||[]);
     renderNearby(h);
+    hsActive=!!h.active; renderHotspotBtn();
+  }
+
+  // Hotspot toggle button reflects the current state: press turns it on when off,
+  // off when on.
+  var hsActive=false;
+  function renderHotspotBtn(){
+    var b=document.getElementById("hotspotOnBtn"); if(!b)return;
+    b.textContent=hsActive?"Turn hotspot off":"Turn hotspot on";
+    b.style.background=hsActive?"var(--red)":"var(--green)";
+    b.style.color=hsActive?"#fff":"#04211f";
   }
 
   // Read-only list of what's currently whitelisted, with a × to remove each.
@@ -702,14 +831,19 @@ const dashboardHTML = `<!DOCTYPE html>
   function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
   var setMsg=document.getElementById("setMsg"), setTok=document.getElementById("setTok");
   setTok.value=lsGet("zf5rtok");
+  var openControl=false; // updated from /v1/status; when true writes need no token
+  var OPEN_TOK="__open__"; // sentinel: proceed tokenless (truthy, so rtok callers run)
   function rtok(msgEl){
     var rt=setTok.value.trim();
-    if(!rt){msgEl.textContent="Paste the radio-control token below first.";return null;}
-    lsSet("zf5rtok",rt);
-    return rt;
+    if(rt){lsSet("zf5rtok",rt);return rt;}
+    if(openControl)return OPEN_TOK; // open-control on: no token needed
+    msgEl.textContent="Paste the radio-control token below first.";
+    return null;
   }
   function post(path,body,rt){
-    return fetch(API+path,{method:"POST",headers:{Authorization:"Bearer "+rt,"Content-Type":"application/json"},body:JSON.stringify(body)})
+    var h={"Content-Type":"application/json"};
+    if(rt&&rt!==OPEN_TOK)h.Authorization="Bearer "+rt;
+    return fetch(API+path,{method:"POST",headers:h,body:JSON.stringify(body)})
       .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});});
   }
 
@@ -753,6 +887,28 @@ const dashboardHTML = `<!DOCTYPE html>
     document.getElementById("orDot").className="dot "+(on?"amber":"off");
     document.getElementById("orAccent").style.background=on?"var(--amber)":"#30363d";
   }
+
+  // --- Open control toggle (tokenless radio-control writes). radio-control gated
+  // to change (need the token once to enable, since it starts off).
+  var ocMsg=document.getElementById("ocMsg");
+  function setOpenControl(open){
+    var rt=rtok(ocMsg); if(!rt)return;
+    ocMsg.textContent="applying…";
+    post("/v1/dashboard/control",{open:open},rt).then(function(res){
+      if(!res.ok){ocMsg.textContent="Error: "+(res.j.error||"failed")+(res.j.code===403?" (needs radio-control token)":"");return;}
+      ocMsg.textContent=res.j.open_control?"Open control ON — writes on your tailnet need no token. SMS still does.":"Open control OFF — writes require the radio-control token.";
+      renderOpenControl(res.j.open_control);
+    }).catch(function(e){ocMsg.textContent="Error: "+e.message;});
+  }
+  document.getElementById("ocOnBtn").addEventListener("click",function(){setOpenControl(true);});
+  document.getElementById("ocOffBtn").addEventListener("click",function(){setOpenControl(false);});
+  function renderOpenControl(on){
+    openControl=on;
+    document.getElementById("ocState").textContent=on?"on":"off";
+    document.getElementById("ocDot").className="dot "+(on?"red":"off");
+    document.getElementById("ocAccent").style.background=on?"var(--red)":"#30363d";
+  }
+
   document.getElementById("setBtn").addEventListener("click",function(){
     var rt=rtok(setMsg); if(!rt)return;
     var warn=parseFloat(document.getElementById("setWarn").value), gate=parseFloat(document.getElementById("setGate").value);
@@ -836,18 +992,194 @@ const dashboardHTML = `<!DOCTYPE html>
   document.getElementById("apOffBtn").addEventListener("click",function(){
     apPost("off","disabling airplane…",function(j){return "Airplane OFF"+(j.hotspot_active?" · hotspot back up":(j.note||"")); });
   });
-  // Manual "Hotspot On" — turn the data hotspot on now (not thermal-gated).
+  // Speedtest — deliberate (data + heat). Blocks ~15-40s.
+  var spdMsg=document.getElementById("spdMsg");
+  document.getElementById("spdBtn").addEventListener("click",function(){
+    var rt=rtok(spdMsg); if(!rt)return;
+    var b=document.getElementById("spdBtn");
+    b.disabled=true; spdMsg.textContent="testing… (~15–40s, using data)";
+    ["spdDown","spdUp","spdPing"].forEach(function(id){document.getElementById(id).textContent="…";});
+    post("/v1/speedtest",{},rt).then(function(res){
+      b.disabled=false;
+      var j=res.j||{};
+      if(!res.ok||!j.available){
+        ["spdDown","spdUp","spdPing"].forEach(function(id){document.getElementById(id).textContent="—";});
+        spdMsg.textContent="Speedtest failed: "+(j.error||("HTTP "+(res.j&&res.j.code||"?")));return;
+      }
+      function fmt(v){return (v==null||v<0)?"n/a":v;}
+      document.getElementById("spdDown").textContent=fmt(j.download_mbps);
+      document.getElementById("spdUp").textContent=fmt(j.upload_mbps);
+      document.getElementById("spdPing").textContent=fmt(j.ping_ms);
+      spdMsg.textContent="jitter "+fmt(j.jitter_ms)+" ms · "+esc(j.server||"");
+    }).catch(function(e){b.disabled=false;["spdDown","spdUp","spdPing"].forEach(function(id){document.getElementById(id).textContent="—";});spdMsg.textContent="Error: "+e.message;});
+  });
+
+  // Hotspot toggle — turn it on when off, off when on (not thermal-gated).
   document.getElementById("hotspotOnBtn").addEventListener("click",function(){
     var rt=rtok(apMsg); if(!rt)return;
-    apMsg.textContent="starting hotspot…"; apBtns.forEach(function(b){b.disabled=true;});
-    document.getElementById("hotspotOnBtn").disabled=true;
-    post("/v1/tether?action=start",{},rt).then(function(res){
-      apBtns.forEach(function(b){b.disabled=false;}); document.getElementById("hotspotOnBtn").disabled=false;
+    var stopping=hsActive, action=stopping?"stop":"start", hb=document.getElementById("hotspotOnBtn");
+    apMsg.textContent=stopping?"stopping hotspot…":"starting hotspot…"; apBtns.forEach(function(b){b.disabled=true;}); hb.disabled=true;
+    post("/v1/tether?action="+action,{},rt).then(function(res){
+      apBtns.forEach(function(b){b.disabled=false;}); hb.disabled=false;
       if(!res.ok){apMsg.textContent="Error: "+(res.j.error||"failed");return;}
-      apMsg.textContent=res.j.active?"📶 hotspot on":"⚠️ hotspot did not come up — retry";
+      hsActive=!!res.j.active; renderHotspotBtn();
+      apMsg.textContent=res.j.active?"📶 hotspot on":(stopping?"hotspot off":"⚠️ hotspot did not come up — retry");
       tick();
-    }).catch(function(e){apBtns.forEach(function(b){b.disabled=false;});document.getElementById("hotspotOnBtn").disabled=false;apMsg.textContent="Error: "+e.message;});
+    }).catch(function(e){apBtns.forEach(function(b){b.disabled=false;});hb.disabled=false;apMsg.textContent="Error: "+e.message;});
   });
+
+  // --- Hotspot presets: create/edit/apply + Wi-Fi-fingerprint auto-switch.
+  // The list is rebuilt from /v1/status each tick and from mutation responses;
+  // the create/edit FORM is never touched by a refresh, so editing is safe.
+  var pMsg=document.getElementById("pMsg"), presetList=[], editingId="";
+  function presetMeta(p){
+    var sec=p.security==="open"?"Open":String(p.security||"").toUpperCase();
+    var band=p.band==="2"?"2.4 GHz":(p.band==="6"?"6 GHz":"5 GHz");
+    var n=(p.triggers&&p.triggers.length)||0;
+    return esc(p.ssid)+" · "+band+" · "+sec+(n?(" · "+n+" trigger"+(n===1?"":"s")):"");
+  }
+  function renderPresets(hp){
+    if(!hp)return;
+    presetList=hp.presets||[];
+    renderPresetShortcut(hp); // Home quick-switch (runs before the pList early-return)
+    var on=!!hp.auto_switch;
+    document.getElementById("paState").textContent=on?"on":"off";
+    document.getElementById("paDot").className="dot "+(on?"green":"off");
+    document.getElementById("paAccent").style.background=on?"var(--green)":"#30363d";
+    document.getElementById("pCount").textContent=presetList.length?(presetList.length+"/12"):"";
+    var box=document.getElementById("pList");
+    if(!presetList.length){box.innerHTML='<div class="stat-sub">No presets yet — create one below.</div>';return;}
+    var html="";
+    presetList.forEach(function(p,i){
+      var act=hp.active&&p.id===hp.active;
+      html+='<div class="prow">'
+        +'<button class="pmain" data-idx="'+i+'"><div class="pname">'+esc(p.name)+(act?'<span class="tag">active</span>':'')+'</div><div class="pmeta">'+presetMeta(p)+'</div></button>'
+        +'<button class="minibtn papply" data-idx="'+i+'"'+(act?' disabled':'')+'>'+(act?'On':'Apply')+'</button>'
+        +'<button class="wlx pdel" data-idx="'+i+'" aria-label="Delete preset">&times;</button>'
+      +'</div>';
+    });
+    box.innerHTML=html;
+    box.querySelectorAll(".pmain").forEach(function(b){b.addEventListener("click",function(){editPreset(presetList[+b.getAttribute("data-idx")]);});});
+    box.querySelectorAll(".papply").forEach(function(b){b.addEventListener("click",function(){applyPreset(presetList[+b.getAttribute("data-idx")]);});});
+    box.querySelectorAll(".pdel").forEach(function(b){b.addEventListener("click",function(){deletePreset(presetList[+b.getAttribute("data-idx")]);});});
+  }
+  // Home-tab shortcut: active preset + one-tap switch chips. Same data as the
+  // Presets tab; applies via applyPreset with the Home message element.
+  var hpMsg=document.getElementById("hpMsg");
+  function renderPresetShortcut(hp){
+    var box=document.getElementById("hpQuick"); if(!box)return;
+    var list=hp.presets||[], act=hp.active;
+    var actName=""; list.forEach(function(p){if(p.id===act)actName=p.name;});
+    document.getElementById("hpActive").textContent=actName?("on “"+actName+"”"):(list.length?"none active":"");
+    if(!list.length){box.innerHTML='<div class="stat-sub">No presets — add them in the Presets tab.</div>';return;}
+    var html="";
+    list.forEach(function(p,i){var o=p.id===act;
+      html+='<button class="pchip hpq'+(o?" added":"")+'" data-idx="'+i+'"'+(o?' disabled':'')+'>'+(o?"● ":"")+esc(p.name)+'</button>';});
+    box.innerHTML=html;
+    box.querySelectorAll(".hpq").forEach(function(b){b.addEventListener("click",function(){applyPreset(list[+b.getAttribute("data-idx")],hpMsg);});});
+  }
+  function editPreset(p){
+    if(!p)return;
+    editingId=p.id;
+    document.getElementById("pName").value=p.name||"";
+    document.getElementById("pSsid").value=p.ssid||"";
+    document.getElementById("pPass").value="";
+    document.getElementById("pPass").placeholder=p.has_pass?"leave blank to keep current":"8–63 chars";
+    document.getElementById("pSec").value=p.security||"wpa2";
+    document.getElementById("pBand").value=p.band||"5";
+    document.getElementById("pTrig").value=(p.triggers||[]).join("\n");
+    document.getElementById("pFormTitle").textContent="Edit “"+(p.name||"preset")+"”";
+    document.getElementById("pSaveBtn").textContent="Update preset";
+    document.getElementById("pNewBtn").style.display="";
+    document.getElementById("pNearby").innerHTML="";
+    pMsg.textContent="";
+    document.getElementById("pFormTitle").scrollIntoView({block:"nearest"});
+  }
+  function resetPresetForm(){
+    editingId="";
+    ["pName","pSsid","pPass","pTrig"].forEach(function(id){document.getElementById(id).value="";});
+    document.getElementById("pPass").placeholder="8–63 chars";
+    document.getElementById("pSec").value="wpa2"; document.getElementById("pBand").value="5";
+    document.getElementById("pFormTitle").textContent="Create preset";
+    document.getElementById("pSaveBtn").textContent="Save preset";
+    document.getElementById("pNewBtn").style.display="none";
+    document.getElementById("pNearby").innerHTML=""; pMsg.textContent="";
+  }
+  document.getElementById("pNewBtn").addEventListener("click",resetPresetForm);
+  document.getElementById("pSaveBtn").addEventListener("click",function(){
+    var rt=rtok(pMsg); if(!rt)return;
+    var name=document.getElementById("pName").value.trim(), ssid=document.getElementById("pSsid").value.trim();
+    var pass=document.getElementById("pPass").value, sec=document.getElementById("pSec").value, band=document.getElementById("pBand").value;
+    var triggers=document.getElementById("pTrig").value.split("\n").map(function(s){return s.trim();}).filter(Boolean);
+    if(!name){pMsg.textContent="Preset name required.";return;}
+    if(!ssid){pMsg.textContent="Network name (SSID) required.";return;}
+    if(sec!=="open"&&!pass&&!editingId){pMsg.textContent="Password (8–63 chars) required for a new "+sec.toUpperCase()+" preset.";return;}
+    var body={id:editingId,name:name,ssid:ssid,passphrase:pass,security:sec,band:band,triggers:triggers};
+    var b=document.getElementById("pSaveBtn"); b.disabled=true; pMsg.textContent=editingId?"updating…":"saving…";
+    post("/v1/presets",body,rt).then(function(res){
+      b.disabled=false;
+      if(!res.ok){pMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      renderPresets(res.j.hotspot_presets); resetPresetForm();
+      pMsg.textContent="Saved “"+name+"”.";
+    }).catch(function(e){b.disabled=false;pMsg.textContent="Error: "+e.message;});
+  });
+  function applyPreset(p,msgEl){
+    if(!p)return; msgEl=msgEl||pMsg; var rt=rtok(msgEl); if(!rt)return;
+    msgEl.textContent="switching to “"+p.name+"”… clients drop briefly (~5s).";
+    var sel=".papply,.hpq";
+    document.querySelectorAll(sel).forEach(function(b){b.disabled=true;});
+    post("/v1/presets/apply",{id:p.id},rt).then(function(res){
+      document.querySelectorAll(sel).forEach(function(b){b.disabled=false;});
+      if(!res.ok){msgEl.textContent="Error: "+(res.j.error||(res.j.code===409?"an apply is already running":"failed"));return;}
+      renderPresets(res.j.hotspot_presets);
+      msgEl.textContent="Now on “"+p.name+"” ("+esc(res.j.ssid||p.ssid)+").";
+      tick();
+    }).catch(function(e){document.querySelectorAll(sel).forEach(function(b){b.disabled=false;});msgEl.textContent="Error: "+e.message;});
+  }
+  function deletePreset(p){
+    if(!p)return; var rt=rtok(pMsg); if(!rt)return;
+    pMsg.textContent="deleting…";
+    post("/v1/presets/delete",{id:p.id},rt).then(function(res){
+      if(!res.ok){pMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      renderPresets(res.j); if(editingId===p.id)resetPresetForm();
+      pMsg.textContent="Deleted “"+p.name+"”.";
+    }).catch(function(e){pMsg.textContent="Error: "+e.message;});
+  }
+  function setPresetAuto(on){
+    var rt=rtok(pMsg); if(!rt)return; pMsg.textContent="applying…";
+    post("/v1/presets/auto",{on:on},rt).then(function(res){
+      if(!res.ok){pMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      renderPresets(res.j);
+      pMsg.textContent=on?"Auto-switch ON — presets follow the Wi-Fi in range.":"Auto-switch off.";
+    }).catch(function(e){pMsg.textContent="Error: "+e.message;});
+  }
+  document.getElementById("paOnBtn").addEventListener("click",function(){setPresetAuto(true);});
+  document.getElementById("paOffBtn").addEventListener("click",function(){setPresetAuto(false);});
+  document.getElementById("pScanBtn").addEventListener("click",function(){
+    var rt=rtok(pMsg); if(!rt)return;
+    var sb=document.getElementById("pScanBtn"); sb.disabled=true; pMsg.textContent="scanning… (a few seconds)";
+    post("/v1/hotspot/scan",{},rt).then(function(res){
+      sb.disabled=false;
+      if(!res.ok){pMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      if(res.j.paused==="location_off"){pMsg.textContent="Turn on location services to scan.";return;}
+      var names=(res.j.nearby||[]).map(function(a){return a.ssid;});
+      renderTriggerChips(names);
+      pMsg.textContent=names.length?(names.length+" network"+(names.length===1?"":"s")+" in range — tap to add as a trigger."):"No networks in range.";
+    }).catch(function(e){sb.disabled=false;pMsg.textContent="Error: "+e.message;});
+  });
+  function renderTriggerChips(ssids){
+    var box=document.getElementById("pNearby");
+    if(!ssids.length){box.innerHTML="";return;}
+    var cur=document.getElementById("pTrig").value.split("\n").map(function(s){return s.trim();});
+    var html='<div class="pchips">';
+    ssids.forEach(function(s,i){html+='<button class="pchip'+(cur.indexOf(s)>=0?" added":"")+'" data-idx="'+i+'">'+esc(s)+'</button>';});
+    box.innerHTML=html+'</div>';
+    box.querySelectorAll(".pchip").forEach(function(b){b.addEventListener("click",function(){
+      var s=ssids[+b.getAttribute("data-idx")], ta=document.getElementById("pTrig");
+      var lines=ta.value.split("\n").map(function(x){return x.trim();}).filter(Boolean);
+      if(lines.indexOf(s)<0){lines.push(s);ta.value=lines.join("\n");b.classList.add("added");}
+    });});
+  }
 
   // Per-tab polling: status+signal always (header indicator), plus only what
   // the visible tab shows. Small screen, small request budget (~36-48/min,
@@ -886,9 +1218,14 @@ const dashboardHTML = `<!DOCTYPE html>
   }
   tick();setInterval(tick,5000);
 
-  // PWA: register the service worker (installability + instant app-shell). Safe
-  // to fail — the dashboard works without it.
-  if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(function(){});}
+  // No service worker: for a single-file loopback/tailnet app it only risked
+  // serving a stale cached page (it survives Cache-Control: no-store). Actively
+  // tear down any SW a previous version installed, and clear its caches, so the
+  // page is always the freshly-served one.
+  if("serviceWorker" in navigator){
+    navigator.serviceWorker.getRegistrations().then(function(rs){rs.forEach(function(r){r.unregister();});}).catch(function(){});
+    if(window.caches&&caches.keys){caches.keys().then(function(ks){ks.forEach(function(k){caches.delete(k);});}).catch(function(){});}
+  }
 })();
 </script>
 </body>

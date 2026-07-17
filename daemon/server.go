@@ -29,6 +29,7 @@ type Server struct {
 	usage   *UsageTracker
 	cpu     *CPUController
 	hs      *HotspotController
+	presets *PresetManager
 	// Adjustable thermal limits (atomic float bits) so the owner can retune the
 	// gate at runtime; seeded from config, clamped to a safe range on write.
 	warnBits atomic.Uint64
@@ -39,6 +40,11 @@ type Server struct {
 	// openReads: when true, read-status GETs need no token (tailnet convenience).
 	// Seeded from config, toggled at runtime. Reads only; never radio/sms.
 	openReads atomic.Bool
+	// openControl: when true, radio-control WRITES need no token either (owner's
+	// tailnet-only, app-less device). NEVER opens sms. Off by default.
+	openControl atomic.Bool
+	// speedtestBusy: only one speedtest at a time (each is heavy on data + heat).
+	speedtestBusy atomic.Bool
 	// cfgMu serializes the two config-mutating handlers (thermal limits, hotspot
 	// whitelist): they read-modify-write both s.cfg fields and config.json, so
 	// concurrent POSTs would otherwise race and lose updates.
@@ -85,6 +91,9 @@ func NewServer(cfg *Config, col Collector) *Server {
 	s.warnBits.Store(math.Float64bits(warn))
 	s.gateBits.Store(math.Float64bits(gate))
 	s.openReads.Store(cfg.Dashboard.OpenReads)
+	s.openControl.Store(cfg.Dashboard.OpenControl)
+	// cfgPath is set on s AFTER NewServer (see main), so resolve it lazily.
+	s.presets = NewPresetManager(cfg.HotspotPresets, func() string { return s.cfgPath })
 	s.routes()
 	return s
 }
@@ -132,6 +141,15 @@ func (s *Server) runCPUPolicy() {
 func (s *Server) runHotspotAuto() {
 	for {
 		s.hs.step()
+		// Preset auto-switch (Wi-Fi fingerprint) rides the same scan. step() only
+		// scans when the whitelist is non-empty, so when presets need a scan and
+		// the whitelist is empty, do a scan-only refresh first.
+		if s.presets.AutoOn() {
+			if len(s.hs.Whitelist()) == 0 {
+				s.hs.Scan(time.Now().Format(time.RFC3339))
+			}
+			s.presets.MaybeAutoSwitch(s.hs.LastSeenSSIDs())
+		}
 		if hotspotActive() {
 			time.Sleep(hotspotScanActive)
 		} else {
@@ -158,6 +176,15 @@ func (s *Server) routes() {
 	// On-demand scan-only refresh of the nearby-networks list (radio-control:
 	// it drives the radio off-channel briefly and is rate-limited like a write).
 	s.mux.HandleFunc("/v1/hotspot/scan", s.guardAuth("radio-control", http.MethodPost, s.handleHotspotScan))
+	// Hotspot presets: GET lists (read-status, passphrases redacted), POST upserts
+	// (radio-control). Method-dispatched so the two scopes coexist on one path.
+	s.mux.HandleFunc("/v1/presets", s.handlePresets)
+	s.mux.HandleFunc("/v1/presets/apply", s.guardAuth("radio-control", http.MethodPost, s.handlePresetApply))
+	s.mux.HandleFunc("/v1/presets/delete", s.guardAuth("radio-control", http.MethodPost, s.handlePresetDelete))
+	s.mux.HandleFunc("/v1/presets/auto", s.guardAuth("radio-control", http.MethodPost, s.handlePresetAuto))
+	// Speedtest: in-process Ookla test. radio-control (heavy: data + heat); one
+	// at a time; blocks ~15-40s.
+	s.mux.HandleFunc("/v1/speedtest", s.guardAuth("radio-control", http.MethodPost, s.handleSpeedtest))
 	// Airplane trigger + IP-rotation cycle. Airplane on/off always works (turning
 	// the radio OFF must work while hot); a fresh hotspot start ("off" mode) is
 	// thermal-gated like /v1/tether, while the cycle restores a pre-existing
@@ -180,6 +207,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/qr", s.guard("read-status", s.handleQR))
 	// Toggle open-reads (tokenless read-status over the tailnet). radio-control.
 	s.mux.HandleFunc("/v1/dashboard/open", s.guardAuth("radio-control", http.MethodPost, s.handleDashboardOpen))
+	// Toggle open-control (tokenless radio-control writes). radio-control gated —
+	// to ENABLE it you still need the token once (it starts off).
+	s.mux.HandleFunc("/v1/dashboard/control", s.guardAuth("radio-control", http.MethodPost, s.handleDashboardControl))
 	s.mux.HandleFunc("/v1/sms/recent", s.guard("sms", s.handleSMSRecent))
 	// tether/cooldown/restart make their own thermal decision (stopping the
 	// hotspot or cooling down must work WHILE hot), so they take the auth-only
@@ -281,6 +311,17 @@ func (s *Server) guardAuth(need, method string, h http.HandlerFunc) http.Handler
 		}
 		have := s.cfg.authScope(r)
 		if have == "" {
+			// Open-control mode: radio-control WRITES allowed WITHOUT a token
+			// (owner's tailnet-only, app-less device). NEVER for sms — that
+			// scope always requires its token.
+			if need == "radio-control" && s.openControl.Load() {
+				if !s.rl.allow("open-control", s.cfg.RateLimits.RadioPerMin) {
+					writeErr(w, http.StatusTooManyRequests, "rate limited")
+					return
+				}
+				h(w, r)
+				return
+			}
 			writeErr(w, http.StatusUnauthorized, "missing or invalid token")
 			return
 		}
@@ -322,15 +363,17 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		worst = th.MaxC
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"health":       s.col.Health(),
-		"thermal":      th,
-		"policy_state": string(classify(worst, s.warnC(), s.gateC())),
-		"network":      s.col.Network(),
-		"battery":      s.col.Battery(),
-		"wan_ip":       deviceWanIP(),
-		"airplane":     airplaneOn(),
-		"open_reads":   s.openReads.Load(),
-		"service":      map[string]any{"daemon": "ok", "helper": map[string]any{"available": false}},
+		"health":          s.col.Health(),
+		"thermal":         th,
+		"policy_state":    string(classify(worst, s.warnC(), s.gateC())),
+		"network":         s.col.Network(),
+		"battery":         s.col.Battery(),
+		"wan_ip":          deviceWanIP(),
+		"airplane":        airplaneOn(),
+		"open_reads":      s.openReads.Load(),
+		"open_control":    s.openControl.Load(),
+		"hotspot_presets": s.presets.statusRedacted(),
+		"service":         map[string]any{"daemon": "ok", "helper": map[string]any{"available": false}},
 	})
 }
 
@@ -458,6 +501,17 @@ func (s *Server) handleAirplane(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleSpeedtest runs one in-process speedtest (nearest server) and returns
+// the result. Serialized; 409 if one is already running.
+func (s *Server) handleSpeedtest(w http.ResponseWriter, r *http.Request) {
+	if !s.speedtestBusy.CompareAndSwap(false, true) {
+		writeErr(w, http.StatusConflict, "a speedtest is already running")
+		return
+	}
+	defer s.speedtestBusy.Store(false)
+	writeJSON(w, http.StatusOK, runSpeedtest())
+}
+
 // handleHotspotScan runs an immediate scan and returns the refreshed status
 // (including the nearby list). Scan-only: it never toggles the hotspot.
 func (s *Server) handleHotspotScan(w http.ResponseWriter, r *http.Request) {
@@ -468,6 +522,95 @@ func (s *Server) handleHotspotScan(w http.ResponseWriter, r *http.Request) {
 	// enable-location-then-Scan flow doesn't show "paused" next to fresh results.
 	st.Paused = paused
 	writeJSON(w, http.StatusOK, st)
+}
+
+// handlePresets dispatches by method: GET lists presets (read-status), POST
+// creates/edits one (radio-control). Two scopes on one path.
+func (s *Server) handlePresets(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.guard("read-status", s.handlePresetList)(w, r)
+	case http.MethodPost:
+		s.guardAuth("radio-control", http.MethodPost, s.handlePresetUpsert)(w, r)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handlePresetList(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.presets.statusRedacted())
+}
+
+// handlePresetUpsert creates a preset (no id) or edits one (id set). On edit an
+// empty passphrase keeps the stored one.
+func (s *Server) handlePresetUpsert(w http.ResponseWriter, r *http.Request) {
+	var p Preset
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&p); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	saved, err := s.presets.Upsert(p)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"saved": saved.ID, "hotspot_presets": s.presets.statusRedacted()})
+}
+
+// handlePresetDelete removes a preset. Body: {"id":"home"}.
+func (s *Server) handlePresetDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	if err := s.presets.Delete(body.ID); err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.presets.statusRedacted())
+}
+
+// handlePresetApply switches the live SoftAP to a preset now. Body: {"id":"home"}.
+// Blocks a few seconds when the hotspot is up (it bounces the AP). Not
+// thermal-gated: reconfiguring the hotspot is the modem's job, and Samsung's own
+// mitigation still applies.
+func (s *Server) handlePresetApply(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	p, err := s.presets.Apply(body.ID)
+	if err != nil {
+		if err == errApplyBusy {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"applied": p.ID, "ssid": p.SSID,
+		"hotspot": s.hs.Status(), "hotspot_presets": s.presets.statusRedacted(),
+	})
+}
+
+// handlePresetAuto toggles Wi-Fi-fingerprint auto-switch. Body: {"on":true}.
+func (s *Server) handlePresetAuto(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	s.presets.SetAuto(body.On)
+	writeJSON(w, http.StatusOK, s.presets.statusRedacted())
 }
 
 // handleHotspotWhitelist replaces the SSID whitelist. Body: {"ssids":["home"]}.

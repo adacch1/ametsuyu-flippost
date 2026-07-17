@@ -10,7 +10,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-SRC=("$HERE/helper/tether/TetherStart.java" "$HERE/helper/tether/WifiScan.java")
+SRC=("$HERE/helper/tether/TetherStart.java" "$HERE/helper/tether/WifiScan.java" "$HERE/helper/tether/SetSoftApConfig.java")
 OUT="$HERE/magisk/tether/tether.jar"
 
 : "${ANDROID_HOME:=/opt/homebrew/share/android-commandlinetools}"

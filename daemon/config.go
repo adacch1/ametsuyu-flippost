@@ -39,10 +39,14 @@ type Config struct {
 	Hotspot struct {
 		SSIDWhitelist []string `json:"ssid_whitelist"` // auto-toggle: off when seen, on when absent
 	} `json:"hotspot"`
-	Dashboard struct {
+	HotspotPresets HotspotPresets `json:"hotspot_presets"` // named SoftAP configs + Wi-Fi-triggered auto-switch
+	Dashboard      struct {
 		// OpenReads: serve read-status GETs WITHOUT a token (tailnet convenience).
-		// Reads only — radio-control and sms always keep their tokens. Off by default.
+		// Reads only. Off by default.
 		OpenReads bool `json:"open_reads"`
+		// OpenControl: allow radio-control WRITES without a token too (owner's
+		// tailnet-only, app-less device). SMS is NEVER opened. Off by default.
+		OpenControl bool `json:"open_control"`
 	} `json:"dashboard"`
 }
 
@@ -96,8 +100,8 @@ func writeConfigAtomic(path string, data []byte) error {
 	return nil
 }
 
-// persistOpenReads rewrites only dashboard.open_reads, preserving other keys.
-func persistOpenReads(path string, open bool) error {
+// persistDashboardFlag rewrites only dashboard.<key>, preserving other keys.
+func persistDashboardFlag(path, key string, val bool) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -111,7 +115,7 @@ func persistOpenReads(path string, open bool) error {
 		dash = map[string]any{}
 		m["dashboard"] = dash
 	}
-	dash["open_reads"] = open
+	dash[key] = val
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -136,6 +140,34 @@ func persistHotspotWhitelist(path string, ssids []string) error {
 		m["hotspot"] = hs
 	}
 	hs["ssid_whitelist"] = ssids
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(path, out)
+}
+
+// persistHotspotPresets rewrites only hotspot_presets, preserving every other
+// key. The struct is marshaled through JSON to a plain any so it lands in the
+// map without dropping sibling keys the daemon doesn't model.
+func persistHotspotPresets(path string, hp HotspotPresets) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	hb, err := json.Marshal(hp)
+	if err != nil {
+		return err
+	}
+	var hv any
+	if err := json.Unmarshal(hb, &hv); err != nil {
+		return err
+	}
+	m["hotspot_presets"] = hv
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
