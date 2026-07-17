@@ -38,6 +38,50 @@ public final class TetherStart {
         // "stop" arg: tear the hotspot down (SSID-whitelist auto-toggle). The
         // stopTethering(int) verb is fire-and-forget; the caller re-checks the
         // swlan0 interface for ground truth.
+        // Default start path: Samsung's SemWifiManager.setWifiApEnabled(cfg, true) —
+        // the exact call the stock Settings hotspot toggle makes. Only this path
+        // builds a SemSoftApConfiguration (vendor IE + 11ax), so hostapd gets
+        // ieee80211ac=1 / 11axmode=1 and the AP runs 802.11ax HE80 (1200Mbps).
+        // TetheringManager/ConnectivityManager both hand SoftApModeManager a null
+        // config, which lands the AP on 802.11n HT40 (300Mbps).
+        if (args.length == 0 || args[0].equals("sem")) {
+            try {
+                Class<?> semClass = Class.forName("com.samsung.android.wifi.SemWifiManager");
+                Object sem = ctx.getClass().getMethod("getSystemService", Class.class).invoke(ctx, semClass);
+                Class<?> wmClass2 = Class.forName("android.net.wifi.WifiManager");
+                Object wm2 = ctx.getClass().getMethod("getSystemService", Class.class).invoke(ctx, wmClass2);
+                Object cfg2 = wmClass2.getMethod("getSoftApConfiguration").invoke(wm2);
+                Class<?> cfgClass2 = Class.forName("android.net.wifi.SoftApConfiguration");
+                if (sem != null && cfg2 != null) {
+                    Object ok2 = semClass.getMethod("setWifiApEnabled", cfgClass2, boolean.class)
+                            .invoke(sem, cfg2, true);
+                    if (Boolean.TRUE.equals(ok2)) {
+                        System.out.println("RESULT=STARTED via=SemWifiManager.setWifiApEnabled");
+                        Thread.sleep(1500);
+                        System.exit(0);
+                    }
+                    System.out.println("NOTE sem_enable_rejected, falling back");
+                }
+            } catch (Throwable t) {
+                System.out.println("NOTE sem_enable_unavailable=" + t);
+            }
+            // fall through to the TetheringManager path below
+        }
+
+        // "hotspot" arg: bring the AP up via WifiManager.startTetheredHotspot(cfg)
+        // instead of a bare TetheringManager request. Diagnostic for the 802.11ax
+        // path — a request with no SoftApConfiguration lands the AP on 11n HT40.
+        if (args.length > 0 && args[0].equals("hotspot")) {
+            Class<?> wmClass = Class.forName("android.net.wifi.WifiManager");
+            Object wm = ctx.getClass().getMethod("getSystemService", Class.class).invoke(ctx, wmClass);
+            Object cfg = wmClass.getMethod("getSoftApConfiguration").invoke(wm);
+            Class<?> cfgClass = Class.forName("android.net.wifi.SoftApConfiguration");
+            Object ok = wmClass.getMethod("startTetheredHotspot", cfgClass).invoke(wm, cfg);
+            System.out.println("RESULT=" + (Boolean.TRUE.equals(ok) ? "STARTED" : "FAILED code=rejected"));
+            Thread.sleep(1500);
+            System.exit(Boolean.TRUE.equals(ok) ? 0 : 1);
+        }
+
         if (args.length > 0 && args[0].equals("stop")) {
             tmClass.getMethod("stopTethering", int.class).invoke(tm, TETHERING_WIFI);
             Thread.sleep(1500); // let the teardown land before we exit
@@ -49,6 +93,25 @@ public final class TetherStart {
         Constructor<?> bctor = builderClass.getConstructor(int.class);
         Object builder = bctor.newInstance(TETHERING_WIFI);
         Class<?> reqClass = Class.forName("android.net.TetheringManager$TetheringRequest");
+
+        // Attach the saved SoftApConfiguration to the request. A request with no
+        // config still brings the AP up, but the HAL then starts hostapd with
+        // ieee80211ac=0 / 11axmode=0 and the AP is pinned to 802.11n HT40. The
+        // stock Settings toggle attaches the config, which is what unlocks
+        // 802.11ax HE80 (1200Mbps vs 300Mbps).
+        try {
+            Class<?> wmClass = Class.forName("android.net.wifi.WifiManager");
+            Object wm = ctx.getClass().getMethod("getSystemService", Class.class).invoke(ctx, wmClass);
+            Object cfg = wmClass.getMethod("getSoftApConfiguration").invoke(wm);
+            Class<?> cfgClass = Class.forName("android.net.wifi.SoftApConfiguration");
+            if (cfg != null) {
+                builderClass.getMethod("setSoftApConfiguration", cfgClass).invoke(builder, cfg);
+                System.out.println("CFG attached to request");
+            }
+        } catch (Throwable t) {
+            System.out.println("NOTE no_cfg_on_request=" + t);
+        }
+
         Object req = builderClass.getMethod("build").invoke(builder);
 
         Executor exec = Runnable::run;
