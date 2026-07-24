@@ -128,8 +128,8 @@ const webManifest = `{
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0b0d10",
-  "theme_color": "#0b0d10",
+  "background_color": "#1E2B25",
+  "theme_color": "#1E2B25",
   "icons": [
     {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
   ]
@@ -161,7 +161,7 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Z Flip 5 Modem</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0b0d10">
+<meta name="theme-color" content="#1E2B25">
 <link rel="apple-touch-icon" href="/icon.svg">
 <link rel="icon" href="/icon.svg">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -173,26 +173,19 @@ const dashboardHTML = `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700&family=Nunito:wght@400;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#FFFDF2; --card:#FFFFFF; --card-2:#FFF3CF; --line:#F2DFA8; --line-soft:#F2DFA8;
-    --text:#3E3428; --text-2:#77694F; --text-3:#A5987E; /* 4.7:1 on card — small labels need AA */
-    --teal:#4FBE73; --green:#4FBE73; --amber:#FFCE3E; --red:#FF7A59; --blue:#45C4EA; --violet:#45C4EA;
-    --track:#FFF3CF; --radius:16px; --tabbar-h:60px;
-    --on-color:#FFFFFF; --focus-ring:0 0 0 3px #DCF5E4;
-    --shadow-sm:0 2px 6px rgba(56,167,95,0.12); --shadow-md:0 6px 18px rgba(56,167,95,0.16); --shadow-lg:0 12px 34px rgba(56,167,95,0.20);
-    --shadow-inset:inset 0 1px 3px rgba(56,167,95,.15);
-    --user-bg:linear-gradient(135deg, #DCF5E4, #DFF5FC);
-    --font-display:"Baloo 2",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-  }
-  :root[data-theme="night"]{
-    --bg:#1E2B25; --card:#27362E; --card-2:#182420; --text:#F4EEDD; --text-2:#B9C6BB; --text-3:#7E8F85;
+    --bg:#1E2B25; --card:#27362E; --card-2:#182420; --line:rgba(79,190,115,0.16); --line-soft:rgba(79,190,115,0.16);
+    --text:#F4EEDD; --text-2:#B9C6BB; --text-3:#7E8F85;
+    --teal:#4FBE73; --green:#4FBE73; --green-600:#38A75F; --amber:#FFCE3E; --red:#FF7A59; --blue:#45C4EA; --violet:#45C4EA;
+    --track:#182420; --radius:16px; --tabbar-h:60px; --ring-100:rgba(79,190,115,.16);
     --on-color:#1E2B25; --focus-ring:0 0 0 3px #4E8D5F;
     --shadow-sm:0 2px 6px rgba(0,0,0,.30); --shadow-md:0 6px 18px rgba(0,0,0,.35); --shadow-lg:0 12px 34px rgba(0,0,0,.45);
     --shadow-inset:inset 0 1px 3px rgba(0,0,0,.35);
-    --line:rgba(79,190,115,0.16); --line-soft:rgba(79,190,115,0.16);
-    --track:#182420;
+    --user-bg:#1E2B25;
+    --font-display:"Baloo 2",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   }
   @keyframes acPop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
   *{box-sizing:border-box;margin:0;padding:0}
+  button{border:0;background:none;color:inherit;font:inherit;cursor:pointer;-webkit-appearance:none;appearance:none;-webkit-tap-highlight-color:transparent}
   html,body{height:100%}
   body{
     background:var(--bg); color:var(--text);
@@ -203,8 +196,7 @@ const dashboardHTML = `<!DOCTYPE html>
   .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace}
   .bg-layer,.bg-scrim{position:fixed;inset:0;z-index:-1;pointer-events:none}
   .bg-layer{background:var(--user-bg);background-size:cover;background-position:center}
-  .bg-scrim{background:rgba(62,52,40,0.65)}
-  :root[data-theme="night"] .bg-scrim{background:rgba(30,43,37,0.65)}
+  .bg-scrim{background:rgba(30,43,37,0.65)}
   .app{max-width:720px;margin:0 auto;min-height:100%;padding:0 12px calc(var(--tabbar-h) + 12px + 16px)}
   .screen{display:none}
   .screen.active{display:block;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
@@ -218,19 +210,12 @@ const dashboardHTML = `<!DOCTYPE html>
   .sigind .lab{font-size:14px;font-weight:700}
   .sigind .op{font-size:10.5px;color:var(--text-3);font-weight:500}
   .netbadge{display:flex;align-items:center;gap:7px;background:var(--card);box-shadow:var(--shadow-sm);border-radius:999px;padding:6px 11px 6px 10px;font-size:12.5px;font-weight:600;letter-spacing:.02em}
-  .themebtn{flex:none;width:44px;height:44px;background:none;border:0;border-radius:999px;color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center}
-  .themebtn svg{width:20px;height:20px}
-  [data-theme="night"] .themebtn .theme-sun{display:none}
-  .themebtn .theme-moon{display:none}
-  [data-theme="night"] .themebtn .theme-moon{display:block}
-  .themebtn:focus-visible{outline:none;box-shadow:var(--focus-ring);border-radius:999px}
-  @media (hover:hover){.themebtn:hover{background:var(--card-2);color:var(--teal)}}
-  .themebtn:active{background:var(--card-2)}
   .dot{width:8px;height:8px;border-radius:50%;flex:none}
   .dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.red{background:var(--red)}.dot.off{background:var(--text-3)}
   .card{background:var(--card);box-shadow:var(--shadow-sm);border-radius:var(--radius);padding:14px}
-  .card+.card,.grid+.card,.card+.grid{margin-top:10px}
-  .hero{display:flex;flex-direction:column;align-items:center;padding:14px 14px 12px;background:radial-gradient(120% 80% at 50% 0%,rgba(56,167,95,.06),transparent 60%),var(--card)}
+  .card+.card,.grid+.card,.card+.grid,.duo+.card,.duo+.grid{margin-top:16px}
+  .duo>.card{margin-top:0}
+  .hero{display:flex;flex-direction:column;align-items:center;padding:16px 14px 14px;background:radial-gradient(120% 80% at 50% 0%,rgba(56,167,95,.06),transparent 60%),var(--card);box-shadow:var(--shadow-md)}
   .ring-wrap{position:relative;width:min(44vw,180px);aspect-ratio:1}
   .ring-wrap svg{width:100%;height:100%;transform:rotate(-90deg)}
   .ring-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-align:center}
@@ -241,7 +226,7 @@ const dashboardHTML = `<!DOCTYPE html>
   .ring-caption{margin-top:4px;font-size:12.5px;color:var(--text-2)}
   .ring-caption b{color:var(--text);font-weight:600}
   .grid{display:grid;grid-template-columns:1fr;gap:10px}
-  .duo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
   .stat-head{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px}
   .stat-head .accent{width:7px;height:7px;border-radius:50%}
   .stat-val{font-family:var(--font-display);font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
@@ -291,12 +276,12 @@ const dashboardHTML = `<!DOCTYPE html>
   .setbtn:active:not(:disabled){box-shadow:none;transform:scale(0.97)}
   /* secondary/trigger button: quiet, for occasional actions (speedtest, rotate) so
      they don't outshout the data. Filled teal stays for commit actions only. */
-  .setbtn.sec{background:var(--card-2);color:var(--teal);font-weight:600;box-shadow:none}
-  .setbtn.sec:active{background:#F2DFA8}
-  :root[data-theme="night"] .setbtn.sec:active{background:#31423A}
+  .setbtn.sec{background:var(--card);color:var(--green-600);font-weight:600;box-shadow:inset 0 0 0 2px var(--ring-100)}
+  .setbtn.sec:active{background:#31423A}
   .spd{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:4px}
-  .spdcell{text-align:center;background:var(--card-2);border-radius:10px;padding:12px 6px}
-  .spdv{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1}
+  .spdcell{text-align:center;background:var(--card-2);border-radius:10px;padding:12px 6px;box-shadow:var(--shadow-inset)}
+  .spdv{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1;transition:color .2s cubic-bezier(0.4,0,0.2,1)}
+  .spdv:not(.has-value){color:var(--text-3);font-size:20px}
   .spdl{font-size:10.5px;color:var(--text-3);font-weight:600;margin-top:5px;text-transform:uppercase;letter-spacing:.04em}
   .minibtn{background:var(--card-2);color:var(--teal);border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;min-height:34px;transition:transform .14s cubic-bezier(0.34,1.56,0.64,1), filter .14s cubic-bezier(0.34,1.56,0.64,1), box-shadow .14s cubic-bezier(0.34,1.56,0.64,1)}
   .minibtn:disabled{opacity:.5;cursor:default}
@@ -320,8 +305,7 @@ const dashboardHTML = `<!DOCTYPE html>
   .wlx{flex:none;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--text-3);cursor:pointer;width:44px;height:44px;border-radius:7px;font-family:inherit}
   .wlx:active,.wlx:focus-visible{color:var(--red);outline:none;background:rgba(240,82,78,.12)}
   /* selects share the input look; native arrow hidden for a consistent field */
-  select{width:100%;background-color:var(--card-2);border:2px solid transparent;border-radius:10px;color:var(--text);padding:11px 34px 11px 12px;font-size:14px;font-family:inherit;min-height:44px;box-shadow:var(--shadow-inset);-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23A5987E' stroke-width='2.4' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
-  :root[data-theme="night"] select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237E8F85' stroke-width='2.4' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")}
+  select{width:100%;background-color:var(--card-2);border:2px solid transparent;border-radius:10px;color:var(--text);padding:11px 34px 11px 12px;font-size:14px;font-family:inherit;min-height:44px;box-shadow:var(--shadow-inset);-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237E8F85' stroke-width='2.4' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
   select:focus{outline:none;border-color:var(--teal);box-shadow:var(--focus-ring)}
   /* preset rows: name+meta open the editor, then Apply, then delete */
   .prow{display:flex;align-items:center;gap:9px;padding:9px 0;border-top:1px solid var(--line-soft);animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
@@ -336,10 +320,6 @@ const dashboardHTML = `<!DOCTYPE html>
   .pchips{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
   .pchip{background:var(--card-2);color:var(--text-2);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;min-height:36px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
   .pchip.added{color:var(--teal)}
-  .bgswatches{display:flex;gap:12px;flex-wrap:wrap}
-  .bgswatch{width:48px;height:48px;border-radius:10px;border:3px solid transparent;box-shadow:var(--shadow-sm);cursor:pointer;padding:0}
-  .bgswatch.sel{border-color:var(--green)}
-  .bgdivider{margin:16px 0 12px;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);text-align:center}
   .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
   .setmsg{margin-top:8px;font-size:12px;color:var(--text-2);min-height:14px}
   .footer{margin-top:14px;text-align:center;font-size:11px;color:var(--text-3);font-weight:500}
@@ -364,12 +344,11 @@ const dashboardHTML = `<!DOCTYPE html>
   /* press + hover feedback. Hover is gated so a tap on a touch screen doesn't
      leave a stuck hover state. */
   .minibtn:active:not(:disabled){transform:scale(0.97)}
-  .minibtn:active:not(:disabled){background:#F2DFA8}
-  :root[data-theme="night"] .minibtn:active:not(:disabled){background:#31423A}
+  .minibtn:active:not(:disabled){background:#31423A}
   @media (hover:hover){
     .setbtn:hover:not(:disabled){filter:brightness(1.06)}
     .setbtn:hover:not(:disabled):not(.sec){transform:translateY(-2px) scale(1.03)}
-    .minibtn:hover:not(:disabled){border-color:var(--teal)}
+    .minibtn:hover:not(:disabled){box-shadow:inset 0 0 0 2px var(--teal)}
     nav .tab:hover{color:var(--text-2)}
   }
   @media (prefers-reduced-motion:reduce){
@@ -389,7 +368,6 @@ const dashboardHTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<script>(function(){try{var t=localStorage.getItem("zf5theme");if(t==="night"||(!t&&window.matchMedia("(prefers-color-scheme: dark)").matches)){document.documentElement.setAttribute("data-theme","night");}}catch(e){}})();</script>
 <div class="bg-layer" aria-hidden="true"></div>
 <div class="bg-scrim" aria-hidden="true"></div>
 <div class="app">
@@ -400,10 +378,6 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
     <div class="netbadge"><span class="dot amber" id="statusDot"></span><span id="netType">—</span></div>
     <!-- op kept for the operator name, shown on the Network signal card -->
-    <button class="themebtn" id="themeBtn" aria-label="Toggle dark theme" type="button">
-      <svg class="theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-      <svg class="theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
-    </button>
   </header>
   <div class="errslot" id="errSlot" role="alert"></div>
 
@@ -563,19 +537,9 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
     <div class="card">
       <div class="stat-head"><span>Background</span></div>
-      <div class="bgswatches" id="bgSwatches">
-        <button class="bgswatch" data-preset="meadow" style="background:linear-gradient(135deg, #DCF5E4, #DFF5FC)" aria-label="Meadow"></button>
-        <button class="bgswatch" data-preset="dune" style="background:linear-gradient(135deg, #F2DFA8, #FFF3C6)" aria-label="Dune"></button>
-        <button class="bgswatch" data-preset="coral" style="background:linear-gradient(135deg, #FFCE3E, #FF7A59)" aria-label="Coral Dusk"></button>
-        <button class="bgswatch" data-preset="pine" style="background:linear-gradient(135deg, #1E2B25, #27362E)" aria-label="Pine Night"></button>
-      </div>
-      <div class="bgdivider">or</div>
       <input type="file" id="bgFile" accept="image/*" class="visually-hidden">
-      <button class="setbtn sec" id="bgFileBtn" type="button">Choose photo</button>
-      <div class="settok"><label class="f" for="bgUrl">Custom image URL</label>
-      <input id="bgUrl" type="text" placeholder="https://… or data:image/…"></div>
-      <button class="setbtn sec" id="bgApplyBtn">Apply</button>
-      <div class="setmsg" id="bgMsg">Pick a preset, choose a photo, or paste an https:// or data:image/ URL.</div>
+      <label class="setbtn sec" id="bgFileBtn" for="bgFile" style="display:block;text-align:center">Choose photo</label>
+      <div class="setmsg" id="bgMsg">Pick a photo from your device.</div>
     </div>
     <div class="card">
       <div class="stat-head"><span>Nearby networks</span><button class="minibtn" id="scanBtn">Scan now</button></div>
@@ -932,44 +896,13 @@ const dashboardHTML = `<!DOCTYPE html>
   function lsGet(k){try{return localStorage.getItem(k)||"";}catch(e){return "";}}
   function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
 
-  document.getElementById("themeBtn").addEventListener("click",function(){
-    var night=document.documentElement.getAttribute("data-theme")==="night";
-    if(night){document.documentElement.removeAttribute("data-theme");lsSet("zf5theme","light");}
-    else{document.documentElement.setAttribute("data-theme","night");lsSet("zf5theme","night");}
-  });
-
-  // --- Background picker: 4 token-built presets + a custom image URL, applied
-  // via the --user-bg CSS var and persisted client-side (no server round trip).
-  var BG_PRESETS={
-    meadow:"linear-gradient(135deg, #DCF5E4, #DFF5FC)",
-    dune:"linear-gradient(135deg, #F2DFA8, #FFF3C6)",
-    coral:"linear-gradient(135deg, #FFCE3E, #FF7A59)",
-    pine:"linear-gradient(135deg, #1E2B25, #27362E)"
-  };
-  var bgMsg=document.getElementById("bgMsg"), bgUrl=document.getElementById("bgUrl");
-  var bgSwatchEls=document.querySelectorAll(".bgswatch");
-  function markSwatch(preset){bgSwatchEls.forEach(function(b){b.classList.toggle("sel",b.getAttribute("data-preset")===preset);});}
-  function applyBgPreset(preset,persist){
-    var g=BG_PRESETS[preset]; if(!g)return;
-    document.documentElement.style.setProperty("--user-bg",g);
-    markSwatch(preset);
-    if(persist){try{localStorage.setItem("zf5bg",JSON.stringify({type:"preset",value:preset}));}catch(e){}}
-  }
-  function isSafeBgUrl(v){return (v.indexOf("https://")===0||v.indexOf("data:image/")===0)&&v.indexOf('"')<0&&v.indexOf(")")<0&&v.indexOf(";")<0;}
+  // --- Background picker: a photo, applied via the --user-bg CSS var and
+  // persisted client-side as a resized/compressed data URL (no server round trip).
+  var bgMsg=document.getElementById("bgMsg");
   function applyCustom(v,persist){
     document.documentElement.style.setProperty("--user-bg",'url("'+v+'")');
-    markSwatch(null);
-    if(persist){try{localStorage.setItem("zf5bg",JSON.stringify({type:"custom",value:v}));}catch(e){}}
+    if(persist){try{localStorage.setItem("zf5bg",v);}catch(e){}}
   }
-  bgSwatchEls.forEach(function(b){b.addEventListener("click",function(){applyBgPreset(b.getAttribute("data-preset"),true);bgMsg.textContent="Background updated.";});});
-  document.getElementById("bgApplyBtn").addEventListener("click",function(){
-    var v=bgUrl.value.trim();
-    if(!v){bgMsg.textContent="Paste an image URL first.";return;}
-    if(!isSafeBgUrl(v)){bgMsg.textContent="Only https:// or data:image/ URLs are allowed (no quotes, parentheses, or semicolons).";return;}
-    applyCustom(v,true);
-    bgMsg.textContent="Background updated.";
-  });
-  document.getElementById("bgFileBtn").addEventListener("click",function(){document.getElementById("bgFile").click();});
   document.getElementById("bgFile").addEventListener("change",function(e){
     var file=e.target.files&&e.target.files[0]; e.target.value=""; if(!file)return;
     if(file.type.indexOf("image/")!==0){bgMsg.textContent="Pick an image file.";return;}
@@ -995,10 +928,8 @@ const dashboardHTML = `<!DOCTYPE html>
   });
   (function initBg(){
     var saved=null;
-    try{var raw=localStorage.getItem("zf5bg");if(raw)saved=JSON.parse(raw);}catch(e){}
-    if(saved&&saved.type==="preset"&&BG_PRESETS[saved.value]){applyBgPreset(saved.value,false);}
-    else if(saved&&saved.type==="custom"&&isSafeBgUrl(saved.value)){applyCustom(saved.value,false);bgUrl.value=saved.value;}
-    else{applyBgPreset("meadow",false);}
+    try{saved=localStorage.getItem("zf5bg");}catch(e){}
+    if(saved&&saved.indexOf("data:image/")===0)applyCustom(saved,false);
   })();
 
   var setMsg=document.getElementById("setMsg"), setTok=document.getElementById("setTok");
@@ -1170,7 +1101,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var rt=rtok(spdMsg); if(!rt)return;
     var b=document.getElementById("spdBtn");
     b.disabled=true; spdMsg.textContent="testing… (~15–40s, using data)";
-    ["spdDown","spdUp","spdPing"].forEach(function(id){document.getElementById(id).textContent="…";});
+    ["spdDown","spdUp","spdPing"].forEach(function(id){var el=document.getElementById(id);el.textContent="…";el.classList.remove("has-value");});
     post("/v1/speedtest",{},rt).then(function(res){
       b.disabled=false;
       var j=res.j||{};
@@ -1179,9 +1110,10 @@ const dashboardHTML = `<!DOCTYPE html>
         spdMsg.textContent="Speedtest failed: "+(j.error||("HTTP "+(res.j&&res.j.code||"?")));return;
       }
       function fmt(v){return (v==null||v<0)?"n/a":v;}
-      document.getElementById("spdDown").textContent=fmt(j.download_mbps);
-      document.getElementById("spdUp").textContent=fmt(j.upload_mbps);
-      document.getElementById("spdPing").textContent=fmt(j.ping_ms);
+      function setStat(id,v){var el=document.getElementById(id);el.textContent=fmt(v);el.classList.add("has-value");}
+      setStat("spdDown",j.download_mbps);
+      setStat("spdUp",j.upload_mbps);
+      setStat("spdPing",j.ping_ms);
       spdMsg.textContent="jitter "+fmt(j.jitter_ms)+" ms · "+esc(j.server||"");
     }).catch(function(e){b.disabled=false;["spdDown","spdUp","spdPing"].forEach(function(id){document.getElementById(id).textContent="—";});spdMsg.textContent="Error: "+e.message;});
   });

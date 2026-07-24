@@ -1,8 +1,13 @@
 package com.zflip5.modem;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Bundle;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebView;
 import android.webkit.WebSettings;
 
@@ -12,6 +17,12 @@ import android.webkit.WebSettings;
 //   adb shell am start -n com.zflip5.modem/.CoverKioskActivity -e token <READ_STATUS>
 public class CoverKioskActivity extends Activity {
     private static final String BASE = "http://127.0.0.1:18080/";
+    private static final int FILE_CHOOSER_REQUEST = 51;
+
+    // No AndroidX in this Gradle-free build, so the file-chooser handoff uses
+    // the classic startActivityForResult/onActivityResult pair rather than the
+    // modern Activity Result API.
+    private ValueCallback<Uri[]> filePathCallback;
 
     @Override
     protected void onCreate(Bundle b) {
@@ -42,6 +53,29 @@ public class CoverKioskActivity extends Activity {
         WebSettings s = wv.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
+        // Plain WebView has no file-chooser UI by default: <input type="file">
+        // (the dashboard's background-photo picker) is a silent no-op without
+        // this. onShowFileChooser hands off to the system picker and returns
+        // the result via filePathCallback in onActivityResult below.
+        wv.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (filePathCallback != null) {
+                    filePathCallback.onReceiveValue(null);
+                }
+                filePathCallback = callback;
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("image/*");
+                try {
+                    startActivityForResult(intent, FILE_CHOOSER_REQUEST);
+                } catch (ActivityNotFoundException e) {
+                    filePathCallback = null;
+                    return false;
+                }
+                return true;
+            }
+        });
         setContentView(wv);
 
         String url = BASE;
@@ -52,5 +86,19 @@ public class CoverKioskActivity extends Activity {
             }
         }
         wv.loadUrl(url);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != FILE_CHOOSER_REQUEST || filePathCallback == null) {
+            return;
+        }
+        Uri[] results = null;
+        if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+            results = new Uri[]{data.getData()};
+        }
+        filePathCallback.onReceiveValue(results);
+        filePathCallback = null;
     }
 }
