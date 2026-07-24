@@ -245,6 +245,7 @@ const dashboardHTML = `<!DOCTYPE html>
     background:var(--bg); color:var(--text);
     font-family:"Nunito",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased; font-feature-settings:"tnum" 1; line-height:1.4;
+    display:flex; flex-direction:column;
   }
   .num{font-variant-numeric:tabular-nums}
   .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace}
@@ -253,7 +254,12 @@ const dashboardHTML = `<!DOCTYPE html>
   .bg-scrim{background:transparent;transition:background .3s cubic-bezier(0.4,0,0.2,1)}
   [data-bg="photo"] .bg-scrim{background:rgba(0,0,0,0.65)}
   [data-surface="ivory"][data-bg="photo"] .bg-scrim{background:rgba(255,255,255,0.72)}
-  .app{max-width:720px;margin:0 auto;min-height:100%;padding:0 12px calc(var(--tabbar-h) + 12px + 16px)}
+  /* .app is the bounded, independently-scrolling content pane: flex:1 makes it
+     fill exactly the space between the viewport top and nav's own footprint
+     (nav is a normal-flow sibling below it, not an overlay), so page content
+     can never appear at or behind the nav -- no floating-overlay peek-through,
+     no corner-gap bleed, at any scroll position, not just at rest. */
+  .app{max-width:720px;width:100%;margin:0 auto;padding:0 12px 16px;flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
   .screen{display:none}
   .screen.active{display:block;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
   header{position:sticky;top:0;z-index:5;margin:0 -12px 16px;padding:10px 12px 14px;border-radius:0 0 20px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(var(--bg-rgb),.72);-webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5);box-shadow:var(--shadow-sm)}
@@ -392,7 +398,11 @@ const dashboardHTML = `<!DOCTYPE html>
   .intg .desc{font-size:12px;color:var(--text-2);margin-top:2px}
   .intg-foot{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-soft);display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);font-weight:500}
   .managed{display:inline-flex;align-items:center;gap:6px;flex:none;font-size:11.5px;font-weight:600;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);color:#5ed36c;padding:6px 11px;border-radius:999px}
-  nav{position:fixed;left:12px;right:12px;max-width:696px;margin:0 auto;bottom:calc(12px + env(safe-area-inset-bottom));z-index:20;height:var(--tabbar-h);background:var(--card);box-shadow:var(--shadow-sm);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-radius:999px;display:flex}
+  /* Normal-flow footer, not an overlay: a sibling of the scrollable .app pane,
+     so it never floats over page content -- nothing can appear at or behind
+     it, at any scroll position. Still visually a floating centered pill via
+     margin/max-width, just no longer position:fixed. */
+  nav{flex:none;width:calc(100% - 24px);max-width:696px;margin:12px auto calc(12px + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--card);box-shadow:var(--shadow-sm);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-radius:999px;display:flex}
   nav .tab{flex:1;background:none;border:0;cursor:pointer;color:var(--text-3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10px;font-weight:600;transition:color .14s cubic-bezier(0.34,1.56,0.64,1)}
   nav .tab svg{width:21px;height:21px;border-radius:999px;transition:background-color .14s cubic-bezier(0.34,1.56,0.64,1),color .14s cubic-bezier(0.34,1.56,0.64,1),padding .14s cubic-bezier(0.34,1.56,0.64,1)}
   nav .tab.active{color:var(--text)}
@@ -719,7 +729,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var id=tab.getAttribute("data-screen");
     tabs.forEach(function(t){t.classList.toggle("active",t===tab);if(t===tab)t.setAttribute("aria-current","page");else t.removeAttribute("aria-current");});
     document.querySelectorAll(".screen").forEach(function(sc){sc.classList.toggle("active",sc.id===id);});
-    window.scrollTo(0,0);
+    var appEl=document.querySelector(".app"); if(appEl)appEl.scrollTop=0;
     active=id;
     if(id==="settings"&&typeof loadQR==="function")loadQR();
     // Refresh the newly shown tab, but throttle: rapid tab-hopping must not burst
