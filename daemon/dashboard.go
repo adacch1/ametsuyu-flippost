@@ -173,15 +173,31 @@ const dashboardHTML = `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700&family=Nunito:wght@400;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#1E2B25; --card:#27362E; --card-2:#182420; --line:rgba(79,190,115,0.16); --line-soft:rgba(79,190,115,0.16);
+    --bg:#1E2B25; --bg-rgb:30,43,37; --card:#27362E; --card-2:#182420; --line:rgba(79,190,115,0.16); --line-soft:rgba(79,190,115,0.16);
     --text:#F4EEDD; --text-2:#B9C6BB; --text-3:#7E8F85;
     --teal:#4FBE73; --green:#4FBE73; --green-600:#38A75F; --amber:#FFCE3E; --red:#FF7A59; --blue:#45C4EA; --violet:#45C4EA;
     --track:#182420; --radius:16px; --tabbar-h:60px; --ring-100:rgba(79,190,115,.16);
     --on-color:#1E2B25; --focus-ring:0 0 0 3px #4E8D5F;
     --shadow-sm:0 2px 6px rgba(0,0,0,.30); --shadow-md:0 6px 18px rgba(0,0,0,.35); --shadow-lg:0 12px 34px rgba(0,0,0,.45);
     --shadow-inset:inset 0 1px 3px rgba(0,0,0,.35);
-    --user-bg:#1E2B25;
+    --user-bg:var(--bg);
     --font-display:"Baloo 2",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  [data-surface="ivory"]{
+    --bg:#FFFDF2; --bg-rgb:255,253,242; --card:#FFFFFF; --card-2:#FFF3CF; --line:#F2DFA8; --line-soft:#F2DFA8;
+    --text:#3E3428; --text-2:#77694F; --text-3:#A5987E;
+    --track:#FFF3CF; --ring-100:#DCF5E4;
+    --on-color:#FFFFFF; --focus-ring:0 0 0 3px #DCF5E4;
+    --shadow-sm:0 2px 6px rgba(56,167,95,0.12); --shadow-md:0 6px 18px rgba(56,167,95,0.16); --shadow-lg:0 12px 34px rgba(56,167,95,0.20);
+    --shadow-inset:inset 0 1px 3px rgba(56,167,95,.15);
+  }
+  [data-surface="black"]{
+    --bg:#0B0D10; --bg-rgb:11,13,16; --card:#161B22; --card-2:#0D1117; --line:rgba(79,190,115,0.14); --line-soft:rgba(79,190,115,0.14);
+    --text:#E6EDF3; --text-2:#9AA5B1; --text-3:#7D8794;
+    --track:#0D1117; --ring-100:rgba(79,190,115,.16);
+    --on-color:#0B0D10; --focus-ring:0 0 0 3px #4E8D5F;
+    --shadow-sm:0 2px 6px rgba(0,0,0,.45); --shadow-md:0 6px 18px rgba(0,0,0,.5); --shadow-lg:0 12px 34px rgba(0,0,0,.6);
+    --shadow-inset:inset 0 1px 3px rgba(0,0,0,.5);
   }
   @keyframes acPop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
   *{box-sizing:border-box;margin:0;padding:0}
@@ -196,11 +212,13 @@ const dashboardHTML = `<!DOCTYPE html>
   .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace}
   .bg-layer,.bg-scrim{position:fixed;inset:0;z-index:-1;pointer-events:none}
   .bg-layer{background:var(--user-bg);background-size:cover;background-position:center}
-  .bg-scrim{background:rgba(30,43,37,0.65)}
+  .bg-scrim{background:transparent;transition:background .3s cubic-bezier(0.4,0,0.2,1)}
+  [data-bg="photo"] .bg-scrim{background:rgba(0,0,0,0.65)}
+  [data-surface="ivory"][data-bg="photo"] .bg-scrim{background:rgba(255,255,255,0.72)}
   .app{max-width:720px;margin:0 auto;min-height:100%;padding:0 12px calc(var(--tabbar-h) + 12px + 16px)}
   .screen{display:none}
   .screen.active{display:block;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
-  header{position:sticky;top:0;z-index:5;background:linear-gradient(var(--bg) 72%,rgba(11,13,16,0));padding:10px 0 8px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  header{position:sticky;top:0;z-index:5;margin:0 -12px 16px;padding:10px 12px 14px;border-radius:0 0 20px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(var(--bg-rgb),.72);-webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5);box-shadow:var(--shadow-sm)}
   /* top-left signal indicator (global, all tabs) */
   .sigind{display:flex;align-items:center;gap:8px}
   .bars{display:inline-flex;align-items:flex-end;gap:2px;height:18px}
@@ -321,6 +339,9 @@ const dashboardHTML = `<!DOCTYPE html>
   .pchip{background:var(--card-2);color:var(--text-2);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;min-height:36px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
   .pchip.added{color:var(--teal)}
   .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .themeswatches{display:flex;gap:12px;flex-wrap:wrap}
+  .themeswatch{width:48px;height:48px;border-radius:10px;border:3px solid transparent;box-shadow:var(--shadow-sm);cursor:pointer;padding:0}
+  .themeswatch.sel{border-color:var(--green)}
   .setmsg{margin-top:8px;font-size:12px;color:var(--text-2);min-height:14px}
   .footer{margin-top:14px;text-align:center;font-size:11px;color:var(--text-3);font-weight:500}
   .errslot{margin-top:12px;display:none;background:rgba(240,82,78,.09);border:1px solid rgba(240,82,78,.32);color:#FF7A59;border-radius:10px;padding:10px 13px;font-size:12.5px;font-weight:500}
@@ -368,6 +389,7 @@ const dashboardHTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
+<script>(function(){try{var s=localStorage.getItem("zf5surface");if(s)document.documentElement.setAttribute("data-surface",s);var bg=localStorage.getItem("zf5bg");if(bg&&bg.indexOf("data:image/")===0){document.documentElement.style.setProperty("--user-bg",'url("'+bg+'")');document.documentElement.setAttribute("data-bg","photo");}}catch(e){}})();</script>
 <div class="bg-layer" aria-hidden="true"></div>
 <div class="bg-scrim" aria-hidden="true"></div>
 <div class="app">
@@ -534,6 +556,14 @@ const dashboardHTML = `<!DOCTYPE html>
       </div>
       <button class="setbtn" id="setBtn">Apply thermal limits</button>
       <div class="setmsg" id="setMsg">Gate is hard-capped at 48°C; Samsung mitigation is unaffected.</div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><span>Theme</span></div>
+      <div class="themeswatches" id="themeSwatches">
+        <button class="themeswatch" data-surface="" style="background:#1E2B25" aria-label="Green"></button>
+        <button class="themeswatch" data-surface="ivory" style="background:#FFFDF2" aria-label="Ivory"></button>
+        <button class="themeswatch" data-surface="black" style="background:#0B0D10" aria-label="Black"></button>
+      </div>
     </div>
     <div class="card">
       <div class="stat-head"><span>Background</span></div>
@@ -896,11 +926,31 @@ const dashboardHTML = `<!DOCTYPE html>
   function lsGet(k){try{return localStorage.getItem(k)||"";}catch(e){return "";}}
   function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
 
+  // --- Theme: solid surface-color choice (green/ivory/black), applied via
+  // the data-surface attribute (see the bootstrap script above for the
+  // pre-paint restore) and persisted client-side.
+  var themeSwatchEls=document.querySelectorAll(".themeswatch");
+  var THEME_COLOR={"":"#1E2B25",ivory:"#FFFDF2",black:"#0B0D10"};
+  function markThemeSwatch(surface){
+    themeSwatchEls.forEach(function(b){b.classList.toggle("sel",b.getAttribute("data-surface")===surface);});
+    var m=document.querySelector('meta[name="theme-color"]');
+    if(m&&THEME_COLOR[surface])m.setAttribute("content",THEME_COLOR[surface]);
+  }
+  themeSwatchEls.forEach(function(b){b.addEventListener("click",function(){
+    var surface=b.getAttribute("data-surface");
+    if(surface)document.documentElement.setAttribute("data-surface",surface);
+    else document.documentElement.removeAttribute("data-surface");
+    markThemeSwatch(surface);
+    lsSet("zf5surface",surface);
+  });});
+  markThemeSwatch(document.documentElement.getAttribute("data-surface")||"");
+
   // --- Background picker: a photo, applied via the --user-bg CSS var and
   // persisted client-side as a resized/compressed data URL (no server round trip).
   var bgMsg=document.getElementById("bgMsg");
   function applyCustom(v,persist){
     document.documentElement.style.setProperty("--user-bg",'url("'+v+'")');
+    document.documentElement.setAttribute("data-bg","photo");
     if(persist){try{localStorage.setItem("zf5bg",v);}catch(e){}}
   }
   document.getElementById("bgFile").addEventListener("change",function(e){
