@@ -24,7 +24,45 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// after a daemon update (e.g. a new card wouldn't appear until cache expiry).
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(dashboardHTML))
+	_, _ = w.Write([]byte(s.dashboardHTMLWithTokens()))
+}
+
+// dashboardHTMLWithTokens embeds the daemon's own read-status/radio-control
+// tokens straight into the served page when open_reads/open_control are on,
+// so a hardwired/public install never needs manual token entry on any access
+// path (kiosk, tailnet browser, ...). Each token is embedded ONLY when its
+// own open flag is set — flipping a flag off still requires the paste-once
+// fallback, so the toggle stays a real security control, not decorative.
+// SMS is never embedded here, matching action.sh's own scope (read-status +
+// radio-control only) since SMS is the crown-jewel asset.
+func (s *Server) dashboardHTMLWithTokens() string {
+	var js strings.Builder
+	if s.openReads.Load() && isHexToken(s.cfg.Tokens["read-status"]) {
+		js.WriteString(`localStorage.setItem("zf5tok","` + s.cfg.Tokens["read-status"] + `");`)
+	}
+	if s.openControl.Load() && isHexToken(s.cfg.Tokens["radio-control"]) {
+		js.WriteString(`localStorage.setItem("zf5rtok","` + s.cfg.Tokens["radio-control"] + `");`)
+	}
+	snippet := ""
+	if js.Len() > 0 {
+		snippet = "<script>try{" + js.String() + "}catch(e){}</script>"
+	}
+	return strings.Replace(dashboardHTML, "<!--EMBEDDED_TOKENS-->", snippet, 1)
+}
+
+// isHexToken guards the string-concat embed above: config.json is root-only
+// (0600) and self-generated, but this keeps a hand-edited/corrupted token
+// from ever landing unescaped inside an inline <script>.
+func isHexToken(s string) bool {
+	if len(s) < 32 {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 // handleQR returns a PNG QR of the URL a new device should open to onboard:
@@ -389,6 +427,7 @@ const dashboardHTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
+<!--EMBEDDED_TOKENS-->
 <script>(function(){try{var s=localStorage.getItem("zf5surface");if(s)document.documentElement.setAttribute("data-surface",s);var bg=localStorage.getItem("zf5bg");if(bg&&bg.indexOf("data:image/")===0){document.documentElement.style.setProperty("--user-bg",'url("'+bg+'")');document.documentElement.setAttribute("data-bg","photo");}}catch(e){}})();</script>
 <div class="bg-layer" aria-hidden="true"></div>
 <div class="bg-scrim" aria-hidden="true"></div>
@@ -584,7 +623,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg" id="wlMsg">Empty list disables the auto-toggle. Needs location services ON to scan.</div>
       <div id="wlList"></div>
     </div>
-    <div class="card">
+    <div class="card" id="tokCard">
       <label class="f" for="setTok">radio-control token (stored locally, used by both forms)</label>
       <input id="setTok" type="password" placeholder="paste once">
     </div>
@@ -984,6 +1023,11 @@ const dashboardHTML = `<!DOCTYPE html>
 
   var setMsg=document.getElementById("setMsg"), setTok=document.getElementById("setTok");
   setTok.value=lsGet("zf5rtok");
+  // Hardwired install: the daemon already embedded a working radio-control
+  // token (open_control on) — no manual paste needed, so hide the field. It
+  // reappears automatically if open_control is ever turned off and the
+  // owner clears/loses the stored token.
+  if(setTok.value){var tc=document.getElementById("tokCard");if(tc)tc.style.display="none";}
   var openControl=false; // updated from /v1/status; when true writes need no token
   var OPEN_TOK="__open__"; // sentinel: proceed tokenless (truthy, so rtok callers run)
   function rtok(msgEl){
