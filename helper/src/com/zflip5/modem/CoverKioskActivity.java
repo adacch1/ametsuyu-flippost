@@ -44,16 +44,6 @@ public class CoverKioskActivity extends Activity {
         s.setDomStorageEnabled(true);
         setContentView(wv);
 
-        // Reclaim the status/nav bars only AFTER setContentView — the DecorView
-        // (and its WindowInsetsController) doesn't exist before then, so calling
-        // getInsetsController() earlier NPEs and crashes the activity.
-        android.view.WindowInsetsController ic = getWindow().getInsetsController();
-        if (ic != null) {
-            ic.hide(android.view.WindowInsets.Type.systemBars());
-            ic.setSystemBarsBehavior(
-                android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-        }
-
         String url = BASE;
         if (token.length() > 0) {
             url = BASE + "?token=" + token;

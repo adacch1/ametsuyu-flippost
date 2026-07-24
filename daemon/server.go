@@ -170,6 +170,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/bands", s.guard("read-status", s.handleBands))
 	s.mux.HandleFunc("/v1/cpu", s.guard("read-status", s.handleCPU))
 	s.mux.HandleFunc("/v1/hotspot", s.guard("read-status", s.handleHotspot))
+	s.mux.HandleFunc("/v1/usbtether", s.guard("read-status", s.handleUsbTether))
 	// Whitelist edits are config writes, not radio actions: no thermal gate
 	// (and clearing the list must work while hot to stop auto-starts).
 	s.mux.HandleFunc("/v1/hotspot/whitelist", s.guardAuth("radio-control", http.MethodPost, s.handleHotspotWhitelist))
@@ -215,6 +216,9 @@ func (s *Server) routes() {
 	// hotspot or cooling down must work WHILE hot), so they take the auth-only
 	// guard instead of guardWrite's blanket "refuse when unsafe" gate.
 	s.mux.HandleFunc("/v1/tether", s.guardAuth("radio-control", http.MethodPost, s.handleTether))
+	// Same shape as /v1/tether but for USB tethering: no thermal gate (a USB
+	// cable's data path isn't a heat source), auth-only guard.
+	s.mux.HandleFunc("/v1/usbtether/toggle", s.guardAuth("radio-control", http.MethodPost, s.handleUsbTetherToggle))
 	// prefer5g uses the policy engine (incl. cooldown stickiness), so it takes the
 	// auth-only guard and makes its own thermal decision in the handler.
 	s.mux.HandleFunc("/v1/prefer5g", s.guardAuth("radio-control", http.MethodPost, s.handlePrefer5G))
@@ -432,6 +436,31 @@ func (s *Server) handleTether(w http.ResponseWriter, r *http.Request) {
 	case "start":
 		ok := startHotspot()
 		writeJSON(w, http.StatusOK, map[string]any{"applied": ok, "action": "start", "active": hotspotActive()})
+	default:
+		writeErr(w, http.StatusBadRequest, "action must be start or stop")
+	}
+}
+
+func (s *Server) handleUsbTether(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, usbTetherStatus())
+}
+
+// handleUsbTetherToggle toggles USB tethering via the root helper.
+// ?action=start|stop (default start). Not thermal-gated: the USB data path
+// isn't a heat source, and being able to fall back to a wired connection when
+// the radio is throttled is the point.
+func (s *Server) handleUsbTetherToggle(w http.ResponseWriter, r *http.Request) {
+	action := r.URL.Query().Get("action")
+	if action == "" {
+		action = "start"
+	}
+	switch action {
+	case "stop":
+		ok := stopUsbTether()
+		writeJSON(w, http.StatusOK, map[string]any{"applied": ok, "action": "stop", "status": usbTetherStatus()})
+	case "start":
+		ok := startUsbTether()
+		writeJSON(w, http.StatusOK, map[string]any{"applied": ok, "action": "start", "status": usbTetherStatus()})
 	default:
 		writeErr(w, http.StatusBadRequest, "action must be start or stop")
 	}

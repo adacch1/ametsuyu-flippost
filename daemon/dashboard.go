@@ -168,44 +168,73 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ZF5 Modem">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700&family=Nunito:wght@400;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0b0d10; --card:#161b22; --card-2:#1b212a; --line:#21262d; --line-soft:#1a1f27;
-    --text:#e6edf3; --text-2:#9aa5b1; --text-3:#7d8794; /* 4.7:1 on card — small labels need AA */
-    --teal:#3fb8af; --green:#3fb950; --amber:#e3a008; --red:#f0524e; --blue:#5b8dee; --violet:#8a7dff;
-    --track:#242b34; --radius:12px; --tabbar-h:60px;
+    --bg:#FFFDF2; --card:#FFFFFF; --card-2:#FFF3CF; --line:#F2DFA8; --line-soft:#F2DFA8;
+    --text:#3E3428; --text-2:#77694F; --text-3:#A5987E; /* 4.7:1 on card — small labels need AA */
+    --teal:#4FBE73; --green:#4FBE73; --amber:#FFCE3E; --red:#FF7A59; --blue:#45C4EA; --violet:#45C4EA;
+    --track:#FFF3CF; --radius:16px; --tabbar-h:60px;
+    --on-color:#FFFFFF; --focus-ring:0 0 0 3px #DCF5E4;
+    --shadow-sm:0 2px 6px rgba(56,167,95,0.12); --shadow-md:0 6px 18px rgba(56,167,95,0.16); --shadow-lg:0 12px 34px rgba(56,167,95,0.20);
+    --shadow-inset:inset 0 1px 3px rgba(56,167,95,.15);
+    --user-bg:linear-gradient(135deg, #DCF5E4, #DFF5FC);
+    --font-display:"Baloo 2",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   }
+  :root[data-theme="night"]{
+    --bg:#1E2B25; --card:#27362E; --card-2:#182420; --text:#F4EEDD; --text-2:#B9C6BB; --text-3:#7E8F85;
+    --on-color:#1E2B25; --focus-ring:0 0 0 3px #4E8D5F;
+    --shadow-sm:0 2px 6px rgba(0,0,0,.30); --shadow-md:0 6px 18px rgba(0,0,0,.35); --shadow-lg:0 12px 34px rgba(0,0,0,.45);
+    --shadow-inset:inset 0 1px 3px rgba(0,0,0,.35);
+    --line:rgba(79,190,115,0.16); --line-soft:rgba(79,190,115,0.16);
+    --track:#182420;
+  }
+  @keyframes acPop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
   body{
     background:var(--bg); color:var(--text);
-    font-family:"Be Vietnam Pro",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-family:"Nunito",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased; font-feature-settings:"tnum" 1; line-height:1.4;
   }
   .num{font-variant-numeric:tabular-nums}
-  .mono{font-family:ui-monospace,Menlo,monospace}
-  .app{max-width:720px;margin:0 auto;min-height:100%;padding:0 12px calc(var(--tabbar-h) + 16px)}
+  .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace}
+  .bg-layer,.bg-scrim{position:fixed;inset:0;z-index:-1;pointer-events:none}
+  .bg-layer{background:var(--user-bg);background-size:cover;background-position:center}
+  .bg-scrim{background:rgba(62,52,40,0.65)}
+  :root[data-theme="night"] .bg-scrim{background:rgba(30,43,37,0.65)}
+  .app{max-width:720px;margin:0 auto;min-height:100%;padding:0 12px calc(var(--tabbar-h) + 12px + 16px)}
   .screen{display:none}
-  .screen.active{display:block}
+  .screen.active{display:block;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
   header{position:sticky;top:0;z-index:5;background:linear-gradient(var(--bg) 72%,rgba(11,13,16,0));padding:10px 0 8px;display:flex;align-items:center;justify-content:space-between;gap:10px}
   /* top-left signal indicator (global, all tabs) */
   .sigind{display:flex;align-items:center;gap:8px}
   .bars{display:inline-flex;align-items:flex-end;gap:2px;height:18px}
-  .bars>i{width:3.5px;background:#30363d;border-radius:1px}
+  .bars>i{width:3.5px;background:var(--text-3);border-radius:1px}
   .bars>i:nth-child(1){height:6px}.bars>i:nth-child(2){height:10px}.bars>i:nth-child(3){height:14px}.bars>i:nth-child(4){height:18px}
   .bars.g>i.on{background:var(--green)}.bars.a>i.on{background:var(--amber)}.bars.r>i.on{background:var(--red)}
   .sigind .lab{font-size:14px;font-weight:700}
   .sigind .op{font-size:10.5px;color:var(--text-3);font-weight:500}
-  .netbadge{display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 11px 6px 10px;font-size:12.5px;font-weight:600;letter-spacing:.02em}
+  .netbadge{display:flex;align-items:center;gap:7px;background:var(--card);box-shadow:var(--shadow-sm);border-radius:999px;padding:6px 11px 6px 10px;font-size:12.5px;font-weight:600;letter-spacing:.02em}
+  .themebtn{flex:none;width:44px;height:44px;background:none;border:0;border-radius:999px;color:var(--text-2);cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .themebtn svg{width:20px;height:20px}
+  [data-theme="night"] .themebtn .theme-sun{display:none}
+  .themebtn .theme-moon{display:none}
+  [data-theme="night"] .themebtn .theme-moon{display:block}
+  .themebtn:focus-visible{outline:none;box-shadow:var(--focus-ring);border-radius:999px}
+  @media (hover:hover){.themebtn:hover{background:var(--card-2);color:var(--teal)}}
+  .themebtn:active{background:var(--card-2)}
   .dot{width:8px;height:8px;border-radius:50%;flex:none}
-  .dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.red{background:var(--red)}.dot.off{background:#30363d}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px}
+  .dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.red{background:var(--red)}.dot.off{background:var(--text-3)}
+  .card{background:var(--card);box-shadow:var(--shadow-sm);border-radius:var(--radius);padding:14px}
   .card+.card,.grid+.card,.card+.grid{margin-top:10px}
-  .hero{display:flex;flex-direction:column;align-items:center;padding:14px 14px 12px;background:radial-gradient(120% 80% at 50% 0%,rgba(63,184,175,.06),transparent 60%),var(--card)}
+  .hero{display:flex;flex-direction:column;align-items:center;padding:14px 14px 12px;background:radial-gradient(120% 80% at 50% 0%,rgba(56,167,95,.06),transparent 60%),var(--card)}
   .ring-wrap{position:relative;width:min(44vw,180px);aspect-ratio:1}
   .ring-wrap svg{width:100%;height:100%;transform:rotate(-90deg)}
   .ring-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-align:center}
-  .ring-pct{font-size:clamp(34px,11vw,46px);font-weight:700;letter-spacing:-.03em;line-height:1}
+  .ring-pct{font-family:var(--font-display);font-size:clamp(34px,11vw,46px);font-weight:700;letter-spacing:-.03em;line-height:1}
   .ring-pct span{font-size:.5em;font-weight:600;color:var(--text-2);margin-left:1px}
   .ring-sub{font-size:12.5px;color:var(--text-2);font-weight:500}
   .ring-label{margin-top:10px;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3)}
@@ -215,22 +244,22 @@ const dashboardHTML = `<!DOCTYPE html>
   .duo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
   .stat-head{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px}
   .stat-head .accent{width:7px;height:7px;border-radius:50%}
-  .stat-val{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
+  .stat-val{font-family:var(--font-display);font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
   .stat-val small{font-size:.5em;font-weight:600;color:var(--text-2);margin-left:1px}
   .stat-sub{margin-top:6px;font-size:12px;color:var(--text-2)}
   .bar{margin-top:12px;height:6px;border-radius:3px;background:var(--track);overflow:hidden}
-  .bar>i{display:block;height:100%;border-radius:3px;background:var(--teal);transition:width .5s ease}
+  .bar>i{display:block;height:100%;border-radius:3px;background:var(--teal);transition:width .4s cubic-bezier(0.4,0,0.2,1)}
   .cpu-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:12px}
-  .cpu-load{font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
+  .cpu-load{font-family:var(--font-display);font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
   .cpu-load small{font-size:.4em;font-weight:600;color:var(--text-2);margin-left:3px}
   .cpu-meta{font-size:11.5px;color:var(--text-3);font-weight:600;text-align:right}
   .cores{display:flex;align-items:flex-end;gap:5px;height:64px}
   .core{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
   .core .track{position:relative;width:100%;flex:1;background:var(--track);border-radius:4px;overflow:hidden;display:flex;align-items:flex-end}
-  .core .fill{width:100%;border-radius:4px;background:var(--violet);transition:height .5s ease}
+  .core .fill{width:100%;border-radius:4px;background:var(--violet);transition:height .4s cubic-bezier(0.4,0,0.2,1)}
   .core .idx{font-size:9.5px;color:var(--text-3);font-weight:600}
   .core.off{opacity:.32}
-  .core.off .fill{background:#30363d!important}
+  .core.off .fill{background:var(--text-3)!important}
   /* signal grid */
   .sg{display:grid;grid-template-columns:1fr 1fr;gap:5px 16px}
   .sgrow{display:flex;justify-content:space-between;font-size:13px;padding:2px 0}
@@ -242,7 +271,7 @@ const dashboardHTML = `<!DOCTYPE html>
   details.cli:first-of-type{border-top:0}
   details.cli summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:9px;font-size:13.5px;min-height:46px;padding:4px 0}
   details.cli summary::-webkit-details-marker{display:none}
-  details.cli summary .chev{margin-left:auto;color:var(--text-3);transition:transform .15s}
+  details.cli summary .chev{margin-left:auto;color:var(--text-3);transition:transform .14s cubic-bezier(0.34,1.56,0.64,1)}
   details.cli[open] summary .chev{transform:rotate(90deg)}
   .clibody{font-size:12px;color:var(--text-2);margin:2px 0 10px 17px;display:grid;gap:4px}
   .clibody .r{display:flex;justify-content:space-between;gap:12px}
@@ -252,47 +281,50 @@ const dashboardHTML = `<!DOCTYPE html>
   .state-row .k{font-size:13.5px;color:var(--text-2);font-weight:500}
   .state-row .v{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;letter-spacing:.01em;text-align:right}
   /* settings */
-  .setgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px}
+  .setgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px}
   label.f{font-size:10.5px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px}
-  input,textarea{width:100%;background:var(--card-2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:11px 12px;font-size:14px;font-family:inherit;min-height:44px}
+  input,textarea{width:100%;background:var(--card-2);border:2px solid transparent;border-radius:10px;color:var(--text);padding:11px 12px;font-size:14px;font-family:inherit;min-height:44px;box-shadow:var(--shadow-inset)}
   textarea{min-height:76px;resize:vertical;line-height:1.5}
-  .settok{margin-top:10px}
-  .setbtn{margin-top:12px;width:100%;background:var(--teal);color:#04211f;border:0;border-radius:9px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;min-height:46px}
+  .settok{margin-top:16px}
+  .setbtn{margin-top:12px;width:100%;background:var(--teal);color:#3E3428;border:0;border-radius:999px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;min-height:46px;box-shadow:var(--shadow-sm),inset 0 -3px 0 rgba(0,0,0,0.12);transition:transform .14s cubic-bezier(0.34,1.56,0.64,1), filter .14s cubic-bezier(0.34,1.56,0.64,1), box-shadow .14s cubic-bezier(0.34,1.56,0.64,1)}
   .setbtn:disabled{opacity:.5;cursor:default}
+  .setbtn:active:not(:disabled){box-shadow:none;transform:scale(0.97)}
   /* secondary/trigger button: quiet, for occasional actions (speedtest, rotate) so
      they don't outshout the data. Filled teal stays for commit actions only. */
-  .setbtn.sec{background:var(--card-2);color:var(--teal);border:1px solid var(--line);font-weight:600}
-  .setbtn.sec:active{background:#232a33}
+  .setbtn.sec{background:var(--card-2);color:var(--teal);font-weight:600;box-shadow:none}
+  .setbtn.sec:active{background:#F2DFA8}
+  :root[data-theme="night"] .setbtn.sec:active{background:#31423A}
   .spd{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:4px}
-  .spdcell{text-align:center;background:var(--card-2);border:1px solid var(--line);border-radius:9px;padding:12px 6px}
-  .spdv{font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1}
+  .spdcell{text-align:center;background:var(--card-2);border-radius:10px;padding:12px 6px}
+  .spdv{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1}
   .spdl{font-size:10.5px;color:var(--text-3);font-weight:600;margin-top:5px;text-transform:uppercase;letter-spacing:.04em}
-  .minibtn{background:var(--card-2);border:1px solid var(--line);color:var(--teal);border-radius:8px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;min-height:34px}
+  .minibtn{background:var(--card-2);color:var(--teal);border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;min-height:34px;transition:transform .14s cubic-bezier(0.34,1.56,0.64,1), filter .14s cubic-bezier(0.34,1.56,0.64,1), box-shadow .14s cubic-bezier(0.34,1.56,0.64,1)}
   .minibtn:disabled{opacity:.5;cursor:default}
   .apbtns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
   .apbtns .minibtn{min-height:44px}
   /* nearby-networks list (tap a row to add/remove from the whitelist) */
-  .nrow{display:flex;align-items:center;gap:11px;width:100%;background:none;border:0;border-top:1px solid var(--line-soft);padding:11px 2px;min-height:48px;cursor:pointer;color:var(--text);font-family:inherit;text-align:left}
+  .nrow{display:flex;align-items:center;gap:11px;width:100%;background:none;border:0;border-top:1px solid var(--line-soft);padding:11px 2px;min-height:48px;cursor:pointer;color:var(--text);font-family:inherit;text-align:left;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
   .nrow:first-child{border-top:0}
   .nname{flex:1;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .nchip{flex:none;font-size:11.5px;font-weight:600;color:var(--text-3)}
   .nrow.on .nchip{color:var(--teal)}
   .nbars{display:inline-flex;align-items:flex-end;gap:2px;height:15px;flex:none}
-  .nbars>i{width:3px;background:#30363d;border-radius:1px}
+  .nbars>i{width:3px;background:var(--text-3);border-radius:1px}
   .nbars>i:nth-child(1){height:5px}.nbars>i:nth-child(2){height:8px}.nbars>i:nth-child(3){height:11px}.nbars>i:nth-child(4){height:15px}
   .nbars.b1>i:nth-child(-n+1),.nbars.b2>i:nth-child(-n+2),.nbars.b3>i:nth-child(-n+3),.nbars.b4>i:nth-child(-n+4){background:var(--teal)}
   .nrow:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:6px}
   /* currently-whitelisted list (removable chips) */
   .wlhead{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin:14px 0 8px}
-  .wlchip{display:flex;align-items:center;gap:8px;background:var(--card-2);border:1px solid var(--line);border-radius:8px;padding:6px 6px 6px 12px;margin-bottom:6px;min-height:44px}
+  .wlchip{display:flex;align-items:center;gap:8px;background:var(--card-2);border-radius:8px;padding:6px 6px 6px 12px;margin-bottom:6px;min-height:44px;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
   .wlname{flex:1;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .wlx{flex:none;background:none;border:0;color:var(--text-3);font-size:22px;line-height:1;cursor:pointer;width:44px;height:44px;border-radius:7px;font-family:inherit}
+  .wlx{flex:none;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--text-3);cursor:pointer;width:44px;height:44px;border-radius:7px;font-family:inherit}
   .wlx:active,.wlx:focus-visible{color:var(--red);outline:none;background:rgba(240,82,78,.12)}
   /* selects share the input look; native arrow hidden for a consistent field */
-  select{width:100%;background:var(--card-2);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:11px 34px 11px 12px;font-size:14px;font-family:inherit;min-height:44px;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237d8794' stroke-width='2.4' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
-  select:focus{outline:none;border-color:var(--teal)}
+  select{width:100%;background-color:var(--card-2);border:2px solid transparent;border-radius:10px;color:var(--text);padding:11px 34px 11px 12px;font-size:14px;font-family:inherit;min-height:44px;box-shadow:var(--shadow-inset);-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23A5987E' stroke-width='2.4' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+  :root[data-theme="night"] select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237E8F85' stroke-width='2.4' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E")}
+  select:focus{outline:none;border-color:var(--teal);box-shadow:var(--focus-ring)}
   /* preset rows: name+meta open the editor, then Apply, then delete */
-  .prow{display:flex;align-items:center;gap:9px;padding:9px 0;border-top:1px solid var(--line-soft)}
+  .prow{display:flex;align-items:center;gap:9px;padding:9px 0;border-top:1px solid var(--line-soft);animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
   .prow:first-child{border-top:0}
   .pmain{flex:1;min-width:0;background:none;border:0;text-align:left;color:var(--text);font-family:inherit;cursor:pointer;padding:2px 0}
   .pname{font-size:14px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -302,11 +334,16 @@ const dashboardHTML = `<!DOCTYPE html>
   .pmain:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:6px}
   /* nearby add-chips in the trigger picker */
   .pchips{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
-  .pchip{background:var(--card-2);border:1px solid var(--line);color:var(--text-2);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;min-height:36px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pchip.added{color:var(--teal);border-color:rgba(63,184,175,.4)}
+  .pchip{background:var(--card-2);color:var(--text-2);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;min-height:36px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
+  .pchip.added{color:var(--teal)}
+  .bgswatches{display:flex;gap:12px;flex-wrap:wrap}
+  .bgswatch{width:48px;height:48px;border-radius:10px;border:3px solid transparent;box-shadow:var(--shadow-sm);cursor:pointer;padding:0}
+  .bgswatch.sel{border-color:var(--green)}
+  .bgdivider{margin:16px 0 12px;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);text-align:center}
+  .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
   .setmsg{margin-top:8px;font-size:12px;color:var(--text-2);min-height:14px}
   .footer{margin-top:14px;text-align:center;font-size:11px;color:var(--text-3);font-weight:500}
-  .errslot{margin-top:12px;display:none;background:rgba(240,82,78,.09);border:1px solid rgba(240,82,78,.32);color:#ff9b98;border-radius:10px;padding:10px 13px;font-size:12.5px;font-weight:500}
+  .errslot{margin-top:12px;display:none;background:rgba(240,82,78,.09);border:1px solid rgba(240,82,78,.32);color:#FF7A59;border-radius:10px;padding:10px 13px;font-size:12.5px;font-weight:500}
   .errslot.show{display:block}
   .sec-label{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);margin:14px 2px 8px}
   .intg{display:flex;align-items:flex-start;gap:12px}
@@ -316,19 +353,22 @@ const dashboardHTML = `<!DOCTYPE html>
   .intg .desc{font-size:12px;color:var(--text-2);margin-top:2px}
   .intg-foot{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-soft);display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);font-weight:500}
   .managed{display:inline-flex;align-items:center;gap:6px;flex:none;font-size:11.5px;font-weight:600;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);color:#5ed36c;padding:6px 11px;border-radius:999px}
-  nav{position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:100%;max-width:720px;z-index:20;height:calc(var(--tabbar-h) + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom);background:rgba(13,16,20,.86);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-top:1px solid var(--line);display:flex}
-  nav .tab{flex:1;background:none;border:0;cursor:pointer;color:var(--text-3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10px;font-weight:600;transition:color .18s ease}
-  nav .tab svg{width:21px;height:21px}
-  nav .tab.active{color:var(--text)}nav .tab.active svg{color:var(--teal)}
+  nav{position:fixed;left:12px;right:12px;max-width:696px;margin:0 auto;bottom:calc(12px + env(safe-area-inset-bottom));z-index:20;height:var(--tabbar-h);background:var(--card);box-shadow:var(--shadow-sm);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-radius:999px;display:flex}
+  nav .tab{flex:1;background:none;border:0;cursor:pointer;color:var(--text-3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10px;font-weight:600;transition:color .14s cubic-bezier(0.34,1.56,0.64,1)}
+  nav .tab svg{width:21px;height:21px;border-radius:999px;transition:background-color .14s cubic-bezier(0.34,1.56,0.64,1),color .14s cubic-bezier(0.34,1.56,0.64,1),padding .14s cubic-bezier(0.34,1.56,0.64,1)}
+  nav .tab.active{color:var(--text)}
+  nav .tab.active svg{color:var(--on-color);background:var(--green);padding:4px;width:21px;height:21px;box-sizing:content-box}
   nav .tab:focus-visible,.setbtn:focus-visible,.minibtn:focus-visible,details.cli summary:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:8px}
-  input:focus,textarea:focus{outline:none;border-color:var(--teal)}
+  input:focus,textarea:focus{outline:none;border-color:var(--teal);box-shadow:var(--focus-ring)}
   input::placeholder,textarea::placeholder{color:var(--text-3);opacity:1}
   /* press + hover feedback. Hover is gated so a tap on a touch screen doesn't
      leave a stuck hover state. */
-  .setbtn:active:not(:disabled),.minibtn:active:not(:disabled){transform:translateY(1px)}
-  .minibtn:active:not(:disabled){background:#232a33}
+  .minibtn:active:not(:disabled){transform:scale(0.97)}
+  .minibtn:active:not(:disabled){background:#F2DFA8}
+  :root[data-theme="night"] .minibtn:active:not(:disabled){background:#31423A}
   @media (hover:hover){
     .setbtn:hover:not(:disabled){filter:brightness(1.06)}
+    .setbtn:hover:not(:disabled):not(.sec){transform:translateY(-2px) scale(1.03)}
     .minibtn:hover:not(:disabled){border-color:var(--teal)}
     nav .tab:hover{color:var(--text-2)}
   }
@@ -349,6 +389,9 @@ const dashboardHTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
+<script>(function(){try{var t=localStorage.getItem("zf5theme");if(t==="night"||(!t&&window.matchMedia("(prefers-color-scheme: dark)").matches)){document.documentElement.setAttribute("data-theme","night");}}catch(e){}})();</script>
+<div class="bg-layer" aria-hidden="true"></div>
+<div class="bg-scrim" aria-hidden="true"></div>
 <div class="app">
   <header>
     <div class="sigind">
@@ -357,6 +400,10 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
     <div class="netbadge"><span class="dot amber" id="statusDot"></span><span id="netType">—</span></div>
     <!-- op kept for the operator name, shown on the Network signal card -->
+    <button class="themebtn" id="themeBtn" aria-label="Toggle dark theme" type="button">
+      <svg class="theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+      <svg class="theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+    </button>
   </header>
   <div class="errslot" id="errSlot" role="alert"></div>
 
@@ -365,7 +412,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="ring-wrap">
         <svg viewBox="0 0 120 120" aria-hidden="true">
           <circle cx="60" cy="60" r="52" fill="none" stroke="var(--track)" stroke-width="11"/>
-          <circle id="ringFill" cx="60" cy="60" r="52" fill="none" stroke="var(--teal)" stroke-width="11" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" style="transition:stroke-dashoffset .7s ease,stroke .4s ease"/>
+          <circle id="ringFill" cx="60" cy="60" r="52" fill="none" stroke="var(--teal)" stroke-width="11" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" style="transition:stroke-dashoffset .4s cubic-bezier(0.4,0,0.2,1),stroke .4s cubic-bezier(0.4,0,0.2,1)"/>
         </svg>
         <div class="ring-center">
           <div class="ring-pct num"><span id="ringPct">0</span><span>%</span></div>
@@ -418,11 +465,18 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="stat-sub" id="hsSub"></div>
     </div>
     <div class="card">
+      <div class="stat-head"><span>USB tethering</span></div>
+      <div class="state-row"><span class="k">State</span><span class="v"><span class="dot off" id="usbDot"></span><span id="usbState">—</span></span></div>
+      <div class="stat-sub" id="usbSub"></div>
+      <button class="setbtn" id="usbTetherBtn" style="margin-top:8px;background:var(--green);color:#3E3428">Turn USB tethering on</button>
+      <div class="setmsg" id="usbMsg">Needs a USB cable to a host computer; not thermal-gated.</div>
+    </div>
+    <div class="card">
       <div class="stat-head"><span>Connectivity</span></div>
       <div class="state-row"><span class="k">WAN IP</span><span class="v mono" id="wanIp">—</span></div>
       <div class="state-row"><span class="k">Airplane</span><span class="v"><span class="dot off" id="apDot"></span><span id="apState">off</span></span></div>
       <button class="setbtn sec" id="rotateBtn">Rotate IP (airplane cycle)</button>
-      <button class="setbtn" id="hotspotOnBtn" style="margin-top:8px;background:var(--green);color:#04211f">Turn hotspot on</button>
+      <button class="setbtn" id="hotspotOnBtn" style="margin-top:8px;background:var(--green);color:#3E3428">Turn hotspot on</button>
       <div class="apbtns">
         <button class="minibtn" id="apOnBtn">Airplane on</button>
         <button class="minibtn" id="apOffBtn">Airplane off</button>
@@ -464,7 +518,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <section class="screen" id="presets">
     <div class="card">
-      <div class="stat-head"><span>Auto-switch by location</span><span class="accent" id="paAccent" style="background:#30363d"></span></div>
+      <div class="stat-head"><span>Auto-switch by location</span><span class="accent" id="paAccent" style="background:var(--text-3)"></span></div>
       <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="paDot"></span><span id="paState">off</span></span></div>
       <div class="setgrid" style="grid-template-columns:1fr 1fr">
         <button class="minibtn" id="paOnBtn" style="min-height:44px">Turn on</button>
@@ -508,8 +562,24 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg" id="setMsg">Gate is hard-capped at 48°C; Samsung mitigation is unaffected.</div>
     </div>
     <div class="card">
+      <div class="stat-head"><span>Background</span></div>
+      <div class="bgswatches" id="bgSwatches">
+        <button class="bgswatch" data-preset="meadow" style="background:linear-gradient(135deg, #DCF5E4, #DFF5FC)" aria-label="Meadow"></button>
+        <button class="bgswatch" data-preset="dune" style="background:linear-gradient(135deg, #F2DFA8, #FFF3C6)" aria-label="Dune"></button>
+        <button class="bgswatch" data-preset="coral" style="background:linear-gradient(135deg, #FFCE3E, #FF7A59)" aria-label="Coral Dusk"></button>
+        <button class="bgswatch" data-preset="pine" style="background:linear-gradient(135deg, #1E2B25, #27362E)" aria-label="Pine Night"></button>
+      </div>
+      <div class="bgdivider">or</div>
+      <input type="file" id="bgFile" accept="image/*" class="visually-hidden">
+      <button class="setbtn sec" id="bgFileBtn" type="button">Choose photo</button>
+      <div class="settok"><label class="f" for="bgUrl">Custom image URL</label>
+      <input id="bgUrl" type="text" placeholder="https://… or data:image/…"></div>
+      <button class="setbtn sec" id="bgApplyBtn">Apply</button>
+      <div class="setmsg" id="bgMsg">Pick a preset, choose a photo, or paste an https:// or data:image/ URL.</div>
+    </div>
+    <div class="card">
       <div class="stat-head"><span>Nearby networks</span><button class="minibtn" id="scanBtn">Scan now</button></div>
-      <div id="nearby"><div class="stat-sub">Tap “Scan now” to list networks in range. A ✓ marks whitelisted ones; tap a row to add or remove it.</div></div>
+      <div id="nearby"><div class="stat-sub">Tap “Scan now” to list networks in range. A <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg> marks whitelisted ones; tap a row to add or remove it.</div></div>
       <div class="setmsg" id="nearbyMsg"></div>
     </div>
     <div class="card">
@@ -534,7 +604,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg" id="qrMsg"></div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Open reads (no token on the tailnet)</span><span class="accent" id="orAccent" style="background:#30363d"></span></div>
+      <div class="stat-head"><span>Open reads (no token on the tailnet)</span><span class="accent" id="orAccent" style="background:var(--text-3)"></span></div>
       <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="orDot"></span><span id="orState">off</span></span></div>
       <div class="setgrid" style="grid-template-columns:1fr 1fr">
         <button class="minibtn" id="orOnBtn" style="min-height:44px">Turn on</button>
@@ -543,7 +613,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg" id="orMsg">On: any device on your tailnet opens the dashboard with no token — read-only. Off: a token (or the QR) is required. Needs the radio-control token to change.</div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Open control (no token for writes)</span><span class="accent" id="ocAccent" style="background:#30363d"></span></div>
+      <div class="stat-head"><span>Open control (no token for writes)</span><span class="accent" id="ocAccent" style="background:var(--text-3)"></span></div>
       <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="ocDot"></span><span id="ocState">off</span></span></div>
       <div class="setgrid" style="grid-template-columns:1fr 1fr">
         <button class="minibtn" id="ocOnBtn" style="min-height:44px">Turn on</button>
@@ -570,12 +640,12 @@ const dashboardHTML = `<!DOCTYPE html>
 </div>
 
 <nav>
-  <button class="tab active" data-screen="home" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.6"/><rect x="13" y="3" width="8" height="5" rx="1.6"/><rect x="13" y="10" width="8" height="11" rx="1.6"/><rect x="3" y="13" width="8" height="8" rx="1.6"/></svg>Home</button>
-  <button class="tab" data-screen="net"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 20V4"/></svg>Network</button>
-  <button class="tab" data-screen="clientsScr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Clients</button>
-  <button class="tab" data-screen="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>System</button>
-  <button class="tab" data-screen="presets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Presets</button>
-  <button class="tab" data-screen="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
+  <button class="tab active" data-screen="home" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.6"/><rect x="13" y="3" width="8" height="5" rx="1.6"/><rect x="13" y="10" width="8" height="11" rx="1.6"/><rect x="3" y="13" width="8" height="8" rx="1.6"/></svg>Home</button>
+  <button class="tab" data-screen="net"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 20V4"/></svg>Network</button>
+  <button class="tab" data-screen="clientsScr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Clients</button>
+  <button class="tab" data-screen="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>System</button>
+  <button class="tab" data-screen="presets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Presets</button>
+  <button class="tab" data-screen="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
 </nav>
 
 <script>
@@ -598,6 +668,17 @@ const dashboardHTML = `<!DOCTYPE html>
     if(t||rt){url.searchParams.delete("token");url.searchParams.delete("rtoken");window.history.replaceState({},"",url.pathname);}
     token=localStorage.getItem("zf5tok")||"";
   }catch(e){}
+
+  // Hand-authored inline Lucide-geometry icons (no CDN/icon font). Static
+  // markup only — never interpolated with user-controlled data.
+  var ICN_WIFI='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>';
+  var ICN_WARN='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
+  var ICN_USB='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:4px"><circle cx="10" cy="7" r="1"/><circle cx="4" cy="20" r="1"/><path d="M4.7 19.3 19 5"/><path d="m21 3-3 1 2 2Z"/><path d="M9.26 7.68 5 12l2 5"/><path d="m10 14 5 2 3.5-3.5"/><path d="m18 12 1-1 1 1-1 1Z"/></svg>';
+  var ICN_PLANE='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/></svg>';
+  var ICN_CHECK='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px"><polyline points="20 6 9 17 4 12"/></svg>';
+  var ICN_X='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+  var ICN_CHEVRON='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+  var ICN_DOT='<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;margin-right:4px;color:var(--teal)"><circle cx="12" cy="12" r="9"/></svg>';
 
   var active="home", lastKick=0;
   var tabs=document.querySelectorAll("nav .tab");
@@ -623,6 +704,9 @@ const dashboardHTML = `<!DOCTYPE html>
   function showErr(m){errEl.textContent=m;errEl.classList.add("show");}
   function clearErr(){errEl.classList.remove("show");}
   function esc(s){return String(s==null?"":s).replace(/[&<>]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c];});}
+  // Skips the innerHTML write (and its DOM-recreate, which would replay the
+  // acPop entrance animation on every poll tick) when the markup hasn't changed.
+  function setListHTML(box,html){if(box._lastHtml===html)return false;box._lastHtml=html;box.innerHTML=html;return true;}
   function fmtBytes(b){var gb=b/GIB;if(gb>=1000)return (gb/1024).toFixed(2)+" TB";return (gb>=10?Math.round(gb):gb.toFixed(1))+" GB";}
   function tempColor(c){return c>=GATE_C?"var(--red)":(c>=WARN_C?"var(--amber)":"var(--teal)");}
   function usageColor(p){return p>0.9?"var(--red)":(p>=0.7?"var(--amber)":"var(--teal)");}
@@ -641,7 +725,7 @@ const dashboardHTML = `<!DOCTYPE html>
     if(typeof s.open_control==="boolean"){openControl=s.open_control;if(document.getElementById("ocState"))renderOpenControl(s.open_control);}
     if(s.hotspot_presets)renderPresets(s.hotspot_presets);
     // Always show the WAN IP (header). Airplane on / no data -> explicit label.
-    document.getElementById("wanip").textContent=s.airplane?"airplane ✈":(ip.available&&ip.ip?ip.ip:"no data");
+    document.getElementById("wanip").innerHTML=s.airplane?(ICN_PLANE+"airplane"):esc(ip.available&&ip.ip?ip.ip:"no data");
     var ipEl=document.getElementById("wanIp"); if(ipEl){ipEl.textContent=ip.available&&ip.ip?ip.ip:(s.airplane?"— (airplane on)":"— (no data)");}
     var apEl=document.getElementById("apState"); if(apEl){apEl.textContent=s.airplane?"ON":"off";document.getElementById("apDot").className="dot "+(s.airplane?"amber":"off");}
     var pol=s.policy_state||"—", dc=polColor(pol);
@@ -657,7 +741,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var battEl=document.getElementById("battLevel");
     if(bat.available===false||bat.level==null){
       battEl.textContent="—";document.getElementById("battSub").textContent="unavailable";
-      document.getElementById("battAccent").style.background="#30363d";
+      document.getElementById("battAccent").style.background="var(--text-3)";
     }else{
       var lvl=Math.round(bat.level);
       battEl.textContent=lvl;
@@ -666,7 +750,7 @@ const dashboardHTML = `<!DOCTYPE html>
       document.getElementById("battAccent").style.background=bcol;
     }
 
-    var tmax=th.temp_max_c, hasT=tmax!=null&&tmax>0, tcol=hasT?tempColor(tmax):"#30363d";
+    var tmax=th.temp_max_c, hasT=tmax!=null&&tmax>0, tcol=hasT?tempColor(tmax):"var(--text-3)";
     document.getElementById("tempMax").textContent=hasT?tmax.toFixed(1):"—";
     document.getElementById("tempVal").style.color=tcol;
     document.getElementById("tempAccent").style.background=tcol;
@@ -734,7 +818,7 @@ const dashboardHTML = `<!DOCTYPE html>
     cl.clients.forEach(function(c){
       var st=c.state||"?";
       var v6=(c.ipv6&&c.ipv6.length)?'<div class="r"><span>IPv6</span><b class="mono" style="font-size:10.5px;text-align:right">'+c.ipv6.map(esc).join("<br>")+'</b></div>':"";
-      html+='<details class="cli"><summary><span class="dot '+stCls(st)+'"></span><b class="mono">'+esc(c.ipv4||"(no IPv4)")+'</b><span style="color:var(--text-3);font-size:11.5px">'+esc(st)+'</span><span class="chev">&#8250;</span></summary>'
+      html+='<details class="cli"><summary><span class="dot '+stCls(st)+'"></span><b class="mono">'+esc(c.ipv4||"(no IPv4)")+'</b><span style="color:var(--text-3);font-size:11.5px">'+esc(st)+'</span><span class="chev">'+ICN_CHEVRON+'</span></summary>'
         +'<div class="clibody"><div class="r"><span>MAC</span><b class="mono">'+esc(c.mac)+'</b></div><div class="r"><span>State</span><b>'+esc(st)+'</b></div>'+v6+'</div></details>';
     });
     box.innerHTML=html;
@@ -758,7 +842,7 @@ const dashboardHTML = `<!DOCTYPE html>
   function renderHotspot(h){
     document.getElementById("hsState").textContent=h.active?"on":"off";
     document.getElementById("hsDot").className="dot "+(h.active?"green":"off");
-    document.getElementById("hsAccent").style.background=h.active?"var(--green)":"#30363d";
+    document.getElementById("hsAccent").style.background=h.active?"var(--green)":"var(--text-3)";
     var auto=h.auto?(h.paused?"paused: "+h.paused.replace("_"," "):"watching "+h.whitelist.length+" SSID"+(h.whitelist.length===1?"":"s")):"off";
     document.getElementById("hsAuto").textContent=auto;
     var mr=document.getElementById("hsMatchRow");
@@ -774,6 +858,20 @@ const dashboardHTML = `<!DOCTYPE html>
     hsActive=!!h.active; renderHotspotBtn();
   }
 
+  var usbActive=false;
+  function renderUsbTether(u){
+    document.getElementById("usbState").textContent=u.active?"on":"off";
+    document.getElementById("usbDot").className="dot "+(u.active?"green":"off");
+    document.getElementById("usbSub").textContent=(u.ifaces&&u.ifaces.length)?u.ifaces.join(", "):"";
+    usbActive=!!u.active; renderUsbTetherBtn();
+  }
+  function renderUsbTetherBtn(){
+    var b=document.getElementById("usbTetherBtn"); if(!b)return;
+    b.textContent=usbActive?"Turn USB tethering off":"Turn USB tethering on";
+    b.style.background=usbActive?"var(--red)":"var(--green)";
+    b.style.color=usbActive?"#fff":"#3E3428";
+  }
+
   // Hotspot toggle button reflects the current state: press turns it on when off,
   // off when on.
   var hsActive=false;
@@ -781,19 +879,22 @@ const dashboardHTML = `<!DOCTYPE html>
     var b=document.getElementById("hotspotOnBtn"); if(!b)return;
     b.textContent=hsActive?"Turn hotspot off":"Turn hotspot on";
     b.style.background=hsActive?"var(--red)":"var(--green)";
-    b.style.color=hsActive?"#fff":"#04211f";
+    b.style.color=hsActive?"#fff":"#3E3428";
   }
 
   // Read-only list of what's currently whitelisted, with a × to remove each.
   // Index-based handlers keep SSIDs (spaces, Vietnamese, quotes) out of markup.
   function renderWhitelist(wl){
     var box=document.getElementById("wlList");
-    if(!wl.length){box.innerHTML='<div class="stat-sub">Nothing whitelisted yet.</div>';return;}
-    var html='<div class="wlhead">Whitelisted ('+wl.length+')</div>';
-    wl.forEach(function(s,i){
-      html+='<div class="wlchip"><span class="wlname">'+esc(s)+'</span><button class="wlx" data-idx="'+i+'" aria-label="Remove '+esc(s)+' from whitelist">&times;</button></div>';
-    });
-    box.innerHTML=html;
+    var html;
+    if(!wl.length){html='<div class="stat-sub">Nothing whitelisted yet.</div>';}
+    else{
+      html='<div class="wlhead">Whitelisted ('+wl.length+')</div>';
+      wl.forEach(function(s,i){
+        html+='<div class="wlchip"><span class="wlname">'+esc(s)+'</span><button class="wlx" data-idx="'+i+'" aria-label="Remove '+esc(s)+' from whitelist">'+ICN_X+'</button></div>';
+      });
+    }
+    if(!setListHTML(box,html))return;
     box.querySelectorAll(".wlx").forEach(function(b){b.addEventListener("click",function(){
       var s=wl[+b.getAttribute("data-idx")]; if(s!=null)toggleWhitelist(s);
     });});
@@ -806,19 +907,20 @@ const dashboardHTML = `<!DOCTYPE html>
   function renderNearby(h){
     nearbyList=(h&&h.nearby)||[];
     var box=document.getElementById("nearby");
+    var html;
     if(!nearbyList.length){
-      box.innerHTML='<div class="stat-sub">'+(h&&h.paused==="location_off"?"Turn on location services, then Scan.":"No scan yet — tap “Scan now”.")+'</div>';
-      return;
+      html='<div class="stat-sub">'+(h&&h.paused==="location_off"?"Turn on location services, then Scan.":"No scan yet — tap “Scan now”.")+'</div>';
+    }else{
+      html="";
+      nearbyList.forEach(function(ap,i){
+        var b=rssiBars(ap.rssi);
+        html+='<button class="nrow'+(ap.whitelisted?" on":"")+'" data-idx="'+i+'" aria-pressed="'+(ap.whitelisted?"true":"false")+'">'
+          +'<span class="nbars b'+b+'"><i></i><i></i><i></i><i></i></span>'
+          +'<span class="nname">'+esc(ap.ssid)+'</span>'
+          +'<span class="nchip">'+(ap.whitelisted?(ICN_CHECK+"whitelisted"):"+ add")+'</span></button>';
+      });
     }
-    var html="";
-    nearbyList.forEach(function(ap,i){
-      var b=rssiBars(ap.rssi);
-      html+='<button class="nrow'+(ap.whitelisted?" on":"")+'" data-idx="'+i+'" aria-pressed="'+(ap.whitelisted?"true":"false")+'">'
-        +'<span class="nbars b'+b+'"><i></i><i></i><i></i><i></i></span>'
-        +'<span class="nname">'+esc(ap.ssid)+'</span>'
-        +'<span class="nchip">'+(ap.whitelisted?"✓ whitelisted":"+ add")+'</span></button>';
-    });
-    box.innerHTML=html;
+    if(!setListHTML(box,html))return;
     box.querySelectorAll(".nrow").forEach(function(b){b.addEventListener("click",function(){
       var ap=nearbyList[+b.getAttribute("data-idx")]; if(ap)toggleWhitelist(ap.ssid);
     });});
@@ -829,6 +931,76 @@ const dashboardHTML = `<!DOCTYPE html>
   // exception here must not kill the settings buttons or the polling loop.
   function lsGet(k){try{return localStorage.getItem(k)||"";}catch(e){return "";}}
   function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+
+  document.getElementById("themeBtn").addEventListener("click",function(){
+    var night=document.documentElement.getAttribute("data-theme")==="night";
+    if(night){document.documentElement.removeAttribute("data-theme");lsSet("zf5theme","light");}
+    else{document.documentElement.setAttribute("data-theme","night");lsSet("zf5theme","night");}
+  });
+
+  // --- Background picker: 4 token-built presets + a custom image URL, applied
+  // via the --user-bg CSS var and persisted client-side (no server round trip).
+  var BG_PRESETS={
+    meadow:"linear-gradient(135deg, #DCF5E4, #DFF5FC)",
+    dune:"linear-gradient(135deg, #F2DFA8, #FFF3C6)",
+    coral:"linear-gradient(135deg, #FFCE3E, #FF7A59)",
+    pine:"linear-gradient(135deg, #1E2B25, #27362E)"
+  };
+  var bgMsg=document.getElementById("bgMsg"), bgUrl=document.getElementById("bgUrl");
+  var bgSwatchEls=document.querySelectorAll(".bgswatch");
+  function markSwatch(preset){bgSwatchEls.forEach(function(b){b.classList.toggle("sel",b.getAttribute("data-preset")===preset);});}
+  function applyBgPreset(preset,persist){
+    var g=BG_PRESETS[preset]; if(!g)return;
+    document.documentElement.style.setProperty("--user-bg",g);
+    markSwatch(preset);
+    if(persist){try{localStorage.setItem("zf5bg",JSON.stringify({type:"preset",value:preset}));}catch(e){}}
+  }
+  function isSafeBgUrl(v){return (v.indexOf("https://")===0||v.indexOf("data:image/")===0)&&v.indexOf('"')<0&&v.indexOf(")")<0&&v.indexOf(";")<0;}
+  function applyCustom(v,persist){
+    document.documentElement.style.setProperty("--user-bg",'url("'+v+'")');
+    markSwatch(null);
+    if(persist){try{localStorage.setItem("zf5bg",JSON.stringify({type:"custom",value:v}));}catch(e){}}
+  }
+  bgSwatchEls.forEach(function(b){b.addEventListener("click",function(){applyBgPreset(b.getAttribute("data-preset"),true);bgMsg.textContent="Background updated.";});});
+  document.getElementById("bgApplyBtn").addEventListener("click",function(){
+    var v=bgUrl.value.trim();
+    if(!v){bgMsg.textContent="Paste an image URL first.";return;}
+    if(!isSafeBgUrl(v)){bgMsg.textContent="Only https:// or data:image/ URLs are allowed (no quotes, parentheses, or semicolons).";return;}
+    applyCustom(v,true);
+    bgMsg.textContent="Background updated.";
+  });
+  document.getElementById("bgFileBtn").addEventListener("click",function(){document.getElementById("bgFile").click();});
+  document.getElementById("bgFile").addEventListener("change",function(e){
+    var file=e.target.files&&e.target.files[0]; e.target.value=""; if(!file)return;
+    if(file.type.indexOf("image/")!==0){bgMsg.textContent="Pick an image file.";return;}
+    bgMsg.textContent="Loading photo…";
+    var reader=new FileReader();
+    reader.onload=function(){
+      var img=new Image();
+      img.onload=function(){
+        var maxDim=900, scale=Math.min(1,maxDim/Math.max(img.width,img.height));
+        var cw=Math.round(img.width*scale), ch=Math.round(img.height*scale);
+        var cv=document.createElement("canvas"); cv.width=cw; cv.height=ch;
+        cv.getContext("2d").drawImage(img,0,0,cw,ch);
+        var dataUrl=cv.toDataURL("image/jpeg",0.72);
+        if(dataUrl.length>1500000){bgMsg.textContent="Photo too large even after resizing — try a smaller image.";return;}
+        applyCustom(dataUrl,true);
+        bgMsg.textContent="Background updated.";
+      };
+      img.onerror=function(){bgMsg.textContent="Couldn't read that photo.";};
+      img.src=reader.result;
+    };
+    reader.onerror=function(){bgMsg.textContent="Couldn't read that photo.";};
+    reader.readAsDataURL(file);
+  });
+  (function initBg(){
+    var saved=null;
+    try{var raw=localStorage.getItem("zf5bg");if(raw)saved=JSON.parse(raw);}catch(e){}
+    if(saved&&saved.type==="preset"&&BG_PRESETS[saved.value]){applyBgPreset(saved.value,false);}
+    else if(saved&&saved.type==="custom"&&isSafeBgUrl(saved.value)){applyCustom(saved.value,false);bgUrl.value=saved.value;}
+    else{applyBgPreset("meadow",false);}
+  })();
+
   var setMsg=document.getElementById("setMsg"), setTok=document.getElementById("setTok");
   setTok.value=lsGet("zf5rtok");
   var openControl=false; // updated from /v1/status; when true writes need no token
@@ -885,7 +1057,7 @@ const dashboardHTML = `<!DOCTYPE html>
   function renderOpenReads(on){
     document.getElementById("orState").textContent=on?"on":"off";
     document.getElementById("orDot").className="dot "+(on?"amber":"off");
-    document.getElementById("orAccent").style.background=on?"var(--amber)":"#30363d";
+    document.getElementById("orAccent").style.background=on?"var(--amber)":"var(--text-3)";
   }
 
   // --- Open control toggle (tokenless radio-control writes). radio-control gated
@@ -906,7 +1078,7 @@ const dashboardHTML = `<!DOCTYPE html>
     openControl=on;
     document.getElementById("ocState").textContent=on?"on":"off";
     document.getElementById("ocDot").className="dot "+(on?"red":"off");
-    document.getElementById("ocAccent").style.background=on?"var(--red)":"#30363d";
+    document.getElementById("ocAccent").style.background=on?"var(--red)":"var(--text-3)";
   }
 
   document.getElementById("setBtn").addEventListener("click",function(){
@@ -1023,9 +1195,23 @@ const dashboardHTML = `<!DOCTYPE html>
       apBtns.forEach(function(b){b.disabled=false;}); hb.disabled=false;
       if(!res.ok){apMsg.textContent="Error: "+(res.j.error||"failed");return;}
       hsActive=!!res.j.active; renderHotspotBtn();
-      apMsg.textContent=res.j.active?"📶 hotspot on":(stopping?"hotspot off":"⚠️ hotspot did not come up — retry");
+      apMsg.innerHTML=res.j.active?(ICN_WIFI+"hotspot on"):(stopping?"hotspot off":(ICN_WARN+"hotspot did not come up — retry"));
       tick();
     }).catch(function(e){apBtns.forEach(function(b){b.disabled=false;});hb.disabled=false;apMsg.textContent="Error: "+e.message;});
+  });
+
+  // USB tether toggle — turn it on when off, off when on (not thermal-gated).
+  var usbMsg=document.getElementById("usbMsg");
+  document.getElementById("usbTetherBtn").addEventListener("click",function(){
+    var rt=rtok(usbMsg); if(!rt)return;
+    var stopping=usbActive, action=stopping?"stop":"start", ub=document.getElementById("usbTetherBtn");
+    usbMsg.textContent=stopping?"stopping USB tethering…":"starting USB tethering…"; ub.disabled=true;
+    post("/v1/usbtether/toggle?action="+action,{},rt).then(function(res){
+      ub.disabled=false;
+      if(!res.ok){usbMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      renderUsbTether(res.j.status||{});
+      usbMsg.innerHTML=usbActive?(ICN_USB+"USB tethering on"):(stopping?"USB tethering off":(ICN_WARN+"USB tethering did not come up — retry"));
+    }).catch(function(e){ub.disabled=false;usbMsg.textContent="Error: "+e.message;});
   });
 
   // --- Hotspot presets: create/edit/apply + Wi-Fi-fingerprint auto-switch.
@@ -1045,20 +1231,23 @@ const dashboardHTML = `<!DOCTYPE html>
     var on=!!hp.auto_switch;
     document.getElementById("paState").textContent=on?"on":"off";
     document.getElementById("paDot").className="dot "+(on?"green":"off");
-    document.getElementById("paAccent").style.background=on?"var(--green)":"#30363d";
+    document.getElementById("paAccent").style.background=on?"var(--green)":"var(--text-3)";
     document.getElementById("pCount").textContent=presetList.length?(presetList.length+"/12"):"";
     var box=document.getElementById("pList");
-    if(!presetList.length){box.innerHTML='<div class="stat-sub">No presets yet — create one below.</div>';return;}
-    var html="";
-    presetList.forEach(function(p,i){
-      var act=hp.active&&p.id===hp.active;
-      html+='<div class="prow">'
-        +'<button class="pmain" data-idx="'+i+'"><div class="pname">'+esc(p.name)+(act?'<span class="tag">active</span>':'')+'</div><div class="pmeta">'+presetMeta(p)+'</div></button>'
-        +'<button class="minibtn papply" data-idx="'+i+'"'+(act?' disabled':'')+'>'+(act?'On':'Apply')+'</button>'
-        +'<button class="wlx pdel" data-idx="'+i+'" aria-label="Delete preset">&times;</button>'
-      +'</div>';
-    });
-    box.innerHTML=html;
+    var html;
+    if(!presetList.length){html='<div class="stat-sub">No presets yet — create one below.</div>';}
+    else{
+      html="";
+      presetList.forEach(function(p,i){
+        var act=hp.active&&p.id===hp.active;
+        html+='<div class="prow">'
+          +'<button class="pmain" data-idx="'+i+'"><div class="pname">'+esc(p.name)+(act?'<span class="tag">active</span>':'')+'</div><div class="pmeta">'+presetMeta(p)+'</div></button>'
+          +'<button class="minibtn papply" data-idx="'+i+'"'+(act?' disabled':'')+'>'+(act?'On':'Apply')+'</button>'
+          +'<button class="wlx pdel" data-idx="'+i+'" aria-label="Delete preset">'+ICN_X+'</button>'
+        +'</div>';
+      });
+    }
+    if(!setListHTML(box,html))return;
     box.querySelectorAll(".pmain").forEach(function(b){b.addEventListener("click",function(){editPreset(presetList[+b.getAttribute("data-idx")]);});});
     box.querySelectorAll(".papply").forEach(function(b){b.addEventListener("click",function(){applyPreset(presetList[+b.getAttribute("data-idx")]);});});
     box.querySelectorAll(".pdel").forEach(function(b){b.addEventListener("click",function(){deletePreset(presetList[+b.getAttribute("data-idx")]);});});
@@ -1071,11 +1260,14 @@ const dashboardHTML = `<!DOCTYPE html>
     var list=hp.presets||[], act=hp.active;
     var actName=""; list.forEach(function(p){if(p.id===act)actName=p.name;});
     document.getElementById("hpActive").textContent=actName?("on “"+actName+"”"):(list.length?"none active":"");
-    if(!list.length){box.innerHTML='<div class="stat-sub">No presets — add them in the Presets tab.</div>';return;}
-    var html="";
-    list.forEach(function(p,i){var o=p.id===act;
-      html+='<button class="pchip hpq'+(o?" added":"")+'" data-idx="'+i+'"'+(o?' disabled':'')+'>'+(o?"● ":"")+esc(p.name)+'</button>';});
-    box.innerHTML=html;
+    var html;
+    if(!list.length){html='<div class="stat-sub">No presets — add them in the Presets tab.</div>';}
+    else{
+      html="";
+      list.forEach(function(p,i){var o=p.id===act;
+        html+='<button class="pchip hpq'+(o?" added":"")+'" data-idx="'+i+'"'+(o?' disabled':'')+'>'+(o?ICN_DOT:"")+esc(p.name)+'</button>';});
+    }
+    if(!setListHTML(box,html))return;
     box.querySelectorAll(".hpq").forEach(function(b){b.addEventListener("click",function(){applyPreset(list[+b.getAttribute("data-idx")],hpMsg);});});
   }
   function editPreset(p){
@@ -1186,7 +1378,7 @@ const dashboardHTML = `<!DOCTYPE html>
   // limit 120). allSettled so one failure renders what it can.
   var extras={
     home:[["/v1/usage",renderUsage]],
-    net:[["/v1/bands",renderBands],["/v1/hotspot",renderHotspot]],
+    net:[["/v1/bands",renderBands],["/v1/hotspot",renderHotspot],["/v1/usbtether",renderUsbTether]],
     clientsScr:[["/v1/clients",renderClients]],
     system:[["/v1/cpu",renderCPU]],
     settings:[["/v1/hotspot",renderHotspot]]
