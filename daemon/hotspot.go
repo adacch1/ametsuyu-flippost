@@ -82,6 +82,14 @@ func (h *HotspotController) Whitelist() []string {
 	return append([]string(nil), h.whitelist...)
 }
 
+// LastSeenSSIDs returns the SSIDs from the most recent scan (whitelist loop or a
+// manual/preset scan). Feeds the preset auto-switch without triggering a scan.
+func (h *HotspotController) LastSeenSSIDs() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return apNames(h.lastNearby)
+}
+
 func (h *HotspotController) SetWhitelist(ssids []string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
