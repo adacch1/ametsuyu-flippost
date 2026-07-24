@@ -259,7 +259,8 @@ const dashboardHTML = `<!DOCTYPE html>
      (nav is a normal-flow sibling below it, not an overlay), so page content
      can never appear at or behind the nav -- no floating-overlay peek-through,
      no corner-gap bleed, at any scroll position, not just at rest. */
-  .app{max-width:720px;width:100%;margin:0 auto;padding:0 12px 16px;flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .app{max-width:720px;width:100%;margin:0 auto;padding:0 12px;flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}
+  .app::-webkit-scrollbar{display:none}
   .screen{display:none}
   .screen.active{display:block;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
   header{position:sticky;top:0;z-index:5;margin:0 -12px 16px;padding:10px 12px 14px;border-radius:0 0 20px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(var(--bg-rgb),.72);-webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5);box-shadow:var(--shadow-sm)}
@@ -402,7 +403,7 @@ const dashboardHTML = `<!DOCTYPE html>
      so it never floats over page content -- nothing can appear at or behind
      it, at any scroll position. Still visually a floating centered pill via
      margin/max-width, just no longer position:fixed. */
-  nav{flex:none;width:calc(100% - 24px);max-width:696px;margin:12px auto calc(12px + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--card);box-shadow:var(--shadow-sm);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-radius:999px;display:flex}
+  nav{flex:none;width:calc(100% - 24px);max-width:696px;margin:0 auto calc(12px + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--card);box-shadow:var(--shadow-sm);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-radius:999px;display:flex}
   nav .tab{flex:1;background:none;border:0;cursor:pointer;color:var(--text-3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10px;font-weight:600;transition:color .14s cubic-bezier(0.34,1.56,0.64,1)}
   nav .tab svg{width:21px;height:21px;border-radius:999px;transition:background-color .14s cubic-bezier(0.34,1.56,0.64,1),color .14s cubic-bezier(0.34,1.56,0.64,1),padding .14s cubic-bezier(0.34,1.56,0.64,1)}
   nav .tab.active{color:var(--text)}
