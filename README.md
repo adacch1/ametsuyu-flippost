@@ -5,9 +5,12 @@ A rooted Samsung Galaxy Z Flip 5 (SM-F731B) turned into a dedicated 5G/LTE modem
 A small local-only root service (Go) reports network, tethering, thermal, battery, and recent SMS state, can auto-switch hotspot presets by which Wi-Fi network is in range, and can safely prefer/recover 5G — all **without** ever bypassing thermal protection.
 
 <p align="center">
-  <img src="docs/assets/dashboard-desktop.png" alt="ZF5 Modem dashboard in a desktop browser over Tailscale: live 5G status, data usage ring, battery, thermal state, and hotspot preset" width="600"><br>
-  <img src="docs/assets/dashboard-screenshot.png" alt="ZF5 Modem dashboard on the phone's own cover-screen kiosk" width="280">
+  <img src="docs/assets/dashboard-home.png" alt="Home tab: data usage ring at 47% of 512 GB, battery and temperature cards, hotspot preset switcher" width="260">
+  <img src="docs/assets/dashboard-network.png" alt="Network tab: LTE-CA signal detail with RSRP, RSRQ, SINR and band, hotspot state, USB tethering toggle" width="260">
+  <img src="docs/assets/dashboard-system.png" alt="System tab: per-core CPU bars, memory use, thermal policy HOT and CPU mode eco (auto)" width="260">
 </p>
+
+<p align="center"><em>Live screens from the device. Note the System tab: the phone is genuinely hot, so the CPU policy has dropped to <strong>eco</strong> and parked a core — 7 of 8 online.</em></p>
 
 ## Why
 
@@ -23,12 +26,23 @@ Old phones make great dedicated modems — always-on cellular radio, its own bat
 - **CPU policy** — auto/performance/balanced/eco/off, reduces load automatically when the device is running hot.
 - **SMS, pull-only** — redacted by default, owner-only, rate-limited, never auto-forwarded.
 - **Remote control** — Apple Shortcuts and a self-hosted Discord bot, both over Tailscale; no public endpoint.
-- **Themeable dashboard** — Green/Ivory/Black solid color themes, plus a background photo you can pick from your device (always kept legible with an automatic dark or light scrim depending on theme). Served as a single self-contained page with no build step, no CDN, no external fonts.
 - **No token to babysit** — the daemon generates its own scoped tokens on first boot and hands them to the dashboard automatically (open reads + open control on by default), so opening the page — from the phone's own kiosk or a browser on your tailnet — just works. Flip `open_reads`/`open_control` off in Settings if you'd rather require the token explicitly.
+
+## The dashboard
+
+One self-contained page: no build step, no CDN, no framework, no external asset beyond two webfonts. Six tabs — Home, Network, Clients, System, Presets, Settings — served straight off the phone's loopback.
+
+It follows a measured dark design system: every raised surface is a vertical gradient over a single flat `#1e1e1e` page, depth comes from lighting (shadows and inset bevels) rather than texture, and each tab binds one of seven named accent gradients — so the whole screen recolours per section from two CSS variables.
+
+Accessibility is checked rather than assumed: every text node clears WCAG AA contrast, controls are 44px touch targets, tabs are real `tablist`/`tabpanel` semantics with focus moved into the panel on switch, and the meters animate with `transform` rather than layout properties so the poll loop doesn't reflow the page.
+
+Typography is **Be Vietnam Pro** + **Inter**, chosen because both ship a `vietnamese` subset — a face without one drops diacritics to a system fallback and breaks mid-word.
 
 ## Recommended: put it behind Tailscale
 
-The phone sits behind carrier CGNAT, so there's no public inbound path anyway — remote access is a private mesh VPN, never a port-forward. The daemon binds `127.0.0.1` only; the module can run **userspace** `tailscaled` (no TUN, no root network changes) and expose just that loopback port to your tailnet with `tailscale serve`. That's how the iPhone Shortcuts and Discord relay reach it, and it's the intended way to open the dashboard from a desktop browser (like the screenshot above) instead of USB `adb forward`. See [`docs/tailscale.md`](docs/tailscale.md) for the one-time setup (auth key, `ingress.mode`).
+The phone sits behind carrier CGNAT, so there's no public inbound path anyway — remote access is a private mesh VPN, never a port-forward. The daemon binds `127.0.0.1` only; the module can run **userspace** `tailscaled` (no TUN, no root network changes) and expose just that loopback port to your tailnet with `tailscale serve`. That's how the iPhone Shortcuts and Discord relay reach it, and it's the intended way to open the dashboard from a desktop browser instead of USB `adb forward`. See [`docs/tailscale.md`](docs/tailscale.md) for the one-time setup (auth key, `ingress.mode`).
+
+> **Check what else is listening.** The carrier may route a public IPv6 prefix to the phone, in which case anything bound to `0.0.0.0`/`::` is reachable from the open internet even though IPv4 is CGNAT'd. The daemon itself is loopback-only and unaffected, but adb-over-TCP and any side service you add are not. `tools/security-check.sh --device` asserts the daemon's bind; verify the rest yourself before leaving them up.
 
 ## Safety guarantees (non-negotiable)
 
@@ -56,6 +70,17 @@ Implemented and running on-device. The Go daemon (`daemon/`), Magisk module (`ma
 ## Getting started
 
 You'll need a rooted Z Flip 5 (SM-F731B) with Magisk, and a host with `adb` + Go. Full build/install/update steps are in [`docs/install.md`](docs/install.md); once installed, open the dashboard — over Tailscale (recommended, see above) or loopback via `adb forward` for local testing — see [`docs/dashboard.md`](docs/dashboard.md).
+
+Updating just the daemon does not need a reboot. The module's `service.sh` runs a watchdog, so replacing the binary and killing the process is enough — note that a *running* executable can't be overwritten in place (`ETXTBSY`), so rename it first:
+
+```sh
+bash tools/build-daemon.sh                       # -> dist/zflip5-modemd (static arm64)
+adb push dist/zflip5-modemd /data/local/tmp/modemd.new
+adb shell su -c 'BIN=/data/adb/modules/zflip5_modem/daemon/zflip5-modemd; \
+  mv "$BIN" "$BIN.old" && cp /data/local/tmp/modemd.new "$BIN" && chmod 0755 "$BIN" && \
+  kill $(ps -A -o PID,ARGS | grep "[z]flip5-modemd --config" | awk "{print \$1}" | tail -1)'
+# watchdog respawns within ~10s
+```
 
 ## Disclaimer
 

@@ -136,13 +136,19 @@ func (s *Server) handleIcon(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(appIconSVG))
 }
 
+// The product mark carries the brand green->teal gradient (DESIGN.md 1.3/2.2)
+// on --surface-base. The brand pair is reserved for the mark and success
+// states; it is never used as a general-purpose accent.
 const appIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-<rect width="512" height="512" rx="112" fill="#0b0d10"/>
+<defs><linearGradient id="brand" x1="0" y1="0" x2="0" y2="1">
+<stop offset="0%" stop-color="#76d788"/><stop offset="100%" stop-color="#00d0b8"/>
+</linearGradient></defs>
+<rect width="512" height="512" rx="112" fill="#1e1e1e"/>
 <g transform="translate(150 300)">
-<rect x="0" y="-40" width="34" height="40" rx="6" fill="#3fb8af"/>
-<rect x="58" y="-80" width="34" height="80" rx="6" fill="#3fb8af"/>
-<rect x="116" y="-128" width="34" height="128" rx="6" fill="#3fb8af"/>
-<rect x="174" y="-184" width="34" height="184" rx="6" fill="#3fb8af"/>
+<rect x="0" y="-40" width="34" height="40" rx="6" fill="url(#brand)"/>
+<rect x="58" y="-80" width="34" height="80" rx="6" fill="url(#brand)"/>
+<rect x="116" y="-128" width="34" height="128" rx="6" fill="url(#brand)"/>
+<rect x="174" y="-184" width="34" height="184" rx="6" fill="url(#brand)"/>
 </g></svg>`
 
 // handleManifest serves the PWA manifest so the dashboard installs as an app.
@@ -166,8 +172,8 @@ const webManifest = `{
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#1E2B25",
-  "theme_color": "#1E2B25",
+  "background_color": "#1e1e1e",
+  "theme_color": "#1e1e1e",
   "icons": [
     {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
   ]
@@ -193,13 +199,13 @@ self.addEventListener('activate',function(e){e.waitUntil((async function(){
 // thermal-gate adjust and the hotspot SSID-whitelist editor (radio-control
 // token, stored locally, server-clamped/validated).
 const dashboardHTML = `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-accent="home">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Z Flip 5 Modem</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#1E2B25">
+<meta name="theme-color" content="#1e1e1e">
 <link rel="apple-touch-icon" href="/icon.svg">
 <link rel="icon" href="/icon.svg">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -208,229 +214,289 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta name="apple-mobile-web-app-title" content="ZF5 Modem">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700&family=Nunito:wght@400;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
+  /* AnimalCrossing v2.0 — values from DESIGN.md §1, measured off cocoon-shell.com.
+     Surfaces are 180deg gradients; the ONLY flat colour is --surface-base on body.
+     No backdrop layer, no texture, no pattern (hard rule 2). */
   :root{
-    --bg:#1E2B25; --bg-rgb:30,43,37; --card:#27362E; --card-2:#182420; --line:rgba(79,190,115,0.16); --line-soft:rgba(79,190,115,0.16);
-    --text:#F4EEDD; --text-2:#B9C6BB; --text-3:#7E8F85;
-    --teal:#4FBE73; --green:#4FBE73; --green-600:#38A75F; --amber:#FFCE3E; --red:#FF7A59; --blue:#45C4EA; --violet:#45C4EA;
-    --track:#182420; --radius:16px; --tabbar-h:60px; --ring-100:rgba(79,190,115,.16);
-    --on-color:#1E2B25; --focus-ring:0 0 0 3px #4E8D5F;
-    --shadow-sm:0 2px 6px rgba(0,0,0,.30); --shadow-md:0 6px 18px rgba(0,0,0,.35); --shadow-lg:0 12px 34px rgba(0,0,0,.45);
-    --shadow-inset:inset 0 1px 3px rgba(0,0,0,.35);
-    --user-bg:var(--bg);
-    --font-display:"Baloo 2",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    /* §1.1 surfaces */
+    --surface-base:#1e1e1e;
+    --gradient-surface:linear-gradient(180deg,#3a3a3a 0%,#2a2a2a 100%);
+    --gradient-dark:linear-gradient(180deg,#565e69 0%,#3a3c3f 100%);
+
+    /* §1.2 text — one colour, four opacities */
+    --silver:#fafafa;
+    --color-body:#212121;   /* DESIGN.md 1.2 — text on LIGHT surfaces (accent fills) */
+    --text:rgba(250,250,250,1);
+    --text-2:rgba(250,250,250,.8);
+    --text-3:rgba(250,250,250,.7);
+    --text-4:rgba(250,250,250,.6);
+
+    /* §1.3 the seven named accents */
+    --dawn-start:#FFC2A2;      --dawn-end:#FF8820;
+    --sunflower-start:#FED6AD; --sunflower-end:#F3B817;
+    --coral-start:#F890B6;     --coral-end:#FF5757;
+    --breeze-start:#90CCF8;    --breeze-end:#57A0FF;
+    --ocean-start:#8389FA;     --ocean-end:#3140E4;
+    --wisteria-start:#86A7FD;  --wisteria-end:#8037FF;
+    --slate-start:#848C98;     --slate-end:#565E69;
+    /* brand green->teal: product mark and success states only, never a general accent */
+    --brand-start:#76d788;     --brand-end:#00d0b8;
+
+    /* bound accent — rebound per screen below; nothing hardcodes an accent hex */
+    --color-primary-start:#F8D090; --color-primary-end:#FF9D57;
+    --gradient-primary:linear-gradient(180deg,var(--color-primary-start) 0%,var(--color-primary-end) 100%);
+    /* what an accent-filled control uses; --on-primary is its label colour */
+    --primary-fill:var(--gradient-primary); --on-primary:#212121;
+
+    /* §1.5 space 4/8/12/16/32/64 — the scale skips 24 and 48 */
+    --space-xs:4px; --space-sm:8px; --space-md:12px; --space-lg:16px; --space-xl:32px; --space-2xl:64px;
+    --radius-sm:8px; --radius-md:16px; --radius-lg:32px; --radius-pill:999px;
+    --radius-nav:20px; --radius-btn:14px;
+
+    --shadow-card:0 1px 1px rgba(33,33,33,.26),0 2px 5px rgba(33,33,33,.2);
+    --shadow-nav:0 2px 2px rgba(33,33,33,.26),0 3px 7px rgba(33,33,33,.1);
+    --shadow-inset:inset 0 -1px 3px rgba(33,33,33,.25),inset 0 1px 3px rgba(255,255,255,.5);
+    /* the signature bevel: light on the top edge, dark on the bottom */
+    --bevel:inset 0 1px 2px rgba(250,250,250,.2),inset 0 -1px 2px rgba(33,33,33,.5);
+    --focus-ring:0 0 0 3px rgba(255,157,87,.55);
+    --well:rgba(33,33,33,.45);      /* (derived) --color-body at .45 — inset wells */
+    --hairline:rgba(250,250,250,.08); /* (derived) --color-silver-100 at .08 — row rules */
+    --silver-35:rgba(250,250,250,.35); /* (derived) --color-silver-100 at .35 — inactive marks */
+
+    --font-display:"Be Vietnam Pro",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-body:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+
+    --pop:cubic-bezier(0.34,1.56,0.64,1);
+    --smooth:cubic-bezier(0.4,0,0.2,1);
+    --tabbar-h:60px;
   }
-  [data-surface="ivory"]{
-    --bg:#FFFDF2; --bg-rgb:255,253,242; --card:#FFFFFF; --card-2:#FFF3CF; --line:#F2DFA8; --line-soft:#F2DFA8;
-    --text:#3E3428; --text-2:#77694F; --text-3:#A5987E;
-    --track:#FFF3CF; --ring-100:#DCF5E4;
-    --on-color:#FFFFFF; --focus-ring:0 0 0 3px #DCF5E4;
-    --shadow-sm:0 2px 6px rgba(56,167,95,0.12); --shadow-md:0 6px 18px rgba(56,167,95,0.16); --shadow-lg:0 12px 34px rgba(56,167,95,0.20);
-    --shadow-inset:inset 0 1px 3px rgba(56,167,95,.15);
-  }
-  [data-surface="black"]{
-    --bg:#0B0D10; --bg-rgb:11,13,16; --card:#161B22; --card-2:#0D1117; --line:rgba(79,190,115,0.14); --line-soft:rgba(79,190,115,0.14);
-    --text:#E6EDF3; --text-2:#9AA5B1; --text-3:#7D8794;
-    --track:#0D1117; --ring-100:rgba(79,190,115,.16);
-    --on-color:#0B0D10; --focus-ring:0 0 0 3px #4E8D5F;
-    --shadow-sm:0 2px 6px rgba(0,0,0,.45); --shadow-md:0 6px 18px rgba(0,0,0,.5); --shadow-lg:0 12px 34px rgba(0,0,0,.6);
-    --shadow-inset:inset 0 1px 3px rgba(0,0,0,.5);
-  }
+
+  /* §1.3 one accent per app section, bound once. Swapping any of these
+     recolours the whole screen with no other edit. */
+  [data-accent="home"]      {--color-primary-start:var(--breeze-start);   --color-primary-end:var(--breeze-end)}
+  [data-accent="net"]       {--color-primary-start:var(--ocean-start);    --color-primary-end:var(--ocean-end)}
+  /* ocean clears AA with neither #fafafa nor #212121 at 14px, so accent-filled
+     controls fall back to the surface treatment on this screen. */
+  [data-accent="net"]{--primary-fill:var(--gradient-surface);--on-primary:var(--text)}
+  [data-accent="clientsScr"]{--color-primary-start:var(--wisteria-start); --color-primary-end:var(--wisteria-end)}
+  /* wisteria clears AA with neither #fafafa nor #212121 at 14px, so accent-filled
+     controls fall back to the surface treatment on this screen. */
+  [data-accent="clientsScr"]{--primary-fill:var(--gradient-surface);--on-primary:var(--text)}
+  [data-accent="system"]    {--color-primary-start:var(--sunflower-start);--color-primary-end:var(--sunflower-end)}
+  [data-accent="presets"]   {--color-primary-start:var(--dawn-start);     --color-primary-end:var(--dawn-end)}
+  [data-accent="settings"]  {--color-primary-start:var(--slate-start);    --color-primary-end:var(--slate-end)}
+  /* slate clears AA with neither #fafafa nor #212121 at 14px, so accent-filled
+     controls fall back to the surface treatment on this screen. */
+  [data-accent="settings"]{--primary-fill:var(--gradient-surface);--on-primary:var(--text)}
+  :root[data-accent]{--focus-ring:0 0 0 3px color-mix(in srgb,var(--color-primary-end) 55%,transparent)}
+
   @keyframes acPop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
+  @keyframes acPulse{0%,100%{opacity:.5}50%{opacity:.8}}
   *{box-sizing:border-box;margin:0;padding:0}
   button{border:0;background:none;color:inherit;font:inherit;cursor:pointer;-webkit-appearance:none;appearance:none;-webkit-tap-highlight-color:transparent}
   html,body{height:100%}
   body{
-    background:var(--bg); color:var(--text);
-    font-family:"Nunito",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    -webkit-font-smoothing:antialiased; font-feature-settings:"tnum" 1; line-height:1.4;
+    background:var(--surface-base); color:var(--text);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased; line-height:1.4; letter-spacing:normal;
     display:flex; flex-direction:column;
   }
-  .num{font-variant-numeric:tabular-nums}
-  .mono{font-family:"JetBrains Mono",ui-monospace,Menlo,monospace}
-  .bg-layer,.bg-scrim{position:fixed;inset:0;z-index:-1;pointer-events:none}
-  .bg-layer{background:var(--user-bg);background-size:cover;background-position:center}
-  .bg-scrim{background:transparent;transition:background .3s cubic-bezier(0.4,0,0.2,1)}
-  [data-bg="photo"] .bg-scrim{background:rgba(0,0,0,0.65)}
-  [data-surface="ivory"][data-bg="photo"] .bg-scrim{background:rgba(255,255,255,0.72)}
-  /* .app is the bounded, independently-scrolling content pane: flex:1 makes it
-     fill exactly the space between the viewport top and nav's own footprint
-     (nav is a normal-flow sibling below it, not an overlay), so page content
-     can never appear at or behind the nav -- no floating-overlay peek-through,
-     no corner-gap bleed, at any scroll position, not just at rest. */
-  .app{max-width:720px;width:100%;margin:0 auto;padding:0 12px;flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}
+  /* §1.4 every column of numbers is tabular */
+  .num,.mono{font-variant-numeric:tabular-nums}
+  .mono{font-family:var(--font-body)}
+
+  .app{max-width:720px;width:100%;margin:0 auto;padding:0 var(--space-md);flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}
   .app::-webkit-scrollbar{display:none}
   .screen{display:none}
-  .screen.active{display:block;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
-  header{position:sticky;top:0;z-index:5;margin:0 -12px 16px;padding:10px 12px 14px;border-radius:0 0 20px 20px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(var(--bg-rgb),.72);-webkit-backdrop-filter:blur(20px) saturate(1.5);backdrop-filter:blur(20px) saturate(1.5);box-shadow:var(--shadow-sm)}
-  /* top-left signal indicator (global, all tabs) */
-  .sigind{display:flex;align-items:center;gap:8px}
-  .bars{display:inline-flex;align-items:flex-end;gap:2px;height:18px}
-  .bars>i{width:3.5px;background:var(--text-3);border-radius:1px}
+  .screen.active{display:block;animation:acPop .24s var(--pop)}
+
+  /* Header reads as a raised surface, not a blur panel — depth is lighting. */
+  header{position:sticky;top:0;z-index:5;margin:0 calc(var(--space-md) * -1) var(--space-lg);padding:var(--space-md);border-radius:0 0 var(--radius-nav) var(--radius-nav);display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);background:var(--gradient-surface);box-shadow:var(--shadow-nav)}
+  .sigind{display:flex;align-items:center;gap:var(--space-sm)}
+  .bars{display:inline-flex;align-items:flex-end;gap:var(--space-xs);height:18px}
+  .bars>i{width:4px;background:var(--silver-35);border-radius:1px}
   .bars>i:nth-child(1){height:6px}.bars>i:nth-child(2){height:10px}.bars>i:nth-child(3){height:14px}.bars>i:nth-child(4){height:18px}
-  .bars.g>i.on{background:var(--green)}.bars.a>i.on{background:var(--amber)}.bars.r>i.on{background:var(--red)}
-  .sigind .lab{font-size:14px;font-weight:700}
-  .sigind .op{font-size:10.5px;color:var(--text-3);font-weight:500}
-  .netbadge{display:flex;align-items:center;gap:7px;background:var(--card);box-shadow:var(--shadow-sm);border-radius:999px;padding:6px 11px 6px 10px;font-size:12.5px;font-weight:600;letter-spacing:.02em}
+  .bars.g>i.on{background:var(--brand-end)}.bars.a>i.on{background:var(--sunflower-end)}.bars.r>i.on{background:var(--coral-end)}
+  .sigind .lab{font-family:var(--font-display);font-size:14px;font-weight:700}
+  .sigind .op{font-size:12px;color:var(--text-4);font-weight:400}
+  .netbadge{display:flex;align-items:center;gap:var(--space-sm);background:var(--gradient-surface);box-shadow:var(--shadow-card);border-radius:var(--radius-pill);padding:var(--space-xs) var(--space-md);font-size:12px;font-weight:700}
   .dot{width:8px;height:8px;border-radius:50%;flex:none}
-  .dot.green{background:var(--green)}.dot.amber{background:var(--amber)}.dot.red{background:var(--red)}.dot.off{background:var(--text-3)}
-  .card{background:var(--card);box-shadow:var(--shadow-sm);border-radius:var(--radius);padding:14px}
-  .card+.card,.grid+.card,.card+.grid,.duo+.card,.duo+.grid{margin-top:16px}
+  .dot.green{background:var(--brand-end)}.dot.amber{background:var(--sunflower-end)}.dot.red{background:var(--coral-end)}.dot.off{background:var(--silver-35)}
+
+  /* §1.2 Card */
+  .card{background:var(--gradient-surface);box-shadow:var(--shadow-card);border-radius:var(--radius-md);padding:var(--space-lg)}
+  .card+.card,.grid+.card,.card+.grid,.duo+.card,.duo+.grid{margin-top:var(--space-lg)}
   .duo>.card{margin-top:0}
-  .hero{display:flex;flex-direction:column;align-items:center;padding:16px 14px 14px;background:radial-gradient(120% 80% at 50% 0%,rgba(56,167,95,.06),transparent 60%),var(--card);box-shadow:var(--shadow-md)}
+  .hero{display:flex;flex-direction:column;align-items:center;padding:var(--space-lg)}
   .ring-wrap{position:relative;width:min(44vw,180px);aspect-ratio:1}
   .ring-wrap svg{width:100%;height:100%;transform:rotate(-90deg)}
-  .ring-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;text-align:center}
-  .ring-pct{font-family:var(--font-display);font-size:clamp(34px,11vw,46px);font-weight:700;letter-spacing:-.03em;line-height:1}
-  .ring-pct span{font-size:.5em;font-weight:600;color:var(--text-2);margin-left:1px}
-  .ring-sub{font-size:12.5px;color:var(--text-2);font-weight:500}
-  .ring-label{margin-top:10px;font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3)}
-  .ring-caption{margin-top:4px;font-size:12.5px;color:var(--text-2)}
+  .ring-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-xs);text-align:center}
+  .ring-pct{font-family:var(--font-display);font-size:clamp(34px,11vw,46px);font-weight:700;line-height:1}
+  .ring-pct span{font-size:.5em;font-weight:600;color:var(--text-2)}
+  .ring-sub{font-size:12px;color:var(--text-2);font-weight:400}
+  .ring-label{margin-top:var(--space-sm);font-size:12px;font-weight:600;color:var(--text-3)}
+  .ring-caption{margin-top:var(--space-xs);font-size:12px;color:var(--text-2)}
   .ring-caption b{color:var(--text);font-weight:600}
-  .grid{display:grid;grid-template-columns:1fr;gap:10px}
-  .duo{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
-  .stat-head{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px}
-  .stat-head .accent{width:7px;height:7px;border-radius:50%}
-  .stat-val{font-family:var(--font-display);font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
-  .stat-val small{font-size:.5em;font-weight:600;color:var(--text-2);margin-left:1px}
-  .stat-sub{margin-top:6px;font-size:12px;color:var(--text-2)}
-  .bar{margin-top:12px;height:6px;border-radius:3px;background:var(--track);overflow:hidden}
-  .bar>i{display:block;height:100%;border-radius:3px;background:var(--teal);transition:width .4s cubic-bezier(0.4,0,0.2,1)}
-  .cpu-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:12px}
-  .cpu-load{font-family:var(--font-display);font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1}
-  .cpu-load small{font-size:.4em;font-weight:600;color:var(--text-2);margin-left:3px}
-  .cpu-meta{font-size:11.5px;color:var(--text-3);font-weight:600;text-align:right}
-  .cores{display:flex;align-items:flex-end;gap:5px;height:64px}
-  .core{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;height:100%;justify-content:flex-end}
-  .core .track{position:relative;width:100%;flex:1;background:var(--track);border-radius:4px;overflow:hidden;display:flex;align-items:flex-end}
-  .core .fill{width:100%;border-radius:4px;background:var(--violet);transition:height .4s cubic-bezier(0.4,0,0.2,1)}
-  .core .idx{font-size:9.5px;color:var(--text-3);font-weight:600}
-  .core.off{opacity:.32}
-  .core.off .fill{background:var(--text-3)!important}
-  /* signal grid */
-  .sg{display:grid;grid-template-columns:1fr 1fr;gap:5px 16px}
-  .sgrow{display:flex;justify-content:space-between;font-size:13px;padding:2px 0}
+
+  .grid{display:grid;grid-template-columns:1fr;gap:var(--space-md)}
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);margin-top:var(--space-lg)}
+  .stat-head{display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--text-3);margin-bottom:var(--space-md)}
+  .stat-head h2{font:inherit;margin:0;color:inherit;letter-spacing:inherit}
+  .stat-head .accent{width:8px;height:8px;border-radius:50%;background:var(--gradient-primary)}
+  .stat-val{font-family:var(--font-display);font-size:32px;font-weight:700;line-height:1}
+  .stat-val small{font-size:.5em;font-weight:600;color:var(--text-2)}
+  .stat-sub{margin-top:var(--space-xs);font-size:12px;color:var(--text-2)}
+  /* wells are inset, per §2.3 cocoon-surface--inset */
+  .bar{margin-top:var(--space-md);height:8px;border-radius:var(--radius-sm);background:var(--well);box-shadow:var(--shadow-inset);overflow:hidden}
+  /* scaleX, not width: width animation relayouts on every poll tick */
+  .bar>i{display:block;height:100%;width:100%;transform-origin:left center;background:var(--gradient-primary);transition:transform .4s var(--smooth)}
+
+  .cpu-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-sm);margin-bottom:var(--space-md)}
+  .cpu-load{font-family:var(--font-display);font-size:32px;font-weight:700;line-height:1}
+  .cpu-load small{font-size:.4em;font-weight:600;color:var(--text-2);margin-left:var(--space-xs)}
+  .cpu-meta{font-size:12px;color:var(--text-3);font-weight:600;text-align:right}
+  .cores{display:flex;align-items:flex-end;gap:var(--space-xs);height:64px}
+  .core{flex:1;display:flex;flex-direction:column;align-items:center;gap:var(--space-xs);height:100%;justify-content:flex-end}
+  .core .track{position:relative;width:100%;flex:1;background:var(--well);box-shadow:var(--shadow-inset);border-radius:var(--radius-sm);overflow:hidden;display:flex;align-items:flex-end}
+  .core .fill{width:100%;height:100%;transform-origin:bottom center;background:var(--gradient-primary);transition:transform .4s var(--smooth)}
+  .core .idx{font-size:12px;color:var(--text-4);font-weight:600}
+  .core.off{opacity:.6}
+  .core.off .fill{background:var(--silver-35)!important}
+
+  /* Instrument surface (AGENTS.md §6 precedent): signal readouts are numbers
+     acted on at density, so status colour is a correctness signal here. */
+  .sg{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-xs) var(--space-lg)}
+  .sgrow{display:flex;justify-content:space-between;font-size:13px;padding:var(--space-xs) 0;font-variant-numeric:tabular-nums}
   .sgrow span{color:var(--text-2)}
   .sgrow b{font-weight:600}
-  .good{color:var(--green)}.mid{color:var(--amber)}.low{color:var(--red)}
-  /* clients: roomy rows for a small touch screen */
-  details.cli{border-top:1px solid var(--line-soft)}
+  .good{color:var(--brand-end)}.mid{color:var(--sunflower-end)}.low{color:var(--coral-end)}
+
+  /* rows: no cell borders (§2.7); separation via a hairline of silver at low alpha */
+  details.cli{border-top:1px solid var(--hairline)}
   details.cli:first-of-type{border-top:0}
-  details.cli summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:9px;font-size:13.5px;min-height:46px;padding:4px 0}
+  details.cli summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:var(--space-sm);font-size:13px;min-height:48px;padding:var(--space-xs) 0}
   details.cli summary::-webkit-details-marker{display:none}
-  details.cli summary .chev{margin-left:auto;color:var(--text-3);transition:transform .14s cubic-bezier(0.34,1.56,0.64,1)}
+  details.cli summary .chev{margin-left:auto;color:var(--text-4);transition:transform .14s var(--pop)}
   details.cli[open] summary .chev{transform:rotate(90deg)}
-  .clibody{font-size:12px;color:var(--text-2);margin:2px 0 10px 17px;display:grid;gap:4px}
-  .clibody .r{display:flex;justify-content:space-between;gap:12px}
+  .clibody{font-size:12px;color:var(--text-2);margin:0 0 var(--space-md) var(--space-lg);display:grid;gap:var(--space-xs)}
+  .clibody .r{display:flex;justify-content:space-between;gap:var(--space-md)}
   .clibody .r b{color:var(--text);font-weight:600;word-break:break-all;text-align:right}
-  .state-row{display:flex;align-items:center;justify-content:space-between;min-height:46px;padding:4px 0}
-  .state-row+.state-row{border-top:1px solid var(--line-soft)}
-  .state-row .k{font-size:13.5px;color:var(--text-2);font-weight:500}
-  .state-row .v{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;letter-spacing:.01em;text-align:right}
-  /* settings */
-  .setgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px}
-  label.f{font-size:10.5px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px}
-  input,textarea{width:100%;background:var(--card-2);border:2px solid transparent;border-radius:10px;color:var(--text);padding:11px 12px;font-size:14px;font-family:inherit;min-height:44px;box-shadow:var(--shadow-inset)}
+  .state-row{display:flex;align-items:center;justify-content:space-between;min-height:48px;padding:var(--space-xs) 0}
+  .state-row+.state-row{border-top:1px solid var(--hairline)}
+  .state-row .k{font-size:13px;color:var(--text-2);font-weight:400}
+  .state-row .v{display:flex;align-items:center;gap:var(--space-sm);font-size:13px;font-weight:600;text-align:right}
+
+  /* §1.3 inputs: gradient surface + inset, radius-sm */
+  .setgrid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);margin-top:var(--space-sm)}
+  label.f{font-size:12px;color:var(--text-3);font-weight:600;display:block;margin-bottom:var(--space-xs)}
+  input,textarea,select{width:100%;background:var(--gradient-surface);border:0;border-radius:var(--radius-sm);color:var(--text);padding:var(--space-md) var(--space-lg);font-size:14px;font-family:var(--font-body);min-height:44px;box-shadow:var(--shadow-inset)}
   textarea{min-height:76px;resize:vertical;line-height:1.5}
-  .settok{margin-top:16px}
-  .setbtn{margin-top:12px;width:100%;background:var(--teal);color:#3E3428;border:0;border-radius:999px;padding:13px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;min-height:46px;box-shadow:var(--shadow-sm),inset 0 -3px 0 rgba(0,0,0,0.12);transition:transform .14s cubic-bezier(0.34,1.56,0.64,1), filter .14s cubic-bezier(0.34,1.56,0.64,1), box-shadow .14s cubic-bezier(0.34,1.56,0.64,1)}
-  .setbtn:disabled{opacity:.5;cursor:default}
-  .setbtn:active:not(:disabled){box-shadow:none;transform:scale(0.97)}
-  /* secondary/trigger button: quiet, for occasional actions (speedtest, rotate) so
-     they don't outshout the data. Filled teal stays for commit actions only. */
-  .setbtn.sec{background:var(--card);color:var(--green-600);font-weight:600;box-shadow:inset 0 0 0 2px var(--ring-100)}
-  .setbtn.sec:active{background:#31423A}
-  .spd{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:4px}
-  .spdcell{text-align:center;background:var(--card-2);border-radius:10px;padding:12px 6px;box-shadow:var(--shadow-inset)}
-  .spdv{font-family:var(--font-display);font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1;transition:color .2s cubic-bezier(0.4,0,0.2,1)}
-  .spdv:not(.has-value){color:var(--text-3);font-size:20px}
-  .spdl{font-size:10.5px;color:var(--text-3);font-weight:600;margin-top:5px;text-transform:uppercase;letter-spacing:.04em}
-  .minibtn{background:var(--card-2);color:var(--teal);border-radius:999px;padding:7px 13px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:inherit;min-height:34px;transition:transform .14s cubic-bezier(0.34,1.56,0.64,1), filter .14s cubic-bezier(0.34,1.56,0.64,1), box-shadow .14s cubic-bezier(0.34,1.56,0.64,1)}
-  .minibtn:disabled{opacity:.5;cursor:default}
-  .apbtns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  select{padding-right:var(--space-xl);-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23fafafa' stroke-width='2.5' stroke-linecap='round' opacity='.7'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"),var(--gradient-surface);background-repeat:no-repeat,no-repeat;background-position:right var(--space-md) center,0 0}
+  .settok{margin-top:var(--space-lg)}
+
+  /* §1.1 Buttons: radius 13-15, gradient fill, card shadow, no 3D lip */
+  .setbtn{margin-top:var(--space-md);width:100%;background:var(--primary-fill);color:var(--on-primary);border:0;border-radius:var(--radius-btn);padding:var(--space-md);font-size:14px;font-weight:700;font-family:var(--font-body);cursor:pointer;min-height:48px;box-shadow:var(--shadow-card);transition:transform .14s var(--pop),box-shadow .14s var(--pop)}
+  .setbtn:disabled{opacity:.6;cursor:default}
+  .setbtn:active:not(:disabled){box-shadow:var(--shadow-inset);transform:scale(0.97)}
+  /* 1.1: 'on' is a success action (brand pair); 'danger' is the coral variant,
+     reserved for the destructive direction of a toggle. */
+  .setbtn.on{background:linear-gradient(180deg,var(--brand-start) 0%,var(--brand-end) 100%);color:var(--color-body)}
+  .setbtn.danger{background:linear-gradient(180deg,var(--coral-start) 0%,var(--coral-end) 100%);color:var(--color-body)}
+  .setbtn.sec{background:var(--gradient-surface);color:var(--text);font-weight:600;box-shadow:var(--shadow-card)}
+  .minibtn{background:var(--gradient-surface);color:var(--text);border-radius:var(--radius-btn);padding:var(--space-sm) var(--space-md);font-size:12px;font-weight:600;font-family:var(--font-body);cursor:pointer;min-height:44px;box-shadow:var(--shadow-card);transition:transform .14s var(--pop),box-shadow .14s var(--pop)}
+  /* the affirmative half of a paired control gets the section accent, so a
+     field and a control are never the same object (audit P1) */
+  .minibtn.primary{background:var(--primary-fill);color:var(--on-primary)}
+  .minibtn:disabled{opacity:.6;cursor:default}
+  .minibtn:active:not(:disabled){transform:scale(0.97);box-shadow:var(--shadow-inset)}
+
+  .spd{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-sm);margin-bottom:var(--space-xs)}
+  /* a well carved into the card, not another card stacked on it */
+  .spdcell{text-align:center;background:none;border-radius:var(--radius-sm);padding:var(--space-md) var(--space-sm);box-shadow:var(--shadow-inset)}
+  .spdv{font-family:var(--font-display);font-size:24px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;transition:color .2s var(--smooth)}
+  .spdv:not(.has-value){color:var(--text-4);font-size:20px}
+  .spdl{font-size:12px;color:var(--text-3);font-weight:600;margin-top:var(--space-xs)}
+  .apbtns{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);margin-top:var(--space-md)}
   .apbtns .minibtn{min-height:44px}
-  /* nearby-networks list (tap a row to add/remove from the whitelist) */
-  .nrow{display:flex;align-items:center;gap:11px;width:100%;background:none;border:0;border-top:1px solid var(--line-soft);padding:11px 2px;min-height:48px;cursor:pointer;color:var(--text);font-family:inherit;text-align:left;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
+
+  .nrow{display:flex;align-items:center;gap:var(--space-md);width:100%;background:none;border:0;border-top:1px solid var(--hairline);padding:var(--space-md) 2px;min-height:48px;cursor:pointer;color:var(--text);font-family:var(--font-body);text-align:left;animation:acPop .24s var(--pop)}
   .nrow:first-child{border-top:0}
-  .nname{flex:1;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .nchip{flex:none;font-size:11.5px;font-weight:600;color:var(--text-3)}
-  .nrow.on .nchip{color:var(--teal)}
-  .nbars{display:inline-flex;align-items:flex-end;gap:2px;height:15px;flex:none}
-  .nbars>i{width:3px;background:var(--text-3);border-radius:1px}
-  .nbars>i:nth-child(1){height:5px}.nbars>i:nth-child(2){height:8px}.nbars>i:nth-child(3){height:11px}.nbars>i:nth-child(4){height:15px}
-  .nbars.b1>i:nth-child(-n+1),.nbars.b2>i:nth-child(-n+2),.nbars.b3>i:nth-child(-n+3),.nbars.b4>i:nth-child(-n+4){background:var(--teal)}
-  .nrow:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:6px}
-  /* currently-whitelisted list (removable chips) */
-  .wlhead{font-size:10.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);margin:14px 0 8px}
-  .wlchip{display:flex;align-items:center;gap:8px;background:var(--card-2);border-radius:8px;padding:6px 6px 6px 12px;margin-bottom:6px;min-height:44px;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
-  .wlname{flex:1;min-width:0;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .wlx{flex:none;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--text-3);cursor:pointer;width:44px;height:44px;border-radius:7px;font-family:inherit}
-  .wlx:active,.wlx:focus-visible{color:var(--red);outline:none;background:rgba(240,82,78,.12)}
-  /* selects share the input look; native arrow hidden for a consistent field */
-  select{width:100%;background-color:var(--card-2);border:2px solid transparent;border-radius:10px;color:var(--text);padding:11px 34px 11px 12px;font-size:14px;font-family:inherit;min-height:44px;box-shadow:var(--shadow-inset);-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237E8F85' stroke-width='2.4' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
-  select:focus{outline:none;border-color:var(--teal);box-shadow:var(--focus-ring)}
-  /* preset rows: name+meta open the editor, then Apply, then delete */
-  .prow{display:flex;align-items:center;gap:9px;padding:9px 0;border-top:1px solid var(--line-soft);animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
+  .nname{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .nchip{flex:none;font-size:12px;font-weight:600;color:var(--text-4)}
+  .nrow.on .nchip{color:var(--color-primary-end)}
+  .nbars{display:inline-flex;align-items:flex-end;gap:var(--space-xs);height:16px;flex:none}
+  .nbars>i{width:3px;background:var(--silver-35);border-radius:1px}
+  .nbars>i:nth-child(1){height:5px}.nbars>i:nth-child(2){height:8px}.nbars>i:nth-child(3){height:12px}.nbars>i:nth-child(4){height:16px}
+  .nbars.b1>i:nth-child(-n+1),.nbars.b2>i:nth-child(-n+2),.nbars.b3>i:nth-child(-n+3),.nbars.b4>i:nth-child(-n+4){background:var(--color-primary-end)}
+
+  .wlhead{font-size:12px;font-weight:600;color:var(--text-3);margin:var(--space-lg) 0 var(--space-sm)}
+  .wlchip{display:flex;align-items:center;gap:var(--space-sm);background:var(--gradient-surface);box-shadow:var(--shadow-inset);border-radius:var(--radius-sm);padding:var(--space-xs) var(--space-xs) var(--space-xs) var(--space-md);margin-bottom:var(--space-sm);min-height:44px;animation:acPop .24s var(--pop)}
+  .wlname{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wlx{flex:none;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--text-3);cursor:pointer;width:44px;height:44px;border-radius:var(--radius-sm);font-family:var(--font-body)}
+  .wlx:active,.wlx:focus-visible{color:var(--coral-end);outline:none}
+
+  .prow{display:flex;align-items:center;gap:var(--space-md);padding:var(--space-sm) 0;border-top:1px solid var(--hairline);animation:acPop .24s var(--pop)}
   .prow:first-child{border-top:0}
-  .pmain{flex:1;min-width:0;background:none;border:0;text-align:left;color:var(--text);font-family:inherit;cursor:pointer;padding:2px 0}
-  .pname{font-size:14px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:7px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .pname .tag{flex:none;font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--teal);background:rgba(63,184,175,.12);border:1px solid rgba(63,184,175,.3);border-radius:999px;padding:1px 7px}
-  .pmeta{font-size:11.5px;color:var(--text-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pmain{flex:1;min-width:0;background:none;border:0;text-align:left;color:var(--text);font-family:var(--font-body);cursor:pointer;padding:var(--space-xs) 0}
+  .pname{font-size:14px;font-weight:600;display:flex;align-items:center;gap:var(--space-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* §1.5 tag: accent at 16%, label is the accent end-stop */
+  .pname .tag{flex:none;font-size:12px;font-weight:700;color:var(--color-primary-end);background:color-mix(in srgb,var(--color-primary-end) 16%,transparent);border-radius:var(--radius-pill);padding:3px var(--space-md)}
+  .pmeta{font-size:12px;color:var(--text-4);margin-top:var(--space-xs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .papply{flex:none}
-  .pmain:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:6px}
-  /* nearby add-chips in the trigger picker */
-  .pchips{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
-  .pchip{background:var(--card-2);color:var(--text-2);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;min-height:36px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:acPop .24s cubic-bezier(0.34,1.56,0.64,1)}
-  .pchip.added{color:var(--teal)}
-  .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-  .themeswatches{display:flex;gap:12px;flex-wrap:wrap}
-  .themeswatch{width:48px;height:48px;border-radius:10px;border:3px solid transparent;box-shadow:var(--shadow-sm);cursor:pointer;padding:0}
-  .themeswatch.sel{border-color:var(--green)}
-  .setmsg{margin-top:8px;font-size:12px;color:var(--text-2);min-height:14px}
-  .footer{margin-top:14px;text-align:center;font-size:11px;color:var(--text-3);font-weight:500}
-  .errslot{margin-top:12px;display:none;background:rgba(240,82,78,.09);border:1px solid rgba(240,82,78,.32);color:#FF7A59;border-radius:10px;padding:10px 13px;font-size:12.5px;font-weight:500}
-  .errslot.show{display:block}
-  .sec-label{font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--text-3);margin:14px 2px 8px}
-  .intg{display:flex;align-items:flex-start;gap:12px}
-  .intg .logo{width:40px;height:40px;border-radius:11px;flex:none;display:grid;place-items:center}
+  .pchips{display:flex;flex-wrap:wrap;gap:var(--space-sm);margin-top:var(--space-sm)}
+  .pchip{background:var(--gradient-surface);box-shadow:var(--shadow-card);color:var(--text-2);border-radius:var(--radius-pill);padding:var(--space-sm) var(--space-md);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--font-body);min-height:36px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:acPop .24s var(--pop)}
+  .pchip.added{color:var(--color-primary-end)}
+
+  .visually-hidden{/* -1px is the standard screen-reader clip idiom, not layout spacing */position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .setmsg{margin-top:var(--space-sm);font-size:12px;color:var(--text-2);min-height:14px}
+  .footer{margin-top:var(--space-lg);text-align:center;font-size:12px;color:var(--text-4);font-weight:400}
+  /* §1.7 speech bubble: errors get the bubble, with its tail */
+  .errslot{position:relative;margin-top:var(--space-md);display:none;background:var(--gradient-surface);box-shadow:var(--shadow-card);color:var(--text);border-radius:var(--radius-lg);padding:var(--space-lg) var(--space-xl);font-size:13px;font-weight:400}
+  .errslot.show{display:block;animation:acPop .24s var(--pop)}
+  .errslot::after{content:"";position:absolute;bottom:-10px;left:var(--space-xl);width:12px;height:12px;background:#2a2a2a;clip-path:polygon(0 0,100% 0,0 100%)}
+  .sec-label{font-size:12px;font-weight:600;color:var(--text-3);margin:var(--space-lg) var(--space-xs) var(--space-sm)}
+  .intg{display:flex;align-items:flex-start;gap:var(--space-md)}
+  .intg .logo{width:40px;height:40px;border-radius:var(--radius-md);flex:none;display:grid;place-items:center}
   .intg .body{flex:1;min-width:0}
-  .intg .name{font-size:14.5px;font-weight:600;letter-spacing:-.01em}
-  .intg .desc{font-size:12px;color:var(--text-2);margin-top:2px}
-  .intg-foot{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-soft);display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);font-weight:500}
-  .managed{display:inline-flex;align-items:center;gap:6px;flex:none;font-size:11.5px;font-weight:600;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);color:#5ed36c;padding:6px 11px;border-radius:999px}
-  /* Normal-flow footer, not an overlay: a sibling of the scrollable .app pane,
-     so it never floats over page content -- nothing can appear at or behind
-     it, at any scroll position. Still visually a floating centered pill via
-     margin/max-width, just no longer position:fixed. */
-  nav{flex:none;width:calc(100% - 24px);max-width:696px;margin:0 auto calc(12px + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--card);box-shadow:var(--shadow-sm);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-radius:999px;display:flex}
-  nav .tab{flex:1;background:none;border:0;cursor:pointer;color:var(--text-3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10px;font-weight:600;transition:color .14s cubic-bezier(0.34,1.56,0.64,1)}
-  nav .tab svg{width:21px;height:21px;border-radius:999px;transition:background-color .14s cubic-bezier(0.34,1.56,0.64,1),color .14s cubic-bezier(0.34,1.56,0.64,1),padding .14s cubic-bezier(0.34,1.56,0.64,1)}
-  nav .tab.active{color:var(--text)}
-  nav .tab.active svg{color:var(--on-color);background:var(--green);padding:4px;width:21px;height:21px;box-sizing:content-box}
-  nav .tab:focus-visible,.setbtn:focus-visible,.minibtn:focus-visible,details.cli summary:focus-visible{outline:2px solid var(--teal);outline-offset:-2px;border-radius:8px}
-  input:focus,textarea:focus{outline:none;border-color:var(--teal);box-shadow:var(--focus-ring)}
-  input::placeholder,textarea::placeholder{color:var(--text-3);opacity:1}
-  /* press + hover feedback. Hover is gated so a tap on a touch screen doesn't
-     leave a stuck hover state. */
-  .minibtn:active:not(:disabled){transform:scale(0.97)}
-  .minibtn:active:not(:disabled){background:#31423A}
+  .intg .name{font-size:14px;font-weight:600}
+  .intg .desc{font-size:12px;color:var(--text-2);margin-top:var(--space-xs)}
+  .intg-foot{margin-top:var(--space-md);padding-top:var(--space-md);border-top:1px solid var(--hairline);display:flex;align-items:center;gap:var(--space-sm);font-size:12px;color:var(--text-2);font-weight:400}
+  .managed{display:inline-flex;align-items:center;gap:var(--space-sm);flex:none;font-size:12px;font-weight:700;background:color-mix(in srgb,var(--brand-end) 16%,transparent);color:var(--brand-end);padding:3px var(--space-md);border-radius:var(--radius-pill)}
+
+  /* §2.2 navbar anatomy applied to a bottom-docked bar: gradient fill,
+     radius 20 (NOT a full pill), navbar shadow, one selected pill at a time. */
+  nav{flex:none;width:calc(100% - var(--space-xl));max-width:696px;margin:0 auto calc(var(--space-md) + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--gradient-surface);box-shadow:var(--shadow-nav);border-radius:var(--radius-nav);display:flex;align-items:center;padding:var(--space-sm)}
+  nav .tab{flex:1;background:none;border:0;cursor:pointer;color:var(--text-2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-xs);font-size:10px;font-weight:600;border-radius:var(--radius-pill);height:100%;transition:color .14s var(--pop),box-shadow .14s var(--pop)}
+  nav .tab svg{width:20px;height:20px;color:currentColor}
+  /* §0.5 selected = surface gradient + raised bevel. Never a darker fill,
+     never a coloured circle behind the icon. */
+  nav .tab.active{color:var(--text);background:var(--gradient-surface);box-shadow:var(--bevel)}
+  /* §0.11 icon accent layer: the selected glyph carries the bound accent */
+  nav .tab.active svg{color:var(--color-primary-end)}
+
+  :focus-visible{outline:none;box-shadow:var(--focus-ring)}
+  nav .tab:focus-visible{box-shadow:var(--bevel),var(--focus-ring)}
+  input:focus,textarea:focus,select:focus{outline:none;box-shadow:var(--shadow-inset),var(--focus-ring)}
+  input::placeholder,textarea::placeholder{color:var(--text-4);opacity:1}
+
   @media (hover:hover){
-    .setbtn:hover:not(:disabled){filter:brightness(1.06)}
-    .setbtn:hover:not(:disabled):not(.sec){transform:translateY(-2px) scale(1.03)}
-    .minibtn:hover:not(:disabled){box-shadow:inset 0 0 0 2px var(--teal)}
-    nav .tab:hover{color:var(--text-2)}
+    .setbtn:hover:not(:disabled){transform:translateY(-2px) scale(1.03)}
+    .minibtn:hover:not(:disabled){transform:translateY(-2px) scale(1.03)}
+    .card:hover{box-shadow:0 2px 2px rgba(33,33,33,.26),0 6px 14px rgba(33,33,33,.28)}
+    nav .tab:hover{color:var(--text)}
   }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
   }
-  /* Cover screen (~352×308): trim chrome so each tab is at most a short scroll */
+  /* Cover screen (~352x308): trim chrome so each tab is at most a short scroll */
   @media (max-height:420px){
-    header{padding:6px 0 6px}
-    .hero{padding:10px 12px 8px}
+    header{padding:var(--space-sm)}
+    .hero{padding:var(--space-md)}
     .ring-wrap{width:min(38vh,140px)}
-    .ring-label{margin-top:6px}
-    .card{padding:12px}
+    .ring-label{margin-top:var(--space-xs)}
+    .card{padding:var(--space-md)}
     .stat-val,.cpu-load{font-size:26px}
     .cores{height:52px}
     :root{--tabbar-h:54px}
@@ -439,9 +505,6 @@ const dashboardHTML = `<!DOCTYPE html>
 </head>
 <body>
 <!--EMBEDDED_TOKENS-->
-<script>(function(){try{var s=localStorage.getItem("zf5surface");if(s)document.documentElement.setAttribute("data-surface",s);var bg=localStorage.getItem("zf5bg");if(bg&&bg.indexOf("data:image/")===0){document.documentElement.style.setProperty("--user-bg",'url("'+bg+'")');document.documentElement.setAttribute("data-bg","photo");}}catch(e){}})();</script>
-<div class="bg-layer" aria-hidden="true"></div>
-<div class="bg-scrim" aria-hidden="true"></div>
 <div class="app">
   <header>
     <div class="sigind">
@@ -453,12 +516,15 @@ const dashboardHTML = `<!DOCTYPE html>
   </header>
   <div class="errslot" id="errSlot" role="alert"></div>
 
-  <section class="screen active" id="home">
+  <main>
+  <h1 class="visually-hidden">Z Flip 5 modem</h1>
+
+  <section class="screen active" id="home" role="tabpanel" aria-labelledby="tab-home" tabindex="-1">
     <div class="card hero">
       <div class="ring-wrap">
         <svg viewBox="0 0 120 120" aria-hidden="true">
-          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--track)" stroke-width="11"/>
-          <circle id="ringFill" cx="60" cy="60" r="52" fill="none" stroke="var(--teal)" stroke-width="11" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" style="transition:stroke-dashoffset .4s cubic-bezier(0.4,0,0.2,1),stroke .4s cubic-bezier(0.4,0,0.2,1)"/>
+          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--well)" stroke-width="11"/>
+          <circle id="ringFill" cx="60" cy="60" r="52" fill="none" stroke="var(--color-primary-end)" stroke-width="11" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" style="transition:stroke-dashoffset .4s cubic-bezier(0.4,0,0.2,1),stroke .4s cubic-bezier(0.4,0,0.2,1)"/>
         </svg>
         <div class="ring-center">
           <div class="ring-pct num"><span id="ringPct">0</span><span>%</span></div>
@@ -470,23 +536,23 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
     <div class="duo">
       <div class="card">
-        <div class="stat-head"><span>Battery</span><span class="accent" id="battAccent" style="background:var(--green)"></span></div>
+        <div class="stat-head"><h2>Battery</h2><span class="accent" id="battAccent" style="background:var(--brand-end)"></span></div>
         <div class="stat-val num"><span id="battLevel">—</span><small>%</small></div>
         <div class="stat-sub num" id="battSub">—</div>
       </div>
       <div class="card">
-        <div class="stat-head"><span>Temp</span><span class="accent" id="tempAccent" style="background:var(--amber)"></span></div>
-        <div class="stat-val num" id="tempVal" style="color:var(--amber)"><span id="tempMax">—</span><small>°C</small></div>
+        <div class="stat-head"><h2>Temp</h2><span class="accent" id="tempAccent" style="background:var(--sunflower-end)"></span></div>
+        <div class="stat-val num" id="tempVal" style="color:var(--sunflower-end)"><span id="tempMax">—</span><small>°C</small></div>
         <div class="stat-sub num" id="tempSub">—</div>
       </div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Hotspot preset</span><span id="hpActive" style="color:var(--text-2)">—</span></div>
+      <div class="stat-head"><h2>Hotspot preset</h2><span id="hpActive" style="color:var(--text-2)">—</span></div>
       <div id="hpQuick" class="pchips"><div class="stat-sub">No presets — add them in the Presets tab.</div></div>
       <div class="setmsg" id="hpMsg">Tap to switch the hotspot. Clients drop briefly (~5s), then reconnect.</div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Speedtest</span></div>
+      <div class="stat-head"><h2>Speedtest</h2></div>
       <div class="spd" id="spdRes">
         <div class="spdcell"><div class="spdv num" id="spdDown">—</div><div class="spdl">↓ Mbps</div></div>
         <div class="spdcell"><div class="spdv num" id="spdUp">—</div><div class="spdl">↑ Mbps</div></div>
@@ -498,33 +564,33 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="footer">updated <span id="updated">—</span></div>
   </section>
 
-  <section class="screen" id="net">
+  <section class="screen" id="net" role="tabpanel" aria-labelledby="tab-net" tabindex="-1">
     <div class="card">
-      <div class="stat-head"><span>Signal</span><span id="sigTech" style="color:var(--text-2)"></span></div>
+      <div class="stat-head"><h2>Signal</h2><span id="sigTech" style="color:var(--text-2)"></span></div>
       <div class="sg" id="sig"><div class="stat-sub">loading…</div></div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Hotspot</span><span class="accent" id="hsAccent" style="background:var(--green)"></span></div>
+      <div class="stat-head"><h2>Hotspot</h2><span class="accent" id="hsAccent" style="background:var(--brand-end)"></span></div>
       <div class="state-row"><span class="k">State</span><span class="v"><span class="dot off" id="hsDot"></span><span id="hsState">—</span></span></div>
       <div class="state-row"><span class="k">Auto (SSID whitelist)</span><span class="v" id="hsAuto">off</span></div>
       <div class="state-row" id="hsMatchRow" style="display:none"><span class="k">Seen nearby</span><span class="v" id="hsMatch">—</span></div>
       <div class="stat-sub" id="hsSub"></div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>USB tethering</span></div>
+      <div class="stat-head"><h2>USB tethering</h2></div>
       <div class="state-row"><span class="k">State</span><span class="v"><span class="dot off" id="usbDot"></span><span id="usbState">—</span></span></div>
       <div class="stat-sub" id="usbSub"></div>
-      <button class="setbtn" id="usbTetherBtn" style="margin-top:8px;background:var(--green);color:#3E3428">Turn USB tethering on</button>
+      <button class="setbtn on" id="usbTetherBtn">Turn USB tethering on</button>
       <div class="setmsg" id="usbMsg">Needs a USB cable to a host computer; not thermal-gated.</div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Connectivity</span></div>
+      <div class="stat-head"><h2>Connectivity</h2></div>
       <div class="state-row"><span class="k">WAN IP</span><span class="v mono" id="wanIp">—</span></div>
       <div class="state-row"><span class="k">Airplane</span><span class="v"><span class="dot off" id="apDot"></span><span id="apState">off</span></span></div>
       <button class="setbtn sec" id="rotateBtn">Rotate IP (airplane cycle)</button>
-      <button class="setbtn" id="hotspotOnBtn" style="margin-top:8px;background:var(--green);color:#3E3428">Turn hotspot on</button>
+      <button class="setbtn on" id="hotspotOnBtn">Turn hotspot on</button>
       <div class="apbtns">
-        <button class="minibtn" id="apOnBtn">Airplane on</button>
+        <button class="minibtn primary" id="apOnBtn">Airplane on</button>
         <button class="minibtn" id="apOffBtn">Airplane off</button>
       </div>
       <div class="setmsg" id="apMsg">Cycles airplane to pull a fresh carrier IP, then restarts the hotspot. ~15–30s; clients drop briefly.</div>
@@ -535,16 +601,16 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
   </section>
 
-  <section class="screen" id="clientsScr">
+  <section class="screen" id="clientsScr" role="tabpanel" aria-labelledby="tab-clientsScr" tabindex="-1">
     <div class="card">
-      <div class="stat-head"><span>Clients</span><span id="clientsN" style="color:var(--text-2)">0</span></div>
+      <div class="stat-head"><h2>Clients</h2><span id="clientsN" style="color:var(--text-2)">0</span></div>
       <div id="clients"><div class="stat-sub">no clients</div></div>
     </div>
   </section>
 
-  <section class="screen" id="system">
+  <section class="screen" id="system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1">
     <div class="card">
-      <div class="stat-head"><span>CPU · per core</span></div>
+      <div class="stat-head"><h2>CPU · per core</h2></div>
       <div class="cpu-head">
         <div class="cpu-load num"><span id="cpuLoad">—</span><small>load 5m</small></div>
         <div class="cpu-meta"><span id="cpuMode">—</span> · <span id="cpuCores">8</span> cores</div>
@@ -552,9 +618,9 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="cores" id="cores"></div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Memory</span></div>
+      <div class="stat-head"><h2>Memory</h2></div>
       <div class="stat-val num"><span id="memPct">—</span><small>%</small></div>
-      <div class="bar"><i id="memBar" style="width:0%"></i></div>
+      <div class="bar"><i id="memBar" style="transform:scaleX(0)"></i></div>
     </div>
     <div class="card">
       <div class="state-row"><span class="k">Thermal policy</span><span class="v"><span class="dot amber" id="policyDot"></span><span id="policyState">—</span></span></div>
@@ -562,9 +628,9 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
   </section>
 
-  <section class="screen" id="presets">
+  <section class="screen" id="presets" role="tabpanel" aria-labelledby="tab-presets" tabindex="-1">
     <div class="card">
-      <div class="stat-head"><span>Auto-switch by location</span><span class="accent" id="paAccent" style="background:var(--text-3)"></span></div>
+      <div class="stat-head"><h2>Auto-switch by location</h2><span class="accent" id="paAccent" style="background:var(--text-3)"></span></div>
       <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="paDot"></span><span id="paState">off</span></span></div>
       <div class="setgrid" style="grid-template-columns:1fr 1fr">
         <button class="minibtn" id="paOnBtn" style="min-height:44px">Turn on</button>
@@ -573,7 +639,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg">Switches the hotspot preset when a preset's trigger Wi-Fi comes into range. Rides the hotspot scan; needs location services ON.</div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Presets</span><span id="pCount" style="color:var(--text-2)"></span></div>
+      <div class="stat-head"><h2>Presets</h2><span id="pCount" style="color:var(--text-2)"></span></div>
       <div id="pList"><div class="stat-sub">No presets yet — create one below.</div></div>
     </div>
     <div class="card">
@@ -597,9 +663,9 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
   </section>
 
-  <section class="screen" id="settings">
+  <section class="screen" id="settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="-1">
     <div class="card">
-      <div class="stat-head"><span>Thermal gate · adjust</span></div>
+      <div class="stat-head"><h2>Thermal gate · adjust</h2></div>
       <div class="setgrid">
         <div><label class="f" for="setWarn">Warn °C</label><input id="setWarn" type="number" step="0.5" inputmode="decimal"></div>
         <div><label class="f" for="setGate">Gate °C</label><input id="setGate" type="number" step="0.5" inputmode="decimal"></div>
@@ -608,26 +674,12 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg" id="setMsg">Gate is hard-capped at 48°C; Samsung mitigation is unaffected.</div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Theme</span></div>
-      <div class="themeswatches" id="themeSwatches">
-        <button class="themeswatch" data-surface="" style="background:#1E2B25" aria-label="Green"></button>
-        <button class="themeswatch" data-surface="ivory" style="background:#FFFDF2" aria-label="Ivory"></button>
-        <button class="themeswatch" data-surface="black" style="background:#0B0D10" aria-label="Black"></button>
-      </div>
-    </div>
-    <div class="card">
-      <div class="stat-head"><span>Background</span></div>
-      <input type="file" id="bgFile" accept="image/*" class="visually-hidden">
-      <label class="setbtn sec" id="bgFileBtn" for="bgFile" style="display:block;text-align:center">Choose photo</label>
-      <div class="setmsg" id="bgMsg">Pick a photo from your device.</div>
-    </div>
-    <div class="card">
-      <div class="stat-head"><span>Nearby networks</span><button class="minibtn" id="scanBtn">Scan now</button></div>
+      <div class="stat-head"><h2>Nearby networks</h2><button class="minibtn" id="scanBtn">Scan now</button></div>
       <div id="nearby"><div class="stat-sub">Tap “Scan now” to list networks in range. A <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px"><polyline points="20 6 9 17 4 12"/></svg> marks whitelisted ones; tap a row to add or remove it.</div></div>
       <div class="setmsg" id="nearbyMsg"></div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Hotspot auto-toggle</span></div>
+      <div class="stat-head"><h2>Hotspot auto-toggle</h2></div>
       <label class="f" for="wlBox">SSID whitelist (one per line — hotspot turns OFF when seen, back ON when absent)</label>
       <textarea id="wlBox" placeholder="HomeWifi&#10;OfficeWifi"></textarea>
       <button class="setbtn" id="wlBtn">Save whitelist</button>
@@ -639,7 +691,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <input id="setTok" type="password" placeholder="paste once">
     </div>
     <div class="card">
-      <div class="stat-head"><span>Add a device</span></div>
+      <div class="stat-head"><h2>Add a device</h2></div>
       <div id="qrWrap" style="display:flex;flex-direction:column;align-items:center;gap:10px">
         <img id="qrImg" alt="Scan to open on another device" width="200" height="200" style="border-radius:10px;background:#fff;padding:8px;display:none">
         <div class="stat-sub" id="qrHint">Point another phone's camera here — it opens the dashboard and remembers the token.</div>
@@ -648,19 +700,19 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg" id="qrMsg"></div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Open reads (no token on the tailnet)</span><span class="accent" id="orAccent" style="background:var(--text-3)"></span></div>
+      <div class="stat-head"><h2>Open reads (no token on the tailnet)</h2><span class="accent" id="orAccent" style="background:var(--text-3)"></span></div>
       <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="orDot"></span><span id="orState">off</span></span></div>
       <div class="setgrid" style="grid-template-columns:1fr 1fr">
-        <button class="minibtn" id="orOnBtn" style="min-height:44px">Turn on</button>
+        <button class="minibtn primary" id="orOnBtn" style="min-height:44px">Turn on</button>
         <button class="minibtn" id="orOffBtn" style="min-height:44px">Turn off</button>
       </div>
       <div class="setmsg" id="orMsg">On: any device on your tailnet opens the dashboard with no token — read-only. Off: a token (or the QR) is required. Needs the radio-control token to change.</div>
     </div>
     <div class="card">
-      <div class="stat-head"><span>Open control (no token for writes)</span><span class="accent" id="ocAccent" style="background:var(--text-3)"></span></div>
+      <div class="stat-head"><h2>Open control (no token for writes)</h2><span class="accent" id="ocAccent" style="background:var(--text-3)"></span></div>
       <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="ocDot"></span><span id="ocState">off</span></span></div>
       <div class="setgrid" style="grid-template-columns:1fr 1fr">
-        <button class="minibtn" id="ocOnBtn" style="min-height:44px">Turn on</button>
+        <button class="minibtn primary" id="ocOnBtn" style="min-height:44px">Turn on</button>
         <button class="minibtn" id="ocOffBtn" style="min-height:44px">Turn off</button>
       </div>
       <div class="setmsg" id="ocMsg">On: writes (airplane, thermal, whitelist, reboot…) need no token on your tailnet. SMS always keeps its token. Enabling needs the radio-control token once.</div>
@@ -668,28 +720,29 @@ const dashboardHTML = `<!DOCTYPE html>
     <div class="sec-label">Integrations</div>
     <div class="card">
       <div class="intg">
-        <div class="logo" style="background:#5865f2"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fff"><path d="M19.6 5.3A18 18 0 0 0 15 3.9l-.24.47a13 13 0 0 1 4 .96 12.9 12.9 0 0 0-11.5 0 13 13 0 0 1 4-.96L11 3.9A18 18 0 0 0 6.4 5.3C3.5 9.6 2.7 13.8 3.1 17.9a18 18 0 0 0 5.5 2.8l.45-.98a12 12 0 0 1-1.9-.9l.35-.27a12.9 12.9 0 0 0 11 0l.35.27c-.6.36-1.24.66-1.9.9l.45.98a18 18 0 0 0 5.5-2.8c.47-4.77-.79-8.94-3.75-12.6ZM9.35 15.4c-.9 0-1.63-.82-1.63-1.83 0-1 .72-1.83 1.63-1.83.9 0 1.64.83 1.62 1.83 0 1-.72 1.83-1.62 1.83Zm5.3 0c-.9 0-1.63-.82-1.63-1.83 0-1 .72-1.83 1.63-1.83.9 0 1.64.83 1.62 1.83 0 1-.72 1.83-1.62 1.83Z"/></svg></div>
+        <div class="logo" style="background:linear-gradient(180deg,#707cfd 0%,#5865f2 100%)"><svg width="24" height="24" viewBox="0 0 24 24" fill="#fafafa"><path d="M19.6 5.3A18 18 0 0 0 15 3.9l-.24.47a13 13 0 0 1 4 .96 12.9 12.9 0 0 0-11.5 0 13 13 0 0 1 4-.96L11 3.9A18 18 0 0 0 6.4 5.3C3.5 9.6 2.7 13.8 3.1 17.9a18 18 0 0 0 5.5 2.8l.45-.98a12 12 0 0 1-1.9-.9l.35-.27a12.9 12.9 0 0 0 11 0l.35.27c-.6.36-1.24.66-1.9.9l.45.98a18 18 0 0 0 5.5-2.8c.47-4.77-.79-8.94-3.75-12.6ZM9.35 15.4c-.9 0-1.63-.82-1.63-1.83 0-1 .72-1.83 1.63-1.83.9 0 1.64.83 1.62 1.83 0 1-.72 1.83-1.62 1.83Zm5.3 0c-.9 0-1.63-.82-1.63-1.83 0-1 .72-1.83 1.63-1.83.9 0 1.64.83 1.62 1.83 0 1-.72 1.83-1.62 1.83Z"/></svg></div>
         <div class="body"><div class="name">Discord</div><div class="desc">Self-hosted Gateway bot · see selfhost/</div></div>
         <span class="managed">Bot</span>
       </div>
     </div>
     <div class="card">
       <div class="intg">
-        <div class="logo" style="background:#111318;border:1px solid var(--line)"><svg width="22" height="22" viewBox="0 0 24 24" fill="#e6edf3"><circle cx="5" cy="5" r="2.1" opacity=".35"/><circle cx="12" cy="5" r="2.1" opacity=".35"/><circle cx="19" cy="5" r="2.1" opacity=".35"/><circle cx="5" cy="12" r="2.1"/><circle cx="12" cy="12" r="2.1"/><circle cx="19" cy="12" r="2.1"/><circle cx="5" cy="19" r="2.1" opacity=".35"/><circle cx="12" cy="19" r="2.1" opacity=".35"/><circle cx="19" cy="19" r="2.1" opacity=".35"/></svg></div>
+        <div class="logo" style="background:var(--gradient-surface);box-shadow:var(--shadow-card)"><svg width="22" height="22" viewBox="0 0 24 24" fill="#fafafa"><circle cx="5" cy="5" r="2.1" opacity=".35"/><circle cx="12" cy="5" r="2.1" opacity=".35"/><circle cx="19" cy="5" r="2.1" opacity=".35"/><circle cx="5" cy="12" r="2.1"/><circle cx="12" cy="12" r="2.1"/><circle cx="19" cy="12" r="2.1"/><circle cx="5" cy="19" r="2.1" opacity=".35"/><circle cx="12" cy="19" r="2.1" opacity=".35"/><circle cx="19" cy="19" r="2.1" opacity=".35"/></svg></div>
         <div class="body"><div class="name">Tailscale</div><div class="desc">Secure ingress · wired through tailscaled</div></div>
         <span class="managed">Managed</span>
       </div>
     </div>
   </section>
+  </main>
 </div>
 
-<nav>
-  <button class="tab active" data-screen="home" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.6"/><rect x="13" y="3" width="8" height="5" rx="1.6"/><rect x="13" y="10" width="8" height="11" rx="1.6"/><rect x="3" y="13" width="8" height="8" rx="1.6"/></svg>Home</button>
-  <button class="tab" data-screen="net"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 20V4"/></svg>Network</button>
-  <button class="tab" data-screen="clientsScr"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Clients</button>
-  <button class="tab" data-screen="system"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>System</button>
-  <button class="tab" data-screen="presets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Presets</button>
-  <button class="tab" data-screen="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
+<nav role="tablist" aria-label="Dashboard sections">
+  <button class="tab active" data-screen="home" aria-current="page" role="tab" id="tab-home" aria-controls="home" aria-selected="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.6"/><rect x="13" y="3" width="8" height="5" rx="1.6"/><rect x="13" y="10" width="8" height="11" rx="1.6"/><rect x="3" y="13" width="8" height="8" rx="1.6"/></svg>Home</button>
+  <button class="tab" data-screen="net" role="tab" id="tab-net" aria-controls="net" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 20V4"/></svg>Network</button>
+  <button class="tab" data-screen="clientsScr" role="tab" id="tab-clientsScr" aria-controls="clientsScr" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Clients</button>
+  <button class="tab" data-screen="system" role="tab" id="tab-system" aria-controls="system" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>System</button>
+  <button class="tab" data-screen="presets" role="tab" id="tab-presets" aria-controls="presets" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Presets</button>
+  <button class="tab" data-screen="settings" role="tab" id="tab-settings" aria-controls="settings" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
 </nav>
 
 <script>
@@ -722,14 +775,20 @@ const dashboardHTML = `<!DOCTYPE html>
   var ICN_CHECK='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px"><polyline points="20 6 9 17 4 12"/></svg>';
   var ICN_X='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
   var ICN_CHEVRON='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
-  var ICN_DOT='<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;margin-right:4px;color:var(--teal)"><circle cx="12" cy="12" r="9"/></svg>';
+  var ICN_DOT='<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;margin-right:4px;color:var(--color-primary-end)"><circle cx="12" cy="12" r="9"/></svg>';
 
   var active="home", lastKick=0;
   var tabs=document.querySelectorAll("nav .tab");
   tabs.forEach(function(tab){tab.addEventListener("click",function(){
     var id=tab.getAttribute("data-screen");
-    tabs.forEach(function(t){t.classList.toggle("active",t===tab);if(t===tab)t.setAttribute("aria-current","page");else t.removeAttribute("aria-current");});
+    tabs.forEach(function(t){var on=t===tab;t.classList.toggle("active",on);t.setAttribute("aria-selected",on?"true":"false");if(on)t.setAttribute("aria-current","page");else t.removeAttribute("aria-current");});
     document.querySelectorAll(".screen").forEach(function(sc){sc.classList.toggle("active",sc.id===id);});
+    // One named accent per section (DESIGN.md 1.3): rebinding these two vars
+    // recolours the whole screen, so no call site ever names an accent.
+    document.documentElement.setAttribute("data-accent",id);
+    // Move focus into the newly shown panel: without this the view changes
+    // silently for screen-reader and keyboard users.
+    var panel=document.getElementById(id); if(panel)panel.focus({preventScroll:true});
     var appEl=document.querySelector(".app"); if(appEl)appEl.scrollTop=0;
     active=id;
     if(id==="settings"&&typeof loadQR==="function")loadQR();
@@ -740,7 +799,7 @@ const dashboardHTML = `<!DOCTYPE html>
   });});
 
   var coresEl=document.getElementById("cores"), coreEls=[];
-  function buildCores(n){coresEl.innerHTML="";coreEls=[];for(var i=0;i<n;i++){var c=document.createElement("div");c.className="core";var tr=document.createElement("div");tr.className="track";var f=document.createElement("div");f.className="fill";f.style.height="0%";var idx=document.createElement("div");idx.className="idx num";idx.textContent=i;tr.appendChild(f);c.appendChild(tr);c.appendChild(idx);coresEl.appendChild(c);coreEls.push({core:c,fill:f});}}
+  function buildCores(n){coresEl.innerHTML="";coreEls=[];for(var i=0;i<n;i++){var c=document.createElement("div");c.className="core";var tr=document.createElement("div");tr.className="track";var f=document.createElement("div");f.className="fill";f.style.transform="scaleY(0)";var idx=document.createElement("div");idx.className="idx num";idx.textContent=i;tr.appendChild(f);c.appendChild(tr);c.appendChild(idx);coresEl.appendChild(c);coreEls.push({core:c,fill:f});}}
   buildCores(8);
 
   function get(p){var h={};if(token)h.Authorization="Bearer "+token;return fetch(API+p,{headers:h}).then(function(r){if(!r.ok)throw new Error(p+" "+r.status);return r.json();});}
@@ -752,8 +811,8 @@ const dashboardHTML = `<!DOCTYPE html>
   // acPop entrance animation on every poll tick) when the markup hasn't changed.
   function setListHTML(box,html){if(box._lastHtml===html)return false;box._lastHtml=html;box.innerHTML=html;return true;}
   function fmtBytes(b){var gb=b/GIB;if(gb>=1000)return (gb/1024).toFixed(2)+" TB";return (gb>=10?Math.round(gb):gb.toFixed(1))+" GB";}
-  function tempColor(c){return c>=GATE_C?"var(--red)":(c>=WARN_C?"var(--amber)":"var(--teal)");}
-  function usageColor(p){return p>0.9?"var(--red)":(p>=0.7?"var(--amber)":"var(--teal)");}
+  function tempColor(c){return c>=GATE_C?"var(--coral-end)":(c>=WARN_C?"var(--sunflower-end)":"var(--color-primary-end)");}
+  function usageColor(p){return p>0.9?"var(--coral-end)":(p>=0.7?"var(--sunflower-end)":"var(--color-primary-end)");}
   var CIRC=2*Math.PI*52;
 
   function rsrpCls(v){return v>=-95?"good":(v>=-110?"mid":"low");}
@@ -790,7 +849,7 @@ const dashboardHTML = `<!DOCTYPE html>
       var lvl=Math.round(bat.level);
       battEl.textContent=lvl;
       document.getElementById("battSub").textContent=(bat.plugged||"")+" · "+(bat.temp_c!=null?bat.temp_c.toFixed(1)+"°C":"");
-      var bcol=lvl<=10?"var(--red)":(lvl<=20?"var(--amber)":"var(--green)");
+      var bcol=lvl<=10?"var(--coral-end)":(lvl<=20?"var(--sunflower-end)":"var(--brand-end)");
       document.getElementById("battAccent").style.background=bcol;
     }
 
@@ -807,9 +866,9 @@ const dashboardHTML = `<!DOCTYPE html>
     var per=h.per_core_pct;
     if(!per||!per.length){per=[];for(var i=0;i<cores;i++)per.push(0);}
     if(per.length&&coreEls.length!==per.length)buildCores(per.length);
-    per.forEach(function(p,i){if(!coreEls[i])return;p=Math.max(0,Math.min(100,p));coreEls[i].fill.style.height=p+"%";coreEls[i].fill.style.background=p>85?"var(--red)":(p>60?"var(--amber)":"var(--violet)");});
+    per.forEach(function(p,i){if(!coreEls[i])return;p=Math.max(0,Math.min(100,p));coreEls[i].fill.style.transform="scaleY("+(p/100)+")";coreEls[i].fill.style.background=p>85?"var(--coral-end)":(p>60?"var(--sunflower-end)":"var(--color-primary-end)");});
 
-    var mp=h.mem_used_pct!=null?h.mem_used_pct:0;document.getElementById("memPct").textContent=h.mem_used_pct!=null?mp:"—";document.getElementById("memBar").style.width=mp+"%";
+    var mp=h.mem_used_pct!=null?h.mem_used_pct:0;document.getElementById("memPct").textContent=h.mem_used_pct!=null?mp:"—";document.getElementById("memBar").style.transform="scaleX("+(mp/100)+")";
     document.getElementById("updated").textContent=new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});
   }
 
@@ -886,7 +945,7 @@ const dashboardHTML = `<!DOCTYPE html>
   function renderHotspot(h){
     document.getElementById("hsState").textContent=h.active?"on":"off";
     document.getElementById("hsDot").className="dot "+(h.active?"green":"off");
-    document.getElementById("hsAccent").style.background=h.active?"var(--green)":"var(--text-3)";
+    document.getElementById("hsAccent").style.background=h.active?"var(--brand-end)":"var(--text-3)";
     var auto=h.auto?(h.paused?"paused: "+h.paused.replace("_"," "):"watching "+h.whitelist.length+" SSID"+(h.whitelist.length===1?"":"s")):"off";
     document.getElementById("hsAuto").textContent=auto;
     var mr=document.getElementById("hsMatchRow");
@@ -912,8 +971,8 @@ const dashboardHTML = `<!DOCTYPE html>
   function renderUsbTetherBtn(){
     var b=document.getElementById("usbTetherBtn"); if(!b)return;
     b.textContent=usbActive?"Turn USB tethering off":"Turn USB tethering on";
-    b.style.background=usbActive?"var(--red)":"var(--green)";
-    b.style.color=usbActive?"#fff":"#3E3428";
+    b.classList.toggle("danger",usbActive);
+    b.classList.toggle("on",!usbActive);
   }
 
   // Hotspot toggle button reflects the current state: press turns it on when off,
@@ -922,8 +981,8 @@ const dashboardHTML = `<!DOCTYPE html>
   function renderHotspotBtn(){
     var b=document.getElementById("hotspotOnBtn"); if(!b)return;
     b.textContent=hsActive?"Turn hotspot off":"Turn hotspot on";
-    b.style.background=hsActive?"var(--red)":"var(--green)";
-    b.style.color=hsActive?"#fff":"#3E3428";
+    b.classList.toggle("danger",hsActive);
+    b.classList.toggle("on",!hsActive);
   }
 
   // Read-only list of what's currently whitelisted, with a × to remove each.
@@ -975,62 +1034,6 @@ const dashboardHTML = `<!DOCTYPE html>
   // exception here must not kill the settings buttons or the polling loop.
   function lsGet(k){try{return localStorage.getItem(k)||"";}catch(e){return "";}}
   function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
-
-  // --- Theme: solid surface-color choice (green/ivory/black), applied via
-  // the data-surface attribute (see the bootstrap script above for the
-  // pre-paint restore) and persisted client-side.
-  var themeSwatchEls=document.querySelectorAll(".themeswatch");
-  var THEME_COLOR={"":"#1E2B25",ivory:"#FFFDF2",black:"#0B0D10"};
-  function markThemeSwatch(surface){
-    themeSwatchEls.forEach(function(b){b.classList.toggle("sel",b.getAttribute("data-surface")===surface);});
-    var m=document.querySelector('meta[name="theme-color"]');
-    if(m&&THEME_COLOR[surface])m.setAttribute("content",THEME_COLOR[surface]);
-  }
-  themeSwatchEls.forEach(function(b){b.addEventListener("click",function(){
-    var surface=b.getAttribute("data-surface");
-    if(surface)document.documentElement.setAttribute("data-surface",surface);
-    else document.documentElement.removeAttribute("data-surface");
-    markThemeSwatch(surface);
-    lsSet("zf5surface",surface);
-  });});
-  markThemeSwatch(document.documentElement.getAttribute("data-surface")||"");
-
-  // --- Background picker: a photo, applied via the --user-bg CSS var and
-  // persisted client-side as a resized/compressed data URL (no server round trip).
-  var bgMsg=document.getElementById("bgMsg");
-  function applyCustom(v,persist){
-    document.documentElement.style.setProperty("--user-bg",'url("'+v+'")');
-    document.documentElement.setAttribute("data-bg","photo");
-    if(persist){try{localStorage.setItem("zf5bg",v);}catch(e){}}
-  }
-  document.getElementById("bgFile").addEventListener("change",function(e){
-    var file=e.target.files&&e.target.files[0]; e.target.value=""; if(!file)return;
-    if(file.type.indexOf("image/")!==0){bgMsg.textContent="Pick an image file.";return;}
-    bgMsg.textContent="Loading photo…";
-    var reader=new FileReader();
-    reader.onload=function(){
-      var img=new Image();
-      img.onload=function(){
-        var maxDim=900, scale=Math.min(1,maxDim/Math.max(img.width,img.height));
-        var cw=Math.round(img.width*scale), ch=Math.round(img.height*scale);
-        var cv=document.createElement("canvas"); cv.width=cw; cv.height=ch;
-        cv.getContext("2d").drawImage(img,0,0,cw,ch);
-        var dataUrl=cv.toDataURL("image/jpeg",0.72);
-        if(dataUrl.length>1500000){bgMsg.textContent="Photo too large even after resizing — try a smaller image.";return;}
-        applyCustom(dataUrl,true);
-        bgMsg.textContent="Background updated.";
-      };
-      img.onerror=function(){bgMsg.textContent="Couldn't read that photo.";};
-      img.src=reader.result;
-    };
-    reader.onerror=function(){bgMsg.textContent="Couldn't read that photo.";};
-    reader.readAsDataURL(file);
-  });
-  (function initBg(){
-    var saved=null;
-    try{saved=localStorage.getItem("zf5bg");}catch(e){}
-    if(saved&&saved.indexOf("data:image/")===0)applyCustom(saved,false);
-  })();
 
   var setMsg=document.getElementById("setMsg"), setTok=document.getElementById("setTok");
   setTok.value=lsGet("zf5rtok");
@@ -1093,7 +1096,7 @@ const dashboardHTML = `<!DOCTYPE html>
   function renderOpenReads(on){
     document.getElementById("orState").textContent=on?"on":"off";
     document.getElementById("orDot").className="dot "+(on?"amber":"off");
-    document.getElementById("orAccent").style.background=on?"var(--amber)":"var(--text-3)";
+    document.getElementById("orAccent").style.background=on?"var(--sunflower-end)":"var(--text-3)";
   }
 
   // --- Open control toggle (tokenless radio-control writes). radio-control gated
@@ -1114,7 +1117,7 @@ const dashboardHTML = `<!DOCTYPE html>
     openControl=on;
     document.getElementById("ocState").textContent=on?"on":"off";
     document.getElementById("ocDot").className="dot "+(on?"red":"off");
-    document.getElementById("ocAccent").style.background=on?"var(--red)":"var(--text-3)";
+    document.getElementById("ocAccent").style.background=on?"var(--coral-end)":"var(--text-3)";
   }
 
   document.getElementById("setBtn").addEventListener("click",function(){
@@ -1268,7 +1271,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var on=!!hp.auto_switch;
     document.getElementById("paState").textContent=on?"on":"off";
     document.getElementById("paDot").className="dot "+(on?"green":"off");
-    document.getElementById("paAccent").style.background=on?"var(--green)":"var(--text-3)";
+    document.getElementById("paAccent").style.background=on?"var(--brand-end)":"var(--text-3)";
     document.getElementById("pCount").textContent=presetList.length?(presetList.length+"/12"):"";
     var box=document.getElementById("pList");
     var html;
