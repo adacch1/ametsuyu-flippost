@@ -1,8 +1,8 @@
 # zflip5-modem-module
 
-A rooted Samsung Galaxy Z Flip 5 (SM-F731B) turned into a dedicated 5G/LTE modem and Wi-Fi hotspot — with a proper admin dashboard, thermal safety you can't accidentally disable, and remote control from an iPhone (Apple Shortcuts) or Discord.
+A rooted Samsung Galaxy Z Flip 5 (SM-F731B) turned into a dedicated 5G/LTE modem and Wi-Fi hotspot — with an admin dashboard, real thermal safety rails, and remote control from an iPhone (Apple Shortcuts) or Discord.
 
-A small local-only root service (Go) reports network, tethering, thermal, battery, and recent SMS state, can auto-switch hotspot presets by which Wi-Fi network is in range, and can safely prefer/recover 5G — all **without** ever bypassing thermal protection.
+A small local-only root service (Go) reports network, tethering, thermal, battery, and recent SMS state, auto-switches hotspot presets by which Wi-Fi network is in range, and manages a thermally gated 5G preference. Normal mode never bypasses thermal protection; a single explicit opt-in (`thermal.bench`) exists for battery-less donor hardware only.
 
 <p align="center">
   <img src="docs/assets/dashboard-home.png" alt="Home tab: data usage ring at 47% of 512 GB, battery and temperature cards, hotspot preset switcher" width="260">
@@ -14,7 +14,7 @@ A small local-only root service (Go) reports network, tethering, thermal, batter
 
 ## Why
 
-Old phones make great dedicated modems — always-on cellular radio, its own battery, a screen for status at a glance. This project turns a Z Flip 5 into exactly that: a controllable hotspot with real safety rails (it will not let itself overheat) and a dashboard that's actually pleasant to check.
+Old phones make great dedicated modems — always-on cellular radio, its own battery, a screen for status at a glance. This project turns a Z Flip 5 into exactly that: a controllable hotspot with real safety rails (it will not let itself overheat in normal mode) and a dashboard that's pleasant to check.
 
 ## Features
 
@@ -22,11 +22,35 @@ Old phones make great dedicated modems — always-on cellular radio, its own bat
 - **Hotspot presets** — save named SoftAP configs (SSID/pass/band), auto-switch by which Wi-Fi network is currently in range.
 - **802.11ax hotspot** — full Wi-Fi 6 SoftAP (not the 300 Mbps 802.11n Android normally ships), started the same way Samsung's own Settings toggle does.
 - **USB tethering** — toggle and check status alongside Wi-Fi tethering.
-- **Thermal gate that's actually a gate** — hard-capped at 48°C server-side; the UI can adjust the warn/gate thresholds within that cap, never past it.
+- **Thermal gate that's actually a gate** — 44°C warning / 48°C hard cap enforced server-side in normal mode; the UI can retune within that cap, never past it, and never to "off".
 - **CPU policy** — auto/performance/balanced/eco/off, reduces load automatically when the device is running hot.
 - **SMS, pull-only** — redacted by default, owner-only, rate-limited, never auto-forwarded.
 - **Remote control** — Apple Shortcuts and a self-hosted Discord bot, both over Tailscale; no public endpoint.
 - **No token to babysit** — the daemon generates its own scoped tokens on first boot and hands them to the dashboard automatically (open reads + open control on by default), so opening the page — from the phone's own kiosk or a browser on your tailnet — just works. Flip `open_reads`/`open_control` off in Settings if you'd rather require the token explicitly.
+
+## Bench mode — battery-less donor hardware only
+
+For a donor device with **no battery**, on a bench supply, in a monitored lab. Everything else should keep `thermal.bench` off.
+
+Enable it once:
+
+```sh
+# config.json
+"thermal": { "warn_c": 44, "gate_c": 46, "fail_closed": true, "bench": true }
+```
+
+or at runtime (radio-control token): `POST /v1/thermal/bench {"enabled":true}`.
+
+While active:
+
+- Thermal zones are disabled, thermal HALs (`thermal-engine`, `sec-thermal-1-0`) stopped, cooling devices zeroed.
+- Samsung's kernel `cpufreq_limit` ceiling is lifted to the hardware max, SIOP is pinned to normal, and voltage-based downclocking is disabled.
+- Reversible net tuning is applied: `cubic` TCP, MTU probing, TCP Fast Open, ECN, bigger buffers, and `fq_codel` on both the SoftAP (`swlan0`) and WWAN (`rmnet_data0`) interfaces.
+- The app gate lifts to 65°C warn / 70°C gate.
+
+Safety still applies. At 70°C the trip restores **all** stock mitigation; the daemon re-arms automatically once the device cools to ≤55°C, so it runs hands-off. Disabling bench (or a trip) restores every original value. Boot persistence is covered: `config.json` survives reboot, `magisk/sepolicy.rule` carries the scoped SELinux rule, and the daemon re-applies bench on start.
+
+Limits: modem firmware-internal thermal logic is not reachable from Android userspace, and Wi-Fi AP capability (10 clients, 5 GHz ch149 @ 160 MHz on this device) is fixed by the driver/firmware.
 
 ## The dashboard
 
@@ -46,7 +70,7 @@ The phone sits behind carrier CGNAT, so there's no public inbound path anyway �
 
 ## Safety guarantees (non-negotiable)
 
-- No disabling or bypassing Samsung/Android thermal mitigation in normal mode. 44°C is a warning threshold and 48°C is a hard cap enforced server-side. The only exception is `thermal.bench=true`: an explicit opt-in for **battery-less donor hardware** on a bench supply, which suspends OS thermal mitigation (zones, HALs, Samsung kernel cpufreq_limit) and lifts the gate to 70°C with a hard 70°C trip that restores protection, then auto re-arms at ≤55°C — fully hands-off. Bench mode also applies reversible throughput tuning (cubic TCP, MTU probing, TCP Fast Open, bigger buffers, fq_codel on SoftAP + WWAN) for multi-device load. It stays off unless you enable it.
+- Normal mode never disables or bypasses Samsung/Android thermal mitigation. 44°C is a warning threshold and 48°C is a hard cap enforced server-side. The only exception is `thermal.bench=true`, an explicit opt-in for **battery-less donor hardware** on a bench supply: it suspends OS thermal mitigation (zones, HALs, Samsung kernel `cpufreq_limit`) and lifts the gate to 70°C, with a hard 70°C trip that restores protection and auto re-arms at ≤55°C. It stays off unless you enable it.
 - No public API. The daemon binds `127.0.0.1` only; remote access is exclusively through your own private Tailscale tunnel, never a port-forward. Reads/writes default to tokenless *within that private tunnel* for convenience — real bearer tokens still exist underneath and can be required again any time from Settings.
 - SMS is pull-only, redacted by default, owner-only, and rate-limited. Never auto-forwarded.
 - No IMEI / baseband / SIM / eSIM modification and no carrier-provisioning bypass.
@@ -59,8 +83,8 @@ Implemented and running on-device. The Go daemon (`daemon/`), Magisk module (`ma
 
 | Path | Purpose |
 | --- | --- |
-| `daemon/` | Go root daemon: loopback API, thermal/CPU policy, served dashboard |
-| `magisk/` | Magisk module: `service.sh`, `action.sh`, packaged daemon + `tether.jar` |
+| `daemon/` | Go root daemon: loopback API, thermal/CPU policy, bench mode, served dashboard |
+| `magisk/` | Magisk module: `service.sh`, `action.sh`, `sepolicy.rule`, packaged daemon + `tether.jar` |
 | `helper/` | WebView cover-screen kiosk APK + root tether/wifi-scan/USB-tether helpers |
 | `selfhost/` | Self-hosted ntfy + Discord Gateway bot (docker-compose) |
 | `tools/` | Build, packaging, and verification scripts |
