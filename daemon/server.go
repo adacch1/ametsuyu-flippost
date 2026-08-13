@@ -153,17 +153,24 @@ func (s *Server) setThermalLimits(warn, gate float64) (float64, float64) {
 // state (client count + thermal). Safe: when hot it only ever reduces.
 func (s *Server) runCPUPolicy() {
 	for {
-		requested := s.cfg.CPUMode()
-		if requested == "off" {
-			s.cpu.restoreAll()
-		} else {
-			t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
-			clients := deviceClients().Count
-			mode, _ := decideMode(requested, clients, t.Safe)
-			s.cpu.apply(mode)
-		}
+		s.applyCPUPolicyOnce()
 		time.Sleep(30 * time.Second)
 	}
+}
+
+// applyCPUPolicyOnce enforces the configured CPU mode against live thermal
+// state. Shared by the background loop and the /v1/cpu/mode write handler so a
+// manual mode change takes effect immediately.
+func (s *Server) applyCPUPolicyOnce() {
+	requested := s.cfg.CPUMode()
+	if requested == "off" {
+		s.cpu.restoreAll()
+		return
+	}
+	t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
+	clients := deviceClients().Count
+	mode, _ := decideMode(requested, clients, t.Safe)
+	s.cpu.apply(mode)
 }
 
 // runHotspotAuto is the background SSID-whitelist loop. Not thermal-gated: the
@@ -200,6 +207,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/clients", s.guard("read-status", s.handleClients))
 	s.mux.HandleFunc("/v1/bands", s.guard("read-status", s.handleBands))
 	s.mux.HandleFunc("/v1/cpu", s.guard("read-status", s.handleCPU))
+	// CPU policy mode: radio-control write, not thermal-gated (eco/off must
+	// work while hot; performance is only raise-if-cool via decideMode).
+	s.mux.HandleFunc("/v1/cpu/mode", s.guardAuth("radio-control", http.MethodPost, s.handleCPUMode))
 	s.mux.HandleFunc("/v1/hotspot", s.guard("read-status", s.handleHotspot))
 	s.mux.HandleFunc("/v1/usbtether", s.guard("read-status", s.handleUsbTether))
 	// Whitelist edits are config writes, not radio actions: no thermal gate
@@ -518,6 +528,36 @@ func (s *Server) handleCPU(w http.ResponseWriter, r *http.Request) {
 	clients := deviceClients().Count
 	eff, reason := decideMode(requested, clients, t.Safe)
 	writeJSON(w, http.StatusOK, s.cpu.report(requested, eff, reason, clients, t.Safe))
+}
+
+// handleCPUMode sets cpu.mode (auto/performance/balanced/eco/off), persists it,
+// and applies it immediately. Body: {"mode":"performance"}.
+func (s *Server) handleCPUMode(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil || !validCPUMode(body.Mode) {
+		writeErr(w, http.StatusBadRequest, "mode must be auto, performance, balanced, eco, or off")
+		return
+	}
+	s.cfgMu.Lock()
+	s.cfg.CPU.Mode = body.Mode
+	if s.cfgPath != "" {
+		if err := persistCPUMode(s.cfgPath, body.Mode); err != nil {
+			log.Printf("cpu mode: persist failed: %v", err)
+		}
+	}
+	s.cfgMu.Unlock()
+	s.applyCPUPolicyOnce()
+	writeJSON(w, http.StatusOK, map[string]any{"mode": body.Mode, "applied": true})
+}
+
+func validCPUMode(m string) bool {
+	switch m {
+	case "auto", "performance", "balanced", "eco", "off":
+		return true
+	}
+	return false
 }
 
 func (s *Server) handleHotspot(w http.ResponseWriter, r *http.Request) {
