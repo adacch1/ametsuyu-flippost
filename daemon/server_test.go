@@ -157,3 +157,24 @@ func TestConfigThermalFailClosedRequired(t *testing.T) {
 		t.Fatal("expected fail_closed=false to be rejected")
 	}
 }
+
+func TestSetCPUModeEndpoint(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	req := httptest.NewRequest("POST", "/v1/cpu/mode", strings.NewReader(`{"mode":"performance"}`))
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("c", 64))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("set cpu mode: %d %s", w.Code, w.Body.String())
+	}
+	if s.cfg.CPU.Mode != "performance" {
+		t.Fatalf("cpu mode not stored: %q", s.cfg.CPU.Mode)
+	}
+	req = httptest.NewRequest("POST", "/v1/cpu/mode", strings.NewReader(`{"mode":"turbo"}`))
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("c", 64))
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Fatalf("invalid cpu mode: want 400, got %d", w.Code)
+	}
+}

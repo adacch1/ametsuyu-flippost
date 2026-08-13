@@ -108,6 +108,29 @@ func persistThermalBench(path string, enabled bool) error {
 	return writeConfigAtomic(path, out)
 }
 
+// persistCPUMode rewrites only cpu.mode, preserving every other key.
+func persistCPUMode(path, mode string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	cpu, _ := m["cpu"].(map[string]any)
+	if cpu == nil {
+		cpu = map[string]any{}
+		m["cpu"] = cpu
+	}
+	cpu["mode"] = mode
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(path, out)
+}
+
 // writeConfigAtomic writes via a temp file + rename so a crash mid-write can
 // never leave a truncated config.json that fails to parse at next boot (which
 // would strand the headless device). The temp file is created 0600 in the same

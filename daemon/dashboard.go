@@ -540,7 +540,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <div class="stat-val num"><span id="battLevel">—</span><small>%</small></div>
         <div class="stat-sub num" id="battSub">—</div>
       </div>
-      <div class="card">
+      <div class="card" id="tempCard">
         <div class="stat-head"><h2>Temp</h2><span class="accent" id="tempAccent" style="background:var(--sunflower-end)"></span></div>
         <div class="stat-val num" id="tempVal" style="color:var(--sunflower-end)"><span id="tempMax">—</span><small>°C</small></div>
         <div class="stat-sub num" id="tempSub">—</div>
@@ -717,6 +717,42 @@ const dashboardHTML = `<!DOCTYPE html>
       </div>
       <div class="setmsg" id="ocMsg">On: writes (airplane, thermal, whitelist, reboot…) need no token on your tailnet. SMS always keeps its token. Enabling needs the radio-control token once.</div>
     </div>
+    <div id="adminCard" style="display:none">
+      <div class="sec-label">Admin · unlocked</div>
+      <div class="card">
+        <div class="stat-head"><h2>Bench mode · battery-less donor</h2><span class="accent" id="bmAccent" style="background:var(--text-3)"></span></div>
+        <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="bmDot"></span><span id="bmState">off</span></span></div>
+        <div class="state-row"><span class="k">Zones disabled</span><span class="v" id="bmZones">—</span></div>
+        <div class="setgrid" style="grid-template-columns:1fr 1fr">
+          <button class="minibtn primary" id="bmOnBtn" style="min-height:44px">Turn on</button>
+          <button class="minibtn" id="bmOffBtn" style="min-height:44px">Turn off</button>
+        </div>
+        <div class="setmsg" id="bmMsg">No battery + bench supply only. Gate 70°C, auto re-arm ≤55°C; a trip restores all stock mitigation.</div>
+      </div>
+      <div class="card">
+        <div class="stat-head"><h2>CPU policy</h2></div>
+        <div class="setgrid">
+          <div><label class="f" for="cpuModeSel">Mode</label>
+          <select id="cpuModeSel">
+            <option value="auto">auto</option>
+            <option value="performance">performance</option>
+            <option value="balanced">balanced</option>
+            <option value="eco">eco</option>
+            <option value="off">off</option>
+          </select></div>
+        </div>
+        <button class="setbtn" id="cpuModeBtn">Apply CPU mode</button>
+        <div class="setmsg" id="cpuModeMsg">auto: performance with clients, eco idle; hot always reduces. Persists across reboots.</div>
+      </div>
+      <div class="card">
+        <div class="stat-head"><h2>Danger</h2></div>
+        <div class="setgrid" style="grid-template-columns:1fr 1fr">
+          <button class="setbtn sec" id="coolBtn" style="min-height:44px">Force CPU cooldown</button>
+          <button class="setbtn sec" id="rebootBtn" style="min-height:44px">Reboot device</button>
+        </div>
+        <div class="setmsg" id="dangerMsg">Cooldown parks the prime core + caps the mid cluster. Reboot restarts the whole phone; the module comes back by itself.</div>
+      </div>
+    </div>
     <div class="sec-label">Integrations</div>
     <div class="card">
       <div class="intg">
@@ -827,6 +863,7 @@ const dashboardHTML = `<!DOCTYPE html>
     if(typeof s.open_reads==="boolean"&&document.getElementById("orState"))renderOpenReads(s.open_reads);
     if(typeof s.open_control==="boolean"){openControl=s.open_control;if(document.getElementById("ocState"))renderOpenControl(s.open_control);}
     if(s.hotspot_presets)renderPresets(s.hotspot_presets);
+    if(s.bench)renderBench(s.bench);
     // Always show the WAN IP (header). Airplane on / no data -> explicit label.
     document.getElementById("wanip").innerHTML=s.airplane?(ICN_PLANE+"airplane"):esc(ip.available&&ip.ip?ip.ip:"no data");
     var ipEl=document.getElementById("wanIp"); if(ipEl){ipEl.textContent=ip.available&&ip.ip?ip.ip:(s.airplane?"— (airplane on)":"— (no data)");}
@@ -932,6 +969,8 @@ const dashboardHTML = `<!DOCTYPE html>
     document.getElementById("cpuMode").textContent=c.mode||"—";
     document.getElementById("cpuModeRow").textContent=(c.mode||"—")+(c.requested&&c.requested!==c.mode?" ("+c.requested+")":"");
     document.getElementById("cpuDot").className="dot "+(c.mode==="performance"?"green":(c.mode==="eco"?"amber":(c.mode==="off"?"off":"green")));
+    var sel=document.getElementById("cpuModeSel");
+    if(sel&&c.requested&&!sel._seeded){sel.value=c.requested;sel._seeded=true;}
     if(c.cores&&coreEls.length===c.cores.length){c.cores.forEach(function(ci,i){coreEls[i].core.classList.toggle("off",!ci.online);});}
   }
 
@@ -1119,6 +1158,80 @@ const dashboardHTML = `<!DOCTYPE html>
     document.getElementById("ocDot").className="dot "+(on?"red":"off");
     document.getElementById("ocAccent").style.background=on?"var(--coral-end)":"var(--text-3)";
   }
+
+  // --- Secret admin unlock: 8 taps on the Home temp card. Locked by default;
+  // survives in localStorage for this browser/kiosk.
+  var adminUnlocked=localStorage.getItem("zf5admin")==="1";
+  var adminTaps=0, adminTapUntil=0;
+  document.getElementById("tempCard").addEventListener("click",function(){
+    var now=Date.now();
+    if(now>adminTapUntil)adminTaps=0;
+    adminTaps++;adminTapUntil=now+5000;
+    if(adminTaps>=8){adminUnlocked=true;localStorage.setItem("zf5admin","1");}
+    renderAdmin();
+  });
+  function renderAdmin(){
+    var el=document.getElementById("adminCard"); if(!el)return;
+    el.style.display=adminUnlocked?"":"none";
+  }
+
+  // --- Bench mode (battery-less donor only). Hidden behind admin unlock.
+  var bmMsg=document.getElementById("bmMsg");
+  function renderBench(b){
+    if(!b)return;
+    document.getElementById("bmState").textContent=b.enabled?(b.tripped?"tripped":"on"):"off";
+    document.getElementById("bmDot").className="dot "+(b.enabled&&!b.tripped?"red":(b.enabled?"amber":"off"));
+    document.getElementById("bmZones").textContent=b.enabled?(b.zones_disabled||0)+"/95":"—";
+    document.getElementById("bmAccent").style.background=(b.enabled&&!b.tripped)?"var(--coral-end)":"var(--text-3)";
+  }
+  function setBench(on){
+    var rt=rtok(bmMsg); if(!rt)return;
+    bmMsg.textContent="applying…";
+    post("/v1/thermal/bench",{enabled:on},rt).then(function(res){
+      if(!res.ok){bmMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      renderBench(res.j);
+      bmMsg.textContent=res.j.enabled
+        ?(res.j.tripped?"Bench tripped — mitigation restored; auto re-arms at ≤"+res.j.rearm_c+"°C.":"Bench ON — zones/HALs suspended, gate "+res.j.trip_c+"°C.")
+        :"Bench OFF — stock mitigation restored.";
+    }).catch(function(e){bmMsg.textContent="Error: "+e.message;});
+  }
+  document.getElementById("bmOnBtn").addEventListener("click",function(){setBench(true);});
+  document.getElementById("bmOffBtn").addEventListener("click",function(){setBench(false);});
+
+  // --- CPU policy mode. Hidden behind admin unlock.
+  var cpuModeMsg=document.getElementById("cpuModeMsg");
+  document.getElementById("cpuModeBtn").addEventListener("click",function(){
+    var rt=rtok(cpuModeMsg); if(!rt)return;
+    var mode=document.getElementById("cpuModeSel").value;
+    cpuModeMsg.textContent="applying…";
+    post("/v1/cpu/mode",{mode:mode},rt).then(function(res){
+      if(!res.ok){cpuModeMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      cpuModeMsg.textContent="CPU mode: "+res.j.mode+" (persisted).";
+    }).catch(function(e){cpuModeMsg.textContent="Error: "+e.message;});
+  });
+
+  // --- Admin danger actions: cooldown + reboot. Hidden behind admin unlock.
+  var dangerMsg=document.getElementById("dangerMsg");
+  document.getElementById("coolBtn").addEventListener("click",function(){
+    var rt=rtok(dangerMsg); if(!rt)return;
+    post("/v1/cooldown",{},rt).then(function(res){
+      dangerMsg.textContent=res.ok?(res.j.note||"CPU forced to eco."):("Error: "+(res.j.error||"failed"));
+    }).catch(function(e){dangerMsg.textContent="Error: "+e.message;});
+  });
+  var rebootBtn=document.getElementById("rebootBtn"), rebootArmed=0;
+  rebootBtn.addEventListener("click",function(){
+    var now=Date.now();
+    if(now>rebootArmed){
+      rebootArmed=now+5000; rebootBtn.textContent="Tap again to confirm reboot";
+      return;
+    }
+    rebootBtn.textContent="Reboot device";
+    var rt=rtok(dangerMsg); if(!rt)return;
+    post("/v1/device/reboot",{},rt).then(function(res){
+      dangerMsg.textContent=res.ok?(res.j.note||"Rebooting…"):("Error: "+(res.j.error||"failed"));
+    }).catch(function(e){dangerMsg.textContent="Error: "+e.message;});
+  });
+  renderAdmin();
 
   document.getElementById("setBtn").addEventListener("click",function(){
     var rt=rtok(setMsg); if(!rt)return;
