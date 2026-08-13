@@ -46,7 +46,7 @@ The phone sits behind carrier CGNAT, so there's no public inbound path anyway �
 
 ## Safety guarantees (non-negotiable)
 
-- No disabling or bypassing Samsung/Android thermal mitigation. Android thermal status is a hard safety gate; 44°C is a warning threshold, 48°C is a hard cap enforced server-side regardless of what the UI is told to do.
+- No disabling or bypassing Samsung/Android thermal mitigation in normal mode. 44°C is a warning threshold and 48°C is a hard cap enforced server-side. The only exception is `thermal.bench=true`: an explicit opt-in for **battery-less donor hardware** on a bench supply, which suspends OS thermal mitigation (zones, HALs, Samsung kernel cpufreq_limit) and lifts the gate to 70°C with a hard 70°C trip that restores protection, then auto re-arms at ≤55°C — fully hands-off. Bench mode also applies reversible throughput tuning (cubic TCP, MTU probing, TCP Fast Open, bigger buffers, fq_codel on SoftAP + WWAN) for multi-device load. It stays off unless you enable it.
 - No public API. The daemon binds `127.0.0.1` only; remote access is exclusively through your own private Tailscale tunnel, never a port-forward. Reads/writes default to tokenless *within that private tunnel* for convenience — real bearer tokens still exist underneath and can be required again any time from Settings.
 - SMS is pull-only, redacted by default, owner-only, and rate-limited. Never auto-forwarded.
 - No IMEI / baseband / SIM / eSIM modification and no carrier-provisioning bypass.

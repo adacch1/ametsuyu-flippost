@@ -55,7 +55,8 @@
       "properties": {
         "warn_c": { "type": "number", "minimum": 30, "default": 44, "description": "Owner-adjustable warn threshold (floor 30C, must stay below gate_c). Clamped by the daemon on load and on every retune." },
         "gate_c": { "type": "number", "minimum": 31, "maximum": 48, "description": "Above this (battery temp or hottest sysfs zone) radio/tether writes are refused. Hard-capped at 48C: the gate can be retuned but never disabled." },
-        "fail_closed": { "type": "boolean", "const": true, "description": "If thermal cannot be read, treat as unsafe. PRIMARY source is battery temp + /sys/class/thermal; Android status is advisory." }
+        "fail_closed": { "type": "boolean", "const": true, "description": "If thermal cannot be read, treat as unsafe. PRIMARY source is battery temp + /sys/class/thermal; Android status is advisory." },
+        "bench": { "type": "boolean", "default": false, "description": "Explicit opt-in for battery-less donor hardware on a bench supply: disables OS thermal mitigation (thermal zones + HAL + Samsung kernel cpufreq_limit) and lifts the app gate to 70C. A critical trip at 70C restores mitigation. Off by default." }
       }
     },
     "cpu": {

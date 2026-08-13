@@ -30,6 +30,7 @@ type Server struct {
 	cpu     *CPUController
 	hs      *HotspotController
 	presets *PresetManager
+	bench   *BenchThermalController
 	// Adjustable thermal limits (atomic float bits) so the owner can retune the
 	// gate at runtime; seeded from config, clamped to a safe range on write.
 	warnBits atomic.Uint64
@@ -94,12 +95,41 @@ func NewServer(cfg *Config, col Collector) *Server {
 	s.openControl.Store(cfg.Dashboard.OpenControl)
 	// cfgPath is set on s AFTER NewServer (see main), so resolve it lazily.
 	s.presets = NewPresetManager(cfg.HotspotPresets, func() string { return s.cfgPath })
+	s.bench = NewBenchThermalController()
+	if cfg.Thermal.Bench {
+		s.bench.Enable()
+	}
+	s.syncPolicyLimits()
 	s.routes()
 	return s
 }
 
 func (s *Server) warnC() float64 { return math.Float64frombits(s.warnBits.Load()) }
 func (s *Server) gateC() float64 { return math.Float64frombits(s.gateBits.Load()) }
+
+// Effective limits: bench mode (explicit opt-in, battery-less donor hardware)
+// lifts the app gate to benchTripC while active. The stored clamp is untouched,
+// so the moment bench drops (disable or critical trip) the normal 48C ceiling
+// returns.
+func (s *Server) effectiveWarnC() float64 {
+	if s.bench != nil && s.bench.Active() {
+		return benchWarnC
+	}
+	return s.warnC()
+}
+
+func (s *Server) effectiveGateC() float64 {
+	if s.bench != nil && s.bench.Active() {
+		return benchTripC
+	}
+	return s.gateC()
+}
+
+// syncPolicyLimits keeps the sticky policy engine aligned with the effective
+// limits (bench lifts them; disable/trip restores the configured values).
+func (s *Server) syncPolicyLimits() {
+	s.pol.SetLimits(s.effectiveWarnC(), s.effectiveGateC())
+}
 
 // setThermalLimits clamps, applies, and persists new thermal thresholds. Returns
 // the effective (possibly clamped) values. gate is capped at gateCeilingC and
@@ -110,6 +140,7 @@ func (s *Server) setThermalLimits(warn, gate float64) (float64, float64) {
 	s.gateBits.Store(math.Float64bits(gate))
 	s.cfg.Thermal.WarnC, s.cfg.Thermal.GateC = warn, gate
 	s.pol.SetLimits(warn, gate)
+	s.syncPolicyLimits()
 	if s.cfgPath != "" {
 		if err := persistThermalLimits(s.cfgPath, warn, gate); err != nil {
 			log.Printf("thermal limits: persist failed: %v", err)
@@ -126,7 +157,7 @@ func (s *Server) runCPUPolicy() {
 		if requested == "off" {
 			s.cpu.restoreAll()
 		} else {
-			t := s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed)
+			t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
 			clients := deviceClients().Count
 			mode, _ := decideMode(requested, clients, t.Safe)
 			s.cpu.apply(mode)
@@ -194,6 +225,10 @@ func (s *Server) routes() {
 	// Retune the thermal gate: radio-control write, but NOT thermal-gated itself
 	// (you must be able to adjust limits while hot), and hard-clamped server-side.
 	s.mux.HandleFunc("/v1/thermal/limits", s.guardAuth("radio-control", http.MethodPost, s.handleThermalLimits))
+	// Bench thermal mode: GET (read-status) reports state; POST (radio-control)
+	// enables/disables the battery-less-donor bypass. Never thermally gated —
+	// enabling it while hot is the point.
+	s.mux.HandleFunc("/v1/thermal/bench", s.dispatchThermalBench)
 	// Dashboard HTML (no data without a token; the page fetches /v1/* itself).
 	s.mux.HandleFunc("/", s.handleDashboard)
 	s.mux.HandleFunc("/dashboard", s.handleDashboard)
@@ -296,7 +331,7 @@ func (s *Server) guardWrite(need string, h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		// Thermal gate: radio/tether writes refused unless safe. Fails closed.
-		t := s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed)
+		t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
 		if !t.Safe {
 			writeErr(w, http.StatusConflict, "refused: unsafe thermal state")
 			return
@@ -357,11 +392,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleThermal(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed))
+	writeJSON(w, http.StatusOK, s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed))
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	th := s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed)
+	th := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
 	worst := th.BatteryC
 	if th.MaxC > worst {
 		worst = th.MaxC
@@ -369,13 +404,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"health":          s.col.Health(),
 		"thermal":         th,
-		"policy_state":    string(classify(worst, s.warnC(), s.gateC())),
+		"policy_state":    string(classify(worst, s.effectiveWarnC(), s.effectiveGateC())),
 		"network":         s.col.Network(),
 		"battery":         s.col.Battery(),
 		"wan_ip":          deviceWanIP(),
 		"airplane":        airplaneOn(),
 		"open_reads":      s.openReads.Load(),
 		"open_control":    s.openControl.Load(),
+		"bench":           s.bench.Status(),
 		"hotspot_presets": s.presets.statusRedacted(),
 		"service":         map[string]any{"daemon": "ok", "helper": map[string]any{"available": false}},
 	})
@@ -478,7 +514,7 @@ func (s *Server) handleBands(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCPU(w http.ResponseWriter, r *http.Request) {
 	requested := s.cfg.CPUMode()
-	t := s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed)
+	t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
 	clients := deviceClients().Count
 	eff, reason := decideMode(requested, clients, t.Safe)
 	writeJSON(w, http.StatusOK, s.cpu.report(requested, eff, reason, clients, t.Safe))
@@ -511,7 +547,7 @@ func (s *Server) handleAirplane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.airplaneBusy.Store(false)
-	safe := s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed).Safe
+	safe := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed).Safe
 	switch body.Mode {
 	case "on":
 		airplaneSet(true)
@@ -707,15 +743,55 @@ func (s *Server) handleThermalLimits(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// dispatchThermalBench splits GET (read-status) from POST (radio-control) on
+// one path — ServeMux panics on duplicate registrations, so the method
+// dispatch happens here.
+func (s *Server) dispatchThermalBench(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.guard("read-status", s.handleThermalBenchGet)(w, r)
+	case http.MethodPost:
+		s.guardAuth("radio-control", http.MethodPost, s.handleThermalBenchPost)(w, r)
+	default:
+		writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) handleThermalBenchGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.bench.Status())
+}
+
+// handleThermalBenchPost toggles bench mode. Body: {"enabled":true|false}.
+func (s *Server) handleThermalBenchPost(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil || body.Enabled == nil {
+		writeErr(w, http.StatusBadRequest, "body must include enabled")
+		return
+	}
+	s.cfgMu.Lock()
+	s.bench.SetEnabled(*body.Enabled)
+	s.cfg.Thermal.Bench = *body.Enabled
+	if s.cfgPath != "" {
+		if err := persistThermalBench(s.cfgPath, *body.Enabled); err != nil {
+			log.Printf("thermal bench: persist failed: %v", err)
+		}
+	}
+	s.cfgMu.Unlock()
+	s.syncPolicyLimits()
+	writeJSON(w, http.StatusOK, s.bench.Status())
+}
+
 func (s *Server) handlePrefer5G(w http.ResponseWriter, r *http.Request) {
-	t := s.col.Thermal(s.warnC(), s.gateC(), s.cfg.Thermal.FailClosed)
+	t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
 	worst := t.BatteryC
 	if t.MaxC > worst {
 		worst = t.MaxC
 	}
 	// Fail closed: unreadable thermal -> treat as gate temperature (HOT).
 	if t.Source == "degraded" {
-		worst = s.gateC()
+		worst = s.effectiveGateC()
 	}
 	state := s.pol.Evaluate(worst)
 	ok, reason := Prefer5GAllowed(state)
@@ -817,6 +893,8 @@ func (s *Server) ListenAndServe() error {
 	go s.runCPUPolicy()
 	// Background SSID-whitelist hotspot auto-toggle (idle when list is empty).
 	go s.runHotspotAuto()
+	// Bench thermal watcher: re-asserts the bypass and arms the 95C critical trip.
+	go s.bench.Watch()
 	addr := s.cfg.BindHost + ":" + itoa(s.cfg.BindPort)
 	log.Printf("zflip5-modemd listening on %s (loopback)", addr)
 	srv := &http.Server{Addr: addr, Handler: s, ReadHeaderTimeout: 5 * time.Second}

@@ -1,7 +1,10 @@
-# sepolicy.rule — intentionally EMPTY at v0.1.
+# sepolicy.rule — scoped to the daemon domain, never a broad permissive mode.
 #
-# Policy is added here ONLY when a real on-device `avc: denied` proves the daemon
-# needs it, and each rule is scoped to the daemon domain — never a broad
-# permissive mode and never untrusted_app-scoped. Todo 1 ran the daemon context
-# discovery as read-only; any required rule lands here with the denial that
-# justified it recorded in docs/.
+# Bench thermal mode (thermal.bench=true) disables thermal zones and zeroes
+# cooling devices from the daemon. On-device denial that justified this rule:
+#   root shell, u:r:magisk:s0: "can't create .../mode: Permission denied"
+#   target label: u:object_r:sysfs_thermal:s0 (/sys/class/thermal/thermal_zone*/mode
+#   and cooling_device*/cur_state). Reads are already permitted; only write was
+#   denied. The daemon also injects this rule live via `magiskpolicy --live`
+#   so bench mode works without a reboot; this file carries it across reboots.
+allow magisk sysfs_thermal file write
