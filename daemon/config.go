@@ -21,6 +21,7 @@ type Config struct {
 		WarnC      float64 `json:"warn_c"`
 		GateC      float64 `json:"gate_c"`
 		FailClosed bool    `json:"fail_closed"`
+		Bench      bool    `json:"bench"` // explicit opt-in: battery-less donor hardware
 	} `json:"thermal"`
 	SMS struct {
 		Enabled       bool   `json:"enabled"`
@@ -77,6 +78,29 @@ func persistThermalLimits(path string, warnC, gateC float64) error {
 	}
 	th["warn_c"] = warnC
 	th["gate_c"] = gateC
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(path, out)
+}
+
+// persistThermalBench rewrites only thermal.bench, preserving every other key.
+func persistThermalBench(path string, enabled bool) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	th, _ := m["thermal"].(map[string]any)
+	if th == nil {
+		th = map[string]any{}
+		m["thermal"] = th
+	}
+	th["bench"] = enabled
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err

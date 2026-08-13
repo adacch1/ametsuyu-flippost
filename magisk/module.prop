@@ -3,4 +3,4 @@ name=Z Flip 5 Modem Module
 version=v0.1.0
 versionCode=1
 author=owner
-description=Local-only rooted modem control for Z Flip 5: loopback bearer API, thermal-gated safe-5G/tether, owner-only redacted SMS over Tailscale. No public bind, no thermal-mitigation bypass.
+description=Local-only rooted modem control for Z Flip 5: loopback bearer API, thermal-gated safe-5G/tether, owner-only redacted SMS over Tailscale. No public bind. Optional bench mode lifts the thermal gate for battery-less donor hardware (explicit opt-in, 70C trip).

@@ -38,7 +38,7 @@ BIN="$MODDIR/daemon/zflip5-modemd"
   "ingress": { "mode": "loopback" },
   "hotspot": { "enable_on_boot": true, "ssid_whitelist": [] },
   "cpu": { "mode": "auto" },
-  "thermal": { "warn_c": 44, "gate_c": 46, "fail_closed": true },
+  "thermal": { "warn_c": 44, "gate_c": 46, "fail_closed": true, "bench": false },
   "dashboard": { "open_reads": true, "open_control": true },
   "sms": { "enabled": true, "redact_default": true, "forward": false, "path": "iphone-tailscale" },
   "rate_limits": { "default_per_min": 120, "sms_per_min": 3, "radio_per_min": 6 }
