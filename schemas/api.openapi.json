@@ -348,8 +348,8 @@
   },
   "/v1/sms/recent": {
    "get": {
-    "summary": "Recent SMS (pull-only, redacted, owner-only, iPhone/Tailscale path only)",
-    "description": "Requires the sms scope. Never exposed to the Discord relay. Redaction fails closed; an out-of-band read alert is emitted.",
+    "summary": "Recent SMS (pull-only, owner's device, iPhone/Tailscale path only)",
+    "description": "Requires the sms scope, or no token when dashboard.open_reads is on. Never exposed to the Discord relay. Bodies are served verbatim on this donor phone; the masking path is compiled off via redactBodies in daemon/sms.go.",
     "security": [
      {
       "bearerAuth": [
@@ -359,7 +359,34 @@
     ],
     "responses": {
      "200": {
-      "description": "redacted list"
+      "description": "message list"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/notifications/recent": {
+   "get": {
+    "summary": "Active notification shade (pull-only, owner's device)",
+    "description": "Requires the sms scope (same asset class as SMS), or no token when dashboard.open_reads is on. Reads the active shade via root dumpsys; dismissed/history notifications are never returned. Text is verbatim (redactBodies off). Never exposed to the Discord relay.",
+    "security": [
+     {
+      "bearerAuth": [
+       "sms"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "notification list"
      },
      "401": {
       "$ref": "#/components/responses/Unauthorized"

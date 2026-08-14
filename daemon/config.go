@@ -42,11 +42,12 @@ type Config struct {
 	} `json:"hotspot"`
 	HotspotPresets HotspotPresets `json:"hotspot_presets"` // named SoftAP configs + Wi-Fi-triggered auto-switch
 	Dashboard      struct {
-		// OpenReads: serve read-status GETs WITHOUT a token (tailnet convenience).
-		// Reads only. Off by default.
+		// OpenReads: serve read-status AND sms GETs WITHOUT a token (tailnet
+		// convenience; sms rides this switch by the owner's call on this donor
+		// phone). Reads only. Off by default.
 		OpenReads bool `json:"open_reads"`
 		// OpenControl: allow radio-control WRITES without a token too (owner's
-		// tailnet-only, app-less device). SMS is NEVER opened. Off by default.
+		// tailnet-only, app-less device). Writes only. Off by default.
 		OpenControl bool `json:"open_control"`
 	} `json:"dashboard"`
 }

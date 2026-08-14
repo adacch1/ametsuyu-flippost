@@ -8,7 +8,8 @@ import (
 	"unicode/utf8"
 )
 
-// SMS reader: root `content query` on content://sms/inbox, redacted by default.
+// SMS reader: root `content query` on content://sms/inbox, served verbatim
+// (see redactBodies below).
 // Owner-only + rate-limited enforced at the HTTP layer. Never forwarded.
 
 const (
@@ -19,7 +20,22 @@ const (
 type SMSMessage struct {
 	Address string `json:"address"`
 	Date    string `json:"date"`
-	Body    string `json:"body"` // redacted preview by default
+	Body    string `json:"body"` // verbatim unless redactBodies is on
+}
+
+// redactBodies is the master switch for masking. OFF by owner's call on this
+// donor phone (2026-08-14): the dashboard shows message and notification text
+// verbatim, one-time codes included, and nothing is truncated. Flip it back to
+// true to restore the masked previews — redactSMS below is kept intact for that.
+const redactBodies = false
+
+// bodyText applies (or bypasses) redaction for everything served to the
+// dashboard: SMS bodies and notification titles/text all go through here.
+func bodyText(s string) string {
+	if redactBodies {
+		return redactSMS(s)
+	}
+	return s
 }
 
 // otpRe masks standalone 4–8 digit runs (typical OTP/2FA codes).
@@ -78,7 +94,7 @@ func parseSMSRows(raw string, limit int) []SMSMessage {
 		if m == nil {
 			continue
 		}
-		msgs = append(msgs, SMSMessage{Address: m[1], Date: m[2], Body: redactSMS(m[3])})
+		msgs = append(msgs, SMSMessage{Address: m[1], Date: m[2], Body: bodyText(m[3])})
 		if len(msgs) >= limit {
 			break
 		}
@@ -86,7 +102,7 @@ func parseSMSRows(raw string, limit int) []SMSMessage {
 	return msgs
 }
 
-// recentSMS returns up to `limit` redacted messages, or an error the caller maps
+// recentSMS returns up to `limit` messages, or an error the caller maps
 // to a safe no-permission response.
 func recentSMS(limit int) ([]SMSMessage, error) {
 	if limit <= 0 || limit > smsMaxLimit {

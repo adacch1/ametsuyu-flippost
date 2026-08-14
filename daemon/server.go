@@ -38,11 +38,12 @@ type Server struct {
 	// airplaneBusy serializes /v1/airplane so overlapping cycles/toggles can't
 	// interleave airplane on/off.
 	airplaneBusy atomic.Bool
-	// openReads: when true, read-status GETs need no token (tailnet convenience).
-	// Seeded from config, toggled at runtime. Reads only; never radio/sms.
+	// openReads: when true, read-status AND sms GETs need no token (tailnet
+	// convenience; the owner opted the inbox in on this donor phone).
+	// Seeded from config, toggled at runtime. Reads only; never radio writes.
 	openReads atomic.Bool
 	// openControl: when true, radio-control WRITES need no token either (owner's
-	// tailnet-only, app-less device). NEVER opens sms. Off by default.
+	// tailnet-only, app-less device). Writes only. Off by default.
 	openControl atomic.Bool
 	// speedtestBusy: only one speedtest at a time (each is heavy on data + heat).
 	speedtestBusy atomic.Bool
@@ -257,6 +258,10 @@ func (s *Server) routes() {
 	// to ENABLE it you still need the token once (it starts off).
 	s.mux.HandleFunc("/v1/dashboard/control", s.guardAuth("radio-control", http.MethodPost, s.handleDashboardControl))
 	s.mux.HandleFunc("/v1/sms/recent", s.guard("sms", s.handleSMSRecent))
+	// Active notifications. Same scope, gate and rate limit as SMS: identical
+	// asset class (private content, one-time codes), so it never gets a cheaper
+	// door than the inbox it mirrors.
+	s.mux.HandleFunc("/v1/notifications/recent", s.guard("sms", s.handleNotificationsRecent))
 	// tether/cooldown/restart make their own thermal decision (stopping the
 	// hotspot or cooling down must work WHILE hot), so they take the auth-only
 	// guard instead of guardWrite's blanket "refuse when unsafe" gate.
@@ -296,8 +301,11 @@ func (s *Server) guard(need string, h http.HandlerFunc) http.HandlerFunc {
 		have := s.cfg.authScope(r)
 		if have == "" {
 			// Open-reads mode: read-status GETs allowed WITHOUT a token (tailnet
-			// convenience). Reads only — radio-control/sms never take this path.
-			if need == "read-status" && s.openReads.Load() {
+			// convenience). On this donor phone the owner put sms-scope READS on
+			// the same switch, so the Inbox needs no token either. Still reads
+			// only (radio-control writes have their own switch), still redacted,
+			// still pull-only — and turning open reads off closes both again.
+			if (need == "read-status" || need == "sms") && s.openReads.Load() {
 				if !s.rl.allow("open-reads", s.cfg.RateLimits.DefaultPerMin) {
 					writeErr(w, http.StatusTooManyRequests, "rate limited")
 					return
@@ -461,7 +469,39 @@ func (s *Server) handleSMSRecent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"messages": msgs, "redacted": true, "available": true, "path": s.cfg.SMS.Path,
+		"messages": msgs, "redacted": redactBodies, "available": true, "path": s.cfg.SMS.Path,
+	})
+}
+
+func (s *Server) handleNotificationsRecent(w http.ResponseWriter, r *http.Request) {
+	// sms.enabled is the one switch for private on-device content; turning it
+	// off must silence notifications too.
+	if !s.cfg.SMS.Enabled {
+		writeErr(w, http.StatusForbidden, "sms disabled")
+		return
+	}
+	limit := 8
+	if q := r.URL.Query().Get("limit"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 || n > notifMaxLimit {
+			writeErr(w, http.StatusBadRequest, "limit out of range (1.."+itoa(notifMaxLimit)+")")
+			return
+		}
+		limit = n
+	}
+	// Audit every read (never logs titles or bodies).
+	log.Printf("audit: notifications.recent limit=%d", limit)
+	ns, err := recentNotifications(limit)
+	if err != nil {
+		// Fail safe: no root / no notification service -> empty, actionable.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"notifications": []Notification{}, "redacted": true, "available": false,
+			"reason": "notification service unavailable (dumpsys needs root)",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"notifications": ns, "redacted": redactBodies, "available": true,
 	})
 }
 
