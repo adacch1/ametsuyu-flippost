@@ -26,6 +26,28 @@ https://zflip5.<tailnet>.ts.net/?token=$READ_STATUS
 The HTML itself carries no data — every number is fetched from the token-gated
 `/v1/*` API, so an unauthenticated viewer sees an empty shell.
 
+## Inbox (messages + notifications)
+
+The **Inbox** tab reads the phone's SMS inbox (`/v1/sms/recent`, `content query`
+on `content://sms/inbox`) and its active notification shade
+(`/v1/notifications/recent`, root `dumpsys notification --noredact`). Both are
+pull-only: nothing can be sent, replied to, dismissed or forwarded from here.
+
+Bodies and titles are served **verbatim** — nothing masked, nothing truncated
+— because this is a donor phone the owner reads directly (`redactBodies = false`
+in `daemon/sms.go`; flip that const to restore the masked 120-char previews).
+Rows show two lines and expand on tap. Only the *active* shade is parsed; the
+dismissed `History Notification List:` block is skipped.
+
+Both endpoints use the `sms` scope, which on this donor phone also follows the
+**Open reads** toggle: with it on, the tab loads with no token at all (the
+daemon embeds the `sms` token in the page and serves the two endpoints
+tokenless). With it off, paste the `sms` token once into the field at the bottom
+of the tab. `sms.enabled: false` in `config.json` turns the whole tab off.
+
+Reads are rate-limited (`rate_limits.sms_per_min`, 3/min by default), so the tab
+refreshes at most once every 20 s on open; "Refresh" forces one.
+
 ## Data usage source
 
 `/v1/usage` samples cumulative mobile bytes from `/proc/net/dev` (`rmnet_data*`),

@@ -41,8 +41,10 @@ func TestParseRowsRedactsAndCaps(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("cap failed: got %d", len(msgs))
 	}
-	if strings.Contains(msgs[0].Body, "998877") {
-		t.Fatalf("OTP leaked in row: %q", msgs[0].Body)
+	// redactBodies is off on this phone: the row must survive verbatim, code and
+	// all. Flipping the const back on is what re-arms the masking tests above.
+	if msgs[0].Body != "Code 998877 now" {
+		t.Fatalf("body not verbatim: %q", msgs[0].Body)
 	}
 	if msgs[0].Address != "+441234" {
 		t.Fatalf("address parse: %q", msgs[0].Address)

@@ -34,8 +34,16 @@ Confirmed on-device by Todo 1: SELinux + dm-verity enforcing, Knox tripped
 ## Endpoints
 
 See `schemas/api.openapi.json`. Read endpoints require the `read-status` scope;
-`/v1/sms/recent` requires `sms`; writes (`/v1/tether`, `/v1/prefer5g`,
-`/v1/cooldown`, `/v1/service/restart`) require `radio-control`.
+`/v1/sms/recent` and `/v1/notifications/recent` require `sms`; writes
+(`/v1/tether`, `/v1/prefer5g`, `/v1/cooldown`, `/v1/service/restart`) require
+`radio-control`.
+
+Both `sms`-scope reads are pull-only and neither is ever reachable from the
+Discord relay. Body redaction is compiled off on this donor phone
+(`redactBodies` in `daemon/sms.go`), so responses carry full text; the masking
+path is intact behind that const. Both also ride the `dashboard.open_reads`
+switch: with open reads on they serve without a token, like every other read;
+turning it off closes them again.
 
 `/v1/health` and the device-host block of `/v1/status` report CPU load (1/5/15m),
 core count, RAM used %, battery temp, and the hottest thermal zone — sourced from

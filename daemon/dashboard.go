@@ -33,12 +33,16 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // path (kiosk, tailnet browser, ...). Each token is embedded ONLY when its
 // own open flag is set — flipping a flag off still requires the paste-once
 // fallback, so the toggle stays a real security control, not decorative.
-// SMS is never embedded here, matching action.sh's own scope (read-status +
-// radio-control only) since SMS is the crown-jewel asset.
+// The sms token rides open-reads too (owner's call on this donor phone): the
+// Inbox is meant to work with no token anywhere, and guard() opens the same
+// scope for tokenless reads. Content stays redacted and pull-only.
 func (s *Server) dashboardHTMLWithTokens() string {
 	var js strings.Builder
 	if s.openReads.Load() && isHexToken(s.cfg.Tokens["read-status"]) {
 		js.WriteString(`localStorage.setItem("zf5tok","` + s.cfg.Tokens["read-status"] + `");`)
+	}
+	if s.openReads.Load() && isHexToken(s.cfg.Tokens["sms"]) {
+		js.WriteString(`localStorage.setItem("zf5smstok","` + s.cfg.Tokens["sms"] + `");`)
 	}
 	if s.openControl.Load() && isHexToken(s.cfg.Tokens["radio-control"]) {
 		js.WriteString(`localStorage.setItem("zf5rtok","` + s.cfg.Tokens["radio-control"] + `");`)
@@ -284,6 +288,10 @@ const dashboardHTML = `<!DOCTYPE html>
   /* wisteria clears AA with neither #fafafa nor #212121 at 14px, so accent-filled
      controls fall back to the surface treatment on this screen. */
   [data-accent="clientsScr"]{--primary-fill:var(--gradient-surface);--on-primary:var(--text)}
+  /* inbox re-uses dawn rather than the one free accent (coral): coral is this
+     dashboard's hot/failed status hue, and a screen painted in it would drain
+     the meaning from the header dot that is visible on every screen. */
+  [data-accent="inbox"]     {--color-primary-start:var(--dawn-start);     --color-primary-end:var(--dawn-end)}
   [data-accent="system"]    {--color-primary-start:var(--sunflower-start);--color-primary-end:var(--sunflower-end)}
   [data-accent="presets"]   {--color-primary-start:var(--dawn-start);     --color-primary-end:var(--dawn-end)}
   [data-accent="settings"]  {--color-primary-start:var(--slate-start);    --color-primary-end:var(--slate-end)}
@@ -307,7 +315,13 @@ const dashboardHTML = `<!DOCTYPE html>
   .num,.mono{font-variant-numeric:tabular-nums}
   .mono{font-family:var(--font-body)}
 
-  .app{max-width:720px;width:100%;margin:0 auto;padding:0 var(--space-md);flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}
+  /* The scroll area ends right above the floating bar, so its last row used to
+     be guillotined mid-card. Fade the final 32px out and pad the same amount
+     below the content, so anything cut off reads as "scrolls further", not
+     "broken". */
+  .app{max-width:720px;width:100%;margin:0 auto;padding:0 var(--space-md) var(--space-xl);flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none;
+    -webkit-mask-image:linear-gradient(180deg,#212121 calc(100% - var(--space-xl)),transparent 100%);
+    mask-image:linear-gradient(180deg,#212121 calc(100% - var(--space-xl)),transparent 100%)}
   .app::-webkit-scrollbar{display:none}
   .screen{display:none}
   .screen.active{display:block;animation:acPop .24s var(--pop)}
@@ -431,6 +445,31 @@ const dashboardHTML = `<!DOCTYPE html>
   .nbars>i:nth-child(1){height:5px}.nbars>i:nth-child(2){height:8px}.nbars>i:nth-child(3){height:12px}.nbars>i:nth-child(4){height:16px}
   .nbars.b1>i:nth-child(-n+1),.nbars.b2>i:nth-child(-n+2),.nbars.b3>i:nth-child(-n+3),.nbars.b4>i:nth-child(-n+4){background:var(--color-primary-end)}
 
+  /* inbox rows: a message is text to read, not a control — hairline rules only,
+     no bevel. Collapsed shows two lines; the whole row toggles the rest open
+     (native details/summary, so keyboard and screen readers get it for free). */
+  details.msg{border-top:1px solid var(--hairline);animation:acPop .24s var(--pop)}
+  details.msg:first-of-type{border-top:0}
+  details.msg summary{cursor:pointer;list-style:none;padding:var(--space-md) 0}
+  details.msg summary::-webkit-details-marker{display:none}
+  .msghead{display:flex;align-items:baseline;gap:var(--space-sm)}
+  .msgfrom{flex:1;min-width:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .msgwhen{flex:none;font-size:12px;color:var(--text-4);font-variant-numeric:tabular-nums}
+  .msgbody{margin-top:var(--space-xs);font-size:13px;color:var(--text-2);line-height:1.45;overflow-wrap:anywhere;white-space:pre-wrap;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+  details.msg[open] .msgbody{-webkit-line-clamp:unset;overflow:visible}
+  .msgapp{margin-top:var(--space-xs);font-size:12px;color:var(--text-4)}
+  /* The chevron is only drawn on rows whose text is actually clipped (JS adds
+     .can after measuring), so it never promises more than the row holds. */
+  .msgmore{flex:none;display:none;color:var(--text-4);transition:transform .14s var(--pop)}
+  details.msg.can .msgmore{display:inline-flex}
+  details.msg:not(.can) summary{cursor:default}
+  details.msg[open] .msgmore{transform:rotate(90deg)}
+  /* §1.9 skeleton: matches the row it replaces, so nothing jumps on arrival */
+  .sk{height:12px;border-radius:var(--radius-sm);background:rgba(250,250,250,.06);animation:acPulse 1.2s var(--smooth) infinite}
+  .skrow{padding:var(--space-md) 0;border-top:1px solid var(--hairline)}
+  .skrow:first-child{border-top:0}
+  .skrow .sk+.sk{margin-top:var(--space-sm)}
+
   .wlhead{font-size:12px;font-weight:600;color:var(--text-3);margin:var(--space-lg) 0 var(--space-sm)}
   .wlchip{display:flex;align-items:center;gap:var(--space-sm);background:var(--gradient-surface);box-shadow:var(--shadow-inset);border-radius:var(--radius-sm);padding:var(--space-xs) var(--space-xs) var(--space-xs) var(--space-md);margin-bottom:var(--space-sm);min-height:44px;animation:acPop .24s var(--pop)}
   .wlname{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -453,9 +492,10 @@ const dashboardHTML = `<!DOCTYPE html>
   .setmsg{margin-top:var(--space-sm);font-size:12px;color:var(--text-2);min-height:14px}
   .footer{margin-top:var(--space-lg);text-align:center;font-size:12px;color:var(--text-4);font-weight:400}
   /* §1.7 speech bubble: errors get the bubble, with its tail */
-  .errslot{position:relative;margin-top:var(--space-md);display:none;background:var(--gradient-surface);box-shadow:var(--shadow-card);color:var(--text);border-radius:var(--radius-lg);padding:var(--space-lg) var(--space-xl);font-size:13px;font-weight:400}
-  .errslot.show{display:block;animation:acPop .24s var(--pop)}
-  .errslot::after{content:"";position:absolute;bottom:-10px;left:var(--space-xl);width:12px;height:12px;background:#2a2a2a;clip-path:polygon(0 0,100% 0,0 100%)}
+  .errslot,.bub{position:relative;margin-top:var(--space-md);background:var(--gradient-surface);box-shadow:var(--shadow-card);color:var(--text);border-radius:var(--radius-lg);padding:var(--space-lg) var(--space-xl);font-size:13px;font-weight:400}
+  .errslot{display:none}
+  .errslot.show,.bub{display:block;animation:acPop .24s var(--pop)}
+  .errslot::after,.bub::after{content:"";position:absolute;bottom:-10px;left:var(--space-xl);width:12px;height:12px;background:#2a2a2a;clip-path:polygon(0 0,100% 0,0 100%)}
   .sec-label{font-size:12px;font-weight:600;color:var(--text-3);margin:var(--space-lg) var(--space-xs) var(--space-sm)}
   .intg{display:flex;align-items:flex-start;gap:var(--space-md)}
   .intg .logo{width:40px;height:40px;border-radius:var(--radius-md);flex:none;display:grid;place-items:center}
@@ -467,9 +507,12 @@ const dashboardHTML = `<!DOCTYPE html>
 
   /* §2.2 navbar anatomy applied to a bottom-docked bar: gradient fill,
      radius 20 (NOT a full pill), navbar shadow, one selected pill at a time. */
-  nav{flex:none;width:calc(100% - var(--space-xl));max-width:696px;margin:0 auto calc(var(--space-md) + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--gradient-surface);box-shadow:var(--shadow-nav);border-radius:var(--radius-nav);display:flex;align-items:center;padding:var(--space-sm)}
-  nav .tab{flex:1;background:none;border:0;cursor:pointer;color:var(--text-2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-xs);font-size:10px;font-weight:600;border-radius:var(--radius-pill);height:100%;transition:color .14s var(--pop),box-shadow .14s var(--pop)}
-  nav .tab svg{width:20px;height:20px;color:currentColor}
+  nav{flex:none;width:calc(100% - var(--space-xl));max-width:696px;margin:0 auto calc(var(--space-md) + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--gradient-surface);box-shadow:var(--shadow-nav);border-radius:var(--radius-nav);display:flex;align-items:center;justify-content:space-between;padding:var(--space-sm) var(--space-md);gap:var(--space-xs)}
+  /* §1.4: the pill hugs its own label. With seven tabs an equal-width 1fr cell
+     made the selected pill far wider than its text — the tabs share the leftover
+     space as gaps instead, so every pill matches the word inside it. */
+  nav .tab{flex:0 1 auto;min-width:0;background:none;border:0;cursor:pointer;color:var(--text-2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-xs);font-size:10px;font-weight:600;border-radius:var(--radius-pill);height:100%;padding:0 var(--space-md);transition:color .14s var(--pop),box-shadow .14s var(--pop)}
+  nav .tab svg{width:18px;height:18px;color:currentColor}
   /* §0.5 selected = surface gradient + raised bevel. Never a darker fill,
      never a coloured circle behind the icon. */
   nav .tab.active{color:var(--text);background:var(--gradient-surface);box-shadow:var(--bevel)}
@@ -489,6 +532,12 @@ const dashboardHTML = `<!DOCTYPE html>
   }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
+  }
+  /* Narrow screens (cover screen, small phones): there is no room left to share,
+     so tabs go back to equal cells — the pill hugs its label anyway at that size. */
+  @media (max-width:480px){
+    nav{padding:var(--space-sm);gap:0}
+    nav .tab{flex:1;padding:0}
   }
   /* Cover screen (~352x308): trim chrome so each tab is at most a short scroll */
   @media (max-height:420px){
@@ -608,6 +657,26 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
   </section>
 
+  <section class="screen" id="inbox" role="tabpanel" aria-labelledby="tab-inbox" tabindex="-1">
+    <div class="card">
+      <div class="stat-head"><h2>Messages</h2><button class="minibtn" id="inboxBtn">Refresh</button></div>
+      <div id="smsList" aria-busy="true"><div class="skrow"><div class="sk" style="width:38%"></div><div class="sk" style="width:92%"></div></div><div class="skrow"><div class="sk" style="width:30%"></div><div class="sk" style="width:80%"></div></div><div class="skrow"><div class="sk" style="width:44%"></div><div class="sk" style="width:88%"></div></div></div>
+      <div id="smsNote"></div>
+      <div class="setmsg">Full message text, nothing masked. Tap a row to read the rest. Read-only — nothing here sends, replies or deletes.</div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><h2>Notifications</h2><span id="notifN" style="color:var(--text-3)">—</span></div>
+      <div id="notifList" aria-busy="true"><div class="skrow"><div class="sk" style="width:38%"></div><div class="sk" style="width:92%"></div></div><div class="skrow"><div class="sk" style="width:30%"></div><div class="sk" style="width:80%"></div></div><div class="skrow"><div class="sk" style="width:44%"></div><div class="sk" style="width:88%"></div></div></div>
+      <div id="notifNote"></div>
+      <div class="setmsg">What's on the phone's shade right now. Tap a row for the full text. Read-only — dismissing or acting on one has to happen on the phone.</div>
+    </div>
+    <div class="card" id="smsTokCard">
+      <label class="f" for="setSmsTok">sms token (stored locally)</label>
+      <input id="setSmsTok" type="password" placeholder="paste once">
+      <div class="setmsg">Only needed when Open reads is off — with it on, the inbox opens with no token at all.</div>
+    </div>
+  </section>
+
   <section class="screen" id="system" role="tabpanel" aria-labelledby="tab-system" tabindex="-1">
     <div class="card">
       <div class="stat-head"><h2>CPU · per core</h2></div>
@@ -706,7 +775,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <button class="minibtn primary" id="orOnBtn" style="min-height:44px">Turn on</button>
         <button class="minibtn" id="orOffBtn" style="min-height:44px">Turn off</button>
       </div>
-      <div class="setmsg" id="orMsg">On: any device on your tailnet opens the dashboard with no token — read-only. Off: a token (or the QR) is required. Needs the radio-control token to change.</div>
+      <div class="setmsg" id="orMsg">On: any device on your tailnet opens the dashboard with no token — read-only, inbox included. Off: a token (or the QR) is required. Needs the radio-control token to change.</div>
     </div>
     <div class="card">
       <div class="stat-head"><h2>Open control (no token for writes)</h2><span class="accent" id="ocAccent" style="background:var(--text-3)"></span></div>
@@ -715,7 +784,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <button class="minibtn primary" id="ocOnBtn" style="min-height:44px">Turn on</button>
         <button class="minibtn" id="ocOffBtn" style="min-height:44px">Turn off</button>
       </div>
-      <div class="setmsg" id="ocMsg">On: writes (airplane, thermal, whitelist, reboot…) need no token on your tailnet. SMS always keeps its token. Enabling needs the radio-control token once.</div>
+      <div class="setmsg" id="ocMsg">On: writes (airplane, thermal, whitelist, reboot…) need no token on your tailnet. Enabling needs the radio-control token once.</div>
     </div>
     <div id="adminCard" style="display:none">
       <div class="sec-label">Admin · unlocked</div>
@@ -776,6 +845,7 @@ const dashboardHTML = `<!DOCTYPE html>
   <button class="tab active" data-screen="home" aria-current="page" role="tab" id="tab-home" aria-controls="home" aria-selected="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.6"/><rect x="13" y="3" width="8" height="5" rx="1.6"/><rect x="13" y="10" width="8" height="11" rx="1.6"/><rect x="3" y="13" width="8" height="8" rx="1.6"/></svg>Home</button>
   <button class="tab" data-screen="net" role="tab" id="tab-net" aria-controls="net" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 20V4"/></svg>Network</button>
   <button class="tab" data-screen="clientsScr" role="tab" id="tab-clientsScr" aria-controls="clientsScr" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Clients</button>
+  <button class="tab" data-screen="inbox" role="tab" id="tab-inbox" aria-controls="inbox" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Inbox</button>
   <button class="tab" data-screen="system" role="tab" id="tab-system" aria-controls="system" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg>System</button>
   <button class="tab" data-screen="presets" role="tab" id="tab-presets" aria-controls="presets" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Presets</button>
   <button class="tab" data-screen="settings" role="tab" id="tab-settings" aria-controls="settings" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
@@ -828,6 +898,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var appEl=document.querySelector(".app"); if(appEl)appEl.scrollTop=0;
     active=id;
     if(id==="settings"&&typeof loadQR==="function")loadQR();
+    if(id==="inbox"&&typeof loadInbox==="function")loadInbox();
     // Refresh the newly shown tab, but throttle: rapid tab-hopping must not burst
     // past the read-status rate limit (each tick is 2-3 requests).
     var now=Date.now();
@@ -1119,6 +1190,117 @@ const dashboardHTML = `<!DOCTYPE html>
   (function(){var ios=/iP(hone|ad|od)/.test(navigator.userAgent), standalone=window.navigator.standalone||matchMedia("(display-mode: standalone)").matches;
     if(ios&&!standalone)qrMsg.textContent="On iPhone: Share → Add to Home Screen for a one-tap app.";})();
 
+  // --- Inbox: messages + notifications. Both ride the "sms" scope, which
+  // follows Open reads on this phone: with it on the daemon embeds the token and
+  // serves tokenless, with it off this paste-once field is the way in.
+  var smsTokEl=document.getElementById("setSmsTok");
+  smsTokEl.value=lsGet("zf5smstok");
+  // Token already seeded (open reads embedded it, or it was pasted once): the
+  // field is just clutter until it's needed again.
+  if(smsTokEl.value){var stc=document.getElementById("smsTokCard");if(stc)stc.style.display="none";}
+  smsTokEl.addEventListener("change",function(){lsSet("zf5smstok",smsTokEl.value.trim());loadInbox(true);});
+  document.getElementById("inboxBtn").addEventListener("click",function(){loadInbox(true);});
+
+  function getPrivate(p){
+    var t=smsTokEl.value.trim(), h={};
+    if(t)h.Authorization="Bearer "+t;
+    return fetch(API+p,{headers:h}).then(function(r){
+      return r.json().then(function(j){return {ok:r.ok,code:r.status,j:j};},function(){return {ok:false,code:r.status,j:{}};});
+    });
+  }
+  // §1.7: an empty or blocked list is a speech bubble with one sentence, never
+  // a bare "no data" line.
+  function bubble(box,text){setListHTML(box,'<div class="bub">'+esc(text)+"</div>");box.removeAttribute("aria-busy");}
+  // A row only gets the chevron (and a pointer cursor) when its two-line clamp
+  // is actually hiding something — otherwise tapping it would do nothing.
+  function markExpandable(box){
+    box.removeAttribute("aria-busy");
+    box.querySelectorAll("details.msg").forEach(function(d){
+      var b=d.querySelector(".msgbody");
+      if(b&&b.scrollHeight-b.clientHeight>1)d.classList.add("can");
+    });
+  }
+  // A transient failure (above all a 429 from the tiny sms budget) must not wipe
+  // the messages you were mid-way through reading: keep the rows, put the
+  // message in a note under them, and only take the list over when it's empty.
+  function note(id,text){var el=document.getElementById(id);if(el)el.innerHTML=text?'<div class="bub">'+esc(text)+"</div>":"";}
+  function failInto(box,noteId,text){
+    if(box.querySelector("details.msg"))note(noteId,text);
+    else bubble(box,text);
+  }
+  function privateErr(res){
+    if(res.code===401||res.code===403){
+      // The field hides itself once a token is stored; a rejected token is
+      // exactly when it has to come back, or there is no way to fix it.
+      var stc=document.getElementById("smsTokCard"); if(stc)stc.style.display="";
+      return "The sms token was rejected — paste a working one below, or turn Open reads on in Settings.";
+    }
+    if(res.code===429){inboxAt=Date.now()+20000;return "Rate limit hit — the phone only serves a few private reads a minute. This list is still the last one it sent; Refresh works again in ~20s.";}
+    return "Couldn't read that right now — "+((res.j&&res.j.error)||("HTTP "+res.code))+".";
+  }
+  function fmtWhen(ms){
+    var n=+ms; if(!n)return "";
+    var d=new Date(n<1e12?n*1000:n), hm=("0"+d.getHours()).slice(-2)+":"+("0"+d.getMinutes()).slice(-2);
+    return d.toDateString()===new Date().toDateString()?hm:(d.getDate()+"/"+(d.getMonth()+1)+" "+hm);
+  }
+  // com.google.android.apps.messaging -> "messaging": the package tail is the
+  // only app name available without querying the package manager.
+  function appLabel(p){var s=String(p||"").split(".");return s[s.length-1]||"app";}
+
+  var inboxAt=0, inboxBtn=document.getElementById("inboxBtn"), inboxPending=0;
+  // Refresh has to say something happened even when the two lists come back
+  // identical — otherwise a tap reads as a dead button.
+  function inboxBusy(on){
+    inboxPending+=on?1:-1;
+    var busy=inboxPending>0;
+    inboxBtn.disabled=busy;
+    inboxBtn.textContent=busy?"Refreshing…":"Refresh";
+  }
+  function loadInbox(force){
+    var now=Date.now();
+    // sms_per_min is deliberately small (3 by default) and one load spends two
+    // of it — don't burn the budget on tab-hopping.
+    // inboxAt sits in the future after a 429, which holds off the forced path too.
+    if(now<inboxAt)return;
+    if(!force&&now-inboxAt<20000)return;
+    if(inboxPending>0)return;
+    inboxAt=now;
+    var smsBox=document.getElementById("smsList"), ntBox=document.getElementById("notifList"), ntN=document.getElementById("notifN");
+    inboxBusy(true); inboxBusy(true);
+
+    getPrivate("/v1/sms/recent?limit=10").then(function(res){
+      if(!res.ok)return failInto(smsBox,"smsNote",privateErr(res));
+      if(res.j.available===false)return failInto(smsBox,"smsNote","No inbox access yet — the daemon needs READ_SMS granted, then refresh.");
+      note("smsNote","");
+      var ms=res.j.messages||[];
+      if(!ms.length)return bubble(smsBox,"No messages yet. New ones show up here in full.");
+      var h="";
+      ms.forEach(function(m){
+        h+='<details class="msg"><summary><div class="msghead"><span class="msgfrom">'+esc(m.address||"unknown")+'</span>'
+          +'<span class="msgwhen">'+esc(fmtWhen(m.date))+'</span><span class="msgmore">'+ICN_CHEVRON+'</span></div>'
+          +'<div class="msgbody">'+esc(m.body)+'</div></summary></details>';
+      });
+      if(setListHTML(smsBox,h))markExpandable(smsBox);
+    }).catch(function(){failInto(smsBox,"smsNote","Couldn't reach the daemon.");}).then(function(){inboxBusy(false);});
+
+    getPrivate("/v1/notifications/recent?limit=12").then(function(res){
+      if(!res.ok)return failInto(ntBox,"notifNote",privateErr(res));
+      if(res.j.available===false)return failInto(ntBox,"notifNote","Notifications need root — the daemon couldn't read the shade.");
+      note("notifNote","");
+      var ns=res.j.notifications||[];
+      ntN.textContent=ns.length?(ns.length+" active"):"none";
+      if(!ns.length)return bubble(ntBox,"Nothing on the shade right now.");
+      var h="";
+      ns.forEach(function(n){
+        h+='<details class="msg"><summary><div class="msghead"><span class="msgfrom">'+esc(n.title||appLabel(n.pkg))+'</span>'
+          +'<span class="msgwhen">'+esc(fmtWhen(n.when))+'</span><span class="msgmore">'+ICN_CHEVRON+'</span></div>'
+          +(n.text?'<div class="msgbody">'+esc(n.text)+'</div>':"")
+          +'<div class="msgapp">'+esc(appLabel(n.pkg))+'</div></summary></details>';
+      });
+      if(setListHTML(ntBox,h))markExpandable(ntBox);
+    }).catch(function(){failInto(ntBox,"notifNote","Couldn't reach the daemon.");}).then(function(){inboxBusy(false);});
+  }
+
   // --- Open reads toggle (radio-control).
   var orMsg=document.getElementById("orMsg");
   function setOpenReads(open){
@@ -1126,7 +1308,7 @@ const dashboardHTML = `<!DOCTYPE html>
     orMsg.textContent="applying…";
     post("/v1/dashboard/open",{open:open},rt).then(function(res){
       if(!res.ok){orMsg.textContent="Error: "+(res.j.error||"failed")+(res.j.code===403?" (needs radio-control token)":"");return;}
-      orMsg.textContent=res.j.open_reads?"Open reads ON — any tailnet device can view without a token (read-only).":"Open reads OFF — a token or the QR is required.";
+      orMsg.textContent=res.j.open_reads?"Open reads ON — any tailnet device can view without a token, inbox included (read-only).":"Open reads OFF — a token or the QR is required.";
       renderOpenReads(res.j.open_reads);
     }).catch(function(e){orMsg.textContent="Error: "+e.message;});
   }
@@ -1146,7 +1328,7 @@ const dashboardHTML = `<!DOCTYPE html>
     ocMsg.textContent="applying…";
     post("/v1/dashboard/control",{open:open},rt).then(function(res){
       if(!res.ok){ocMsg.textContent="Error: "+(res.j.error||"failed")+(res.j.code===403?" (needs radio-control token)":"");return;}
-      ocMsg.textContent=res.j.open_control?"Open control ON — writes on your tailnet need no token. SMS still does.":"Open control OFF — writes require the radio-control token.";
+      ocMsg.textContent=res.j.open_control?"Open control ON — writes on your tailnet need no token.":"Open control OFF — writes require the radio-control token.";
       renderOpenControl(res.j.open_control);
     }).catch(function(e){ocMsg.textContent="Error: "+e.message;});
   }
