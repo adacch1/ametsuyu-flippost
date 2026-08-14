@@ -507,9 +507,12 @@ const dashboardHTML = `<!DOCTYPE html>
 
   /* §2.2 navbar anatomy applied to a bottom-docked bar: gradient fill,
      radius 20 (NOT a full pill), navbar shadow, one selected pill at a time. */
-  nav{flex:none;width:calc(100% - var(--space-xl));max-width:696px;margin:0 auto calc(var(--space-md) + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--gradient-surface);box-shadow:var(--shadow-nav);border-radius:var(--radius-nav);display:flex;align-items:center;padding:var(--space-sm)}
-  nav .tab{flex:1;background:none;border:0;cursor:pointer;color:var(--text-2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-xs);font-size:10px;font-weight:600;border-radius:var(--radius-pill);height:100%;transition:color .14s var(--pop),box-shadow .14s var(--pop)}
-  nav .tab svg{width:20px;height:20px;color:currentColor}
+  nav{flex:none;width:calc(100% - var(--space-xl));max-width:696px;margin:0 auto calc(var(--space-md) + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--gradient-surface);box-shadow:var(--shadow-nav);border-radius:var(--radius-nav);display:flex;align-items:center;justify-content:space-between;padding:var(--space-sm) var(--space-md);gap:var(--space-xs)}
+  /* §1.4: the pill hugs its own label. With seven tabs an equal-width 1fr cell
+     made the selected pill far wider than its text — the tabs share the leftover
+     space as gaps instead, so every pill matches the word inside it. */
+  nav .tab{flex:0 1 auto;min-width:0;background:none;border:0;cursor:pointer;color:var(--text-2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-xs);font-size:10px;font-weight:600;border-radius:var(--radius-pill);height:100%;padding:0 var(--space-md);transition:color .14s var(--pop),box-shadow .14s var(--pop)}
+  nav .tab svg{width:18px;height:18px;color:currentColor}
   /* §0.5 selected = surface gradient + raised bevel. Never a darker fill,
      never a coloured circle behind the icon. */
   nav .tab.active{color:var(--text);background:var(--gradient-surface);box-shadow:var(--bevel)}
@@ -529,6 +532,12 @@ const dashboardHTML = `<!DOCTYPE html>
   }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
+  }
+  /* Narrow screens (cover screen, small phones): there is no room left to share,
+     so tabs go back to equal cells — the pill hugs its label anyway at that size. */
+  @media (max-width:480px){
+    nav{padding:var(--space-sm);gap:0}
+    nav .tab{flex:1;padding:0}
   }
   /* Cover screen (~352x308): trim chrome so each tab is at most a short scroll */
   @media (max-height:420px){
