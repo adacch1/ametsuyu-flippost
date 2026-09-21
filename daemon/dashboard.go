@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -13,21 +14,72 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.usage.Report())
 }
 
-// handleDashboard serves the admin dashboard HTML for exactly "/" and
-// "/dashboard"; every other unmatched path is a 404 (ServeMux routes them here).
-func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" && r.URL.Path != "/dashboard" {
-		writeErr(w, http.StatusNotFound, "not found")
+// handleUsageQuota edits the data-cap limit and/or reset schedule. Body
+// fields are pointers so an omitted one keeps its current value. Persist
+// happens FIRST (same pattern as handleCoverAccent): a write that can't reach
+// disk must not take effect in memory either, or a restart would silently
+// revert it.
+func (s *Server) handleUsageQuota(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		LimitBytes *int64  `json:"limit_bytes"`
+		Period     *string `json:"period"`
+		ResetTime  *string `json:"reset_time"`
+		ResetDay   *int    `json:"reset_day"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
 		return
 	}
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	q := s.cfg.Quota
+	if body.LimitBytes != nil {
+		q.LimitBytes = *body.LimitBytes
+	}
+	if body.Period != nil {
+		q.Period = *body.Period
+	}
+	if body.ResetTime != nil {
+		q.ResetTime = *body.ResetTime
+	}
+	if body.ResetDay != nil {
+		q.ResetDay = *body.ResetDay
+	}
+	q, err := normalizeQuota(q)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if s.cfgPath != "" {
+		if err := persistQuota(s.cfgPath, q); err != nil {
+			writeErr(w, http.StatusInternalServerError, "persist failed: "+err.Error())
+			return
+		}
+	}
+	s.cfg.Quota = q
+	s.usage.SetQuota(q)
+	writeJSON(w, http.StatusOK, s.usage.Report())
+}
+
+// handleUsageReset zeroes the period meter right now (manual "Reset data
+// usage"). today/week/month buckets are untouched.
+func (s *Server) handleUsageReset(w http.ResponseWriter, r *http.Request) {
+	log.Printf("audit: usage period reset via API")
+	s.usage.Reset()
+	writeJSON(w, http.StatusOK, s.usage.Report())
+}
+
+// handleDashboard serves the full control panel at "/dashboard". The cover
+// screen sits at "/" (handleCover), which is also the 404 catch-all.
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// Never cache the HTML: the WebView/browser otherwise serves a stale page
 	// after a daemon update (e.g. a new card wouldn't appear until cache expiry).
 	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(s.dashboardHTMLWithTokens()))
+	_, _ = w.Write([]byte(s.htmlWithTokens(dashboardHTML)))
 }
 
-// dashboardHTMLWithTokens embeds the daemon's own read-status/radio-control
+// htmlWithTokens embeds the daemon's own read-status/radio-control
 // tokens straight into the served page when open_reads/open_control are on,
 // so a hardwired/public install never needs manual token entry on any access
 // path (kiosk, tailnet browser, ...). Each token is embedded ONLY when its
@@ -36,7 +88,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 // The sms token rides open-reads too (owner's call on this donor phone): the
 // Inbox is meant to work with no token anywhere, and guard() opens the same
 // scope for tokenless reads. Content stays redacted and pull-only.
-func (s *Server) dashboardHTMLWithTokens() string {
+func (s *Server) htmlWithTokens(html string) string {
 	var js strings.Builder
 	if s.openReads.Load() && isHexToken(s.cfg.Tokens["read-status"]) {
 		js.WriteString(`localStorage.setItem("zf5tok","` + s.cfg.Tokens["read-status"] + `");`)
@@ -51,7 +103,7 @@ func (s *Server) dashboardHTMLWithTokens() string {
 	if js.Len() > 0 {
 		snippet = "<script>try{" + js.String() + "}catch(e){}</script>"
 	}
-	return strings.Replace(dashboardHTML, "<!--EMBEDDED_TOKENS-->", snippet, 1)
+	return strings.Replace(html, "<!--EMBEDDED_TOKENS-->", snippet, 1)
 }
 
 // isHexToken guards the string-concat embed above: config.json is root-only
@@ -78,7 +130,7 @@ func (s *Server) handleQR(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-Forwarded-Proto") == "https" || strings.Contains(host, ".ts.net") {
 		scheme = "https"
 	}
-	url := scheme + "://" + host + "/?token=" + s.cfg.Tokens["read-status"]
+	url := scheme + "://" + host + "/dashboard?token=" + s.cfg.Tokens["read-status"]
 	png, err := qrcode.Encode(url, qrcode.Medium, 480)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "qr encode failed")
@@ -133,27 +185,14 @@ func (s *Server) handleDashboardControl(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"open_control": body.Open})
 }
 
-// handleIcon serves the home-screen app icon (a maskable signal glyph on the
-// app's dark ground). SVG scales to any size iOS/Android asks for.
-func (s *Server) handleIcon(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "image/svg+xml")
-	_, _ = w.Write([]byte(appIconSVG))
-}
+//go:embed logo.png
+var flippostLogoPNG []byte
 
-// The product mark carries the brand green->teal gradient (DESIGN.md 1.3/2.2)
-// on --surface-base. The brand pair is reserved for the mark and success
-// states; it is never used as a general-purpose accent.
-const appIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-<defs><linearGradient id="brand" x1="0" y1="0" x2="0" y2="1">
-<stop offset="0%" stop-color="#76d788"/><stop offset="100%" stop-color="#00d0b8"/>
-</linearGradient></defs>
-<rect width="512" height="512" rx="112" fill="#1e1e1e"/>
-<g transform="translate(150 300)">
-<rect x="0" y="-40" width="34" height="40" rx="6" fill="url(#brand)"/>
-<rect x="58" y="-80" width="34" height="80" rx="6" fill="url(#brand)"/>
-<rect x="116" y="-128" width="34" height="128" rx="6" fill="url(#brand)"/>
-<rect x="174" y="-184" width="34" height="184" rx="6" fill="url(#brand)"/>
-</g></svg>`
+// handleIcon serves the approved Flippost logo as the app's home-screen icon.
+func (s *Server) handleIcon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/png")
+	_, _ = w.Write(flippostLogoPNG)
+}
 
 // handleManifest serves the PWA manifest so the dashboard installs as an app.
 func (s *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
@@ -169,17 +208,17 @@ func (s *Server) handleServiceWorker(w http.ResponseWriter, r *http.Request) {
 }
 
 const webManifest = `{
-  "name": "Z Flip 5 Modem",
-  "short_name": "ZF5 Modem",
-  "description": "Admin dashboard for the Z Flip 5 modem",
-  "start_url": "/",
+  "name": "Ametsuyu Flippost",
+  "short_name": "Flippost",
+  "description": "Cover-screen widget deck for the Z Flip 5 modem",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#1e1e1e",
-  "theme_color": "#1e1e1e",
+  "background_color": "#07090d",
+  "theme_color": "#07090d",
   "icons": [
-    {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+    {"src": "/logo.png", "sizes": "1254x1254", "type": "image/png", "purpose": "any maskable"}
   ]
 }`
 
@@ -194,50 +233,65 @@ self.addEventListener('activate',function(e){e.waitUntil((async function(){
   try{var cs=await self.clients.matchAll({type:'window'});cs.forEach(function(c){c.navigate(c.url);});}catch(err){}
 })());});`
 
-// dashboardHTML is the Claude Design-built dashboard, integrated into the daemon
-// (fonts dropped for the single-file self-contained build; the system font stack
-// is the fallback). Restructured for the Z Flip 5 cover screen (~352×308 CSS px
-// usable): five focused tabs instead of one long scroll, a global slim header
-// with the NSA-aware tech indicator, ≥44px touch targets, and per-tab polling so
-// a small screen never pays for data it isn't showing. Also the owner controls:
-// thermal-gate adjust and the hotspot SSID-whitelist editor (radio-control
-// token, stored locally, server-clamped/validated).
+// dashboardHTML is the control panel served at "/dashboard": a self-contained
+// dark instrument page built on DESIGN.md ("The Instrument Panel"). One teal
+// accent plus a strict semantic status set (green/amber/red; violet is the CPU
+// lane only); flat tonal depth — three surface tones and hairline borders, no
+// gradients, bevels or shadows; the loudest type on any screen is always a
+// datum, never chrome. System font stack only: no webfont, no CDN, nothing to
+// fetch before first paint. Structured for the Z Flip 5 cover screen (~352×308
+// CSS px usable): seven focused swipe pages + a bottom tab bar, ≥44px touch
+// targets, and per-endpoint poll cadence so a small screen never pays for data
+// it isn't showing. The owner controls: thermal-gate adjust, SSID-whitelist
+// editor, quota, presets, the Inbox, and the admin-gated bench/CPU/danger
+// cards. The :root token block is shared verbatim with coverHTML —
+// TestCoverTokensMatchDashboard exists to keep the two from drifting.
 const dashboardHTML = `<!DOCTYPE html>
-<html lang="en" data-accent="home">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Z Flip 5 Modem</title>
+<title>Ametsuyu Flippost</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#1e1e1e">
-<link rel="apple-touch-icon" href="/icon.svg">
-<link rel="icon" href="/icon.svg">
+<meta name="theme-color" content="#0b0d10">
+<link rel="apple-touch-icon" href="/logo.png">
+<link rel="icon" href="/logo.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ZF5 Modem">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-  /* AnimalCrossing v2.0 — values from DESIGN.md §1, measured off cocoon-shell.com.
-     Surfaces are 180deg gradients; the ONLY flat colour is --surface-base on body.
-     No backdrop layer, no texture, no pattern (hard rule 2). */
+  /* "Midnight glass" — a modern dark instrument skin. The :root block below is
+     the shared design-token vocabulary — coverHTML carries the same names and
+     values, so a token can never mean one thing here and another on the cover
+     screen. Depth = layered translucency + blur + soft shadows; one gradient
+     accent (teal→emerald) carries interactive state, green/amber/red are
+     reserved for live status, violet is the CPU lane. */
   :root{
-    /* §1.1 surfaces */
-    --surface-base:#1e1e1e;
-    --gradient-surface:linear-gradient(180deg,#3a3a3a 0%,#2a2a2a 100%);
-    --gradient-dark:linear-gradient(180deg,#565e69 0%,#3a3c3f 100%);
+    /* surfaces: translucent glass over a near-black aurora ground */
+    --ground:#07090d;
+    --surface:rgba(255,255,255,.045);
+    --surface-inset:rgba(5,8,12,.55);
+    --line:rgba(255,255,255,.09);
+    --line-soft:rgba(255,255,255,.055);
 
-    /* §1.2 text — one colour, four opacities */
-    --silver:#fafafa;
-    --color-body:#212121;   /* DESIGN.md 1.2 — text on LIGHT surfaces (accent fills) */
-    --text:rgba(250,250,250,1);
-    --text-2:rgba(250,250,250,.8);
-    --text-3:rgba(250,250,250,.7);
-    --text-4:rgba(250,250,250,.6);
+    /* ink: three levels */
+    --ink:#f2f5f9;
+    --ink-2:#a8b3c2;
+    --ink-3:#8a94a3;
 
-    /* §1.3 the seven named accents */
+    /* the accent pair + the semantic status set + the CPU lane */
+    --teal:#2dd4bf;
+    --teal-2:#34d399;
+    --green:#4ade80;
+    --amber:#fbbf24;
+    --red:#fb7185;
+    --violet:#8a7dff;
+    --track:rgba(255,255,255,.08); /* unfilled rings and bars */
+    --on-teal:#04211f;             /* label colour on the accent fill */
+    --accent-grad:linear-gradient(135deg,var(--teal) 0%,var(--teal-2) 100%);
+
+    /* the cover screen's seven owner-picked accents (Settings swatches) */
     --dawn-start:#FFC2A2;      --dawn-end:#FF8820;
     --sunflower-start:#FED6AD; --sunflower-end:#F3B817;
     --coral-start:#F890B6;     --coral-end:#FF5757;
@@ -245,310 +299,293 @@ const dashboardHTML = `<!DOCTYPE html>
     --ocean-start:#8389FA;     --ocean-end:#3140E4;
     --wisteria-start:#86A7FD;  --wisteria-end:#8037FF;
     --slate-start:#848C98;     --slate-end:#565E69;
-    /* brand green->teal: product mark and success states only, never a general accent */
-    --brand-start:#76d788;     --brand-end:#00d0b8;
 
-    /* bound accent — rebound per screen below; nothing hardcodes an accent hex */
-    --color-primary-start:#F8D090; --color-primary-end:#FF9D57;
-    --gradient-primary:linear-gradient(180deg,var(--color-primary-start) 0%,var(--color-primary-end) 100%);
-    /* what an accent-filled control uses; --on-primary is its label colour */
-    --primary-fill:var(--gradient-primary); --on-primary:#212121;
-
-    /* §1.5 space 4/8/12/16/32/64 — the scale skips 24 and 48 */
+    /* metrics: 4/8/12/16/32/64 (the scale skips 24 and 48) */
     --space-xs:4px; --space-sm:8px; --space-md:12px; --space-lg:16px; --space-xl:32px; --space-2xl:64px;
-    --radius-sm:8px; --radius-md:16px; --radius-lg:32px; --radius-pill:999px;
-    --radius-nav:20px; --radius-btn:14px;
+    --radius-sm:10px; --radius-md:18px; --radius-lg:28px; --radius-pill:999px;
+    --radius-nav:22px; --radius-btn:14px;
+    --tabbar-h:58px;
 
-    --shadow-card:0 1px 1px rgba(33,33,33,.26),0 2px 5px rgba(33,33,33,.2);
-    --shadow-nav:0 2px 2px rgba(33,33,33,.26),0 3px 7px rgba(33,33,33,.1);
-    --shadow-inset:inset 0 -1px 3px rgba(33,33,33,.25),inset 0 1px 3px rgba(255,255,255,.5);
-    /* the signature bevel: light on the top edge, dark on the bottom */
-    --bevel:inset 0 1px 2px rgba(250,250,250,.2),inset 0 -1px 2px rgba(33,33,33,.5);
-    --focus-ring:0 0 0 3px rgba(255,157,87,.55);
-    --well:rgba(33,33,33,.45);      /* (derived) --color-body at .45 — inset wells */
-    --hairline:rgba(250,250,250,.08); /* (derived) --color-silver-100 at .08 — row rules */
-    --silver-35:rgba(250,250,250,.35); /* (derived) --color-silver-100 at .35 — inactive marks */
+    /* one sans doing every job — roles separate by weight and size */
+    --font-display:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-body:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 
-    --font-display:"Be Vietnam Pro",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    --font-body:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-
-    --pop:cubic-bezier(0.34,1.56,0.64,1);
     --smooth:cubic-bezier(0.4,0,0.2,1);
-    --tabbar-h:60px;
+    --pop:cubic-bezier(0.34,1.56,0.64,1);
   }
 
-  /* §1.3 one accent per app section, bound once. Swapping any of these
-     recolours the whole screen with no other edit. */
-  [data-accent="home"]      {--color-primary-start:var(--breeze-start);   --color-primary-end:var(--breeze-end)}
-  [data-accent="net"]       {--color-primary-start:var(--ocean-start);    --color-primary-end:var(--ocean-end)}
-  /* ocean clears AA with neither #fafafa nor #212121 at 14px, so accent-filled
-     controls fall back to the surface treatment on this screen. */
-  [data-accent="net"]{--primary-fill:var(--gradient-surface);--on-primary:var(--text)}
-  [data-accent="clientsScr"]{--color-primary-start:var(--wisteria-start); --color-primary-end:var(--wisteria-end)}
-  /* wisteria clears AA with neither #fafafa nor #212121 at 14px, so accent-filled
-     controls fall back to the surface treatment on this screen. */
-  [data-accent="clientsScr"]{--primary-fill:var(--gradient-surface);--on-primary:var(--text)}
-  /* inbox re-uses dawn rather than the one free accent (coral): coral is this
-     dashboard's hot/failed status hue, and a screen painted in it would drain
-     the meaning from the header dot that is visible on every screen. */
-  [data-accent="inbox"]     {--color-primary-start:var(--dawn-start);     --color-primary-end:var(--dawn-end)}
-  [data-accent="system"]    {--color-primary-start:var(--sunflower-start);--color-primary-end:var(--sunflower-end)}
-  [data-accent="presets"]   {--color-primary-start:var(--dawn-start);     --color-primary-end:var(--dawn-end)}
-  [data-accent="settings"]  {--color-primary-start:var(--slate-start);    --color-primary-end:var(--slate-end)}
-  /* slate clears AA with neither #fafafa nor #212121 at 14px, so accent-filled
-     controls fall back to the surface treatment on this screen. */
-  [data-accent="settings"]{--primary-fill:var(--gradient-surface);--on-primary:var(--text)}
-  :root[data-accent]{--focus-ring:0 0 0 3px color-mix(in srgb,var(--color-primary-end) 55%,transparent)}
-
-  @keyframes acPop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}
-  @keyframes acPulse{0%,100%{opacity:.5}50%{opacity:.8}}
+  @keyframes acPop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)}}
+  @keyframes acPulse{0%,100%{opacity:.45}50%{opacity:.75}}
   *{box-sizing:border-box;margin:0;padding:0}
   button{border:0;background:none;color:inherit;font:inherit;cursor:pointer;-webkit-appearance:none;appearance:none;-webkit-tap-highlight-color:transparent}
   html,body{height:100%}
   body{
-    background:var(--surface-base); color:var(--text);
-    font-family:var(--font-body);
+    background:var(--ground); color:var(--ink);
+    font-family:var(--font-body); font-size:13.5px;
     -webkit-font-smoothing:antialiased; line-height:1.4; letter-spacing:normal;
     display:flex; flex-direction:column;
   }
-  /* §1.4 every column of numbers is tabular */
-  .num,.mono{font-variant-numeric:tabular-nums}
-  .mono{font-family:var(--font-body)}
+  /* the aurora: two fixed colour washes the glass cards blur over. Purely
+     ambient — nothing interactive sits on it. */
+  body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:
+    radial-gradient(60% 46% at 14% -4%,rgba(45,212,191,.11),transparent 62%),
+    radial-gradient(52% 40% at 88% 4%,rgba(138,125,255,.09),transparent 62%),
+    radial-gradient(70% 34% at 50% 108%,rgba(52,211,153,.06),transparent 64%)}
+  /* every column of numbers is tabular, so digits don't jitter as values tick */
+  .num{font-variant-numeric:tabular-nums}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 
-  /* The scroll area ends right above the floating bar, so its last row used to
-     be guillotined mid-card. Fade the final 32px out and pad the same amount
-     below the content, so anything cut off reads as "scrolls further", not
-     "broken". */
-  .app{max-width:720px;width:100%;margin:0 auto;padding:0 var(--space-md) var(--space-xl);flex:1 1 auto;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none;
-    -webkit-mask-image:linear-gradient(180deg,#212121 calc(100% - var(--space-xl)),transparent 100%);
-    mask-image:linear-gradient(180deg,#212121 calc(100% - var(--space-xl)),transparent 100%)}
-  .app::-webkit-scrollbar{display:none}
-  .screen{display:none}
-  .screen.active{display:block;animation:acPop .24s var(--pop)}
+  /* App shell: quiet header, a horizontal snap deck of screens, a bottom tab
+     bar. The deck swipes page to page the way a cover widget carousel does;
+     the nav bar is still the tablist. */
+  .app{max-width:720px;width:100%;margin:0 auto;flex:1 1 auto;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+  .app>.errslot{margin-left:var(--space-md);margin-right:var(--space-md)}
+  main{flex:1 1 auto;min-height:0;display:flex;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none;-ms-overflow-style:none}
+  main::-webkit-scrollbar{display:none}
+  /* Each page scrolls vertically on its own; the final 32px fade away so a cut
+     row reads as "scrolls further", not "broken". */
+  .screen{flex:0 0 100%;scroll-snap-align:start;scroll-snap-stop:always;overflow-y:auto;padding:0 var(--space-md) var(--space-xl);scrollbar-width:none;-ms-overflow-style:none;
+    -webkit-mask-image:linear-gradient(180deg,#000 calc(100% - var(--space-xl)),transparent 100%);
+    mask-image:linear-gradient(180deg,#000 calc(100% - var(--space-xl)),transparent 100%)}
+  .screen::-webkit-scrollbar{display:none}
 
-  /* Header reads as a raised surface, not a blur panel — depth is lighting. */
-  header{position:sticky;top:0;z-index:5;margin:0 calc(var(--space-md) * -1) var(--space-lg);padding:var(--space-md);border-radius:0 0 var(--radius-nav) var(--radius-nav);display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);background:var(--gradient-surface);box-shadow:var(--shadow-nav)}
-  .sigind{display:flex;align-items:center;gap:var(--space-sm)}
-  .bars{display:inline-flex;align-items:flex-end;gap:var(--space-xs);height:18px}
-  .bars>i{width:4px;background:var(--silver-35);border-radius:1px}
+  /* Header: quiet glass chrome — it carries the live reading (signal + tech +
+     WAN IP) and the thermal-policy badge, and nothing else. */
+  header{flex:none;display:flex;align-items:center;justify-content:space-between;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);background:color-mix(in srgb,var(--ground) 55%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--line-soft)}
+  .sigind{display:flex;align-items:center;gap:var(--space-sm);min-width:0}
+  .bars{display:inline-flex;align-items:flex-end;gap:3px;height:18px;flex:none}
+  .bars>i{width:4px;background:var(--track);border-radius:1px}
   .bars>i:nth-child(1){height:6px}.bars>i:nth-child(2){height:10px}.bars>i:nth-child(3){height:14px}.bars>i:nth-child(4){height:18px}
-  .bars.g>i.on{background:var(--brand-end)}.bars.a>i.on{background:var(--sunflower-end)}.bars.r>i.on{background:var(--coral-end)}
-  .sigind .lab{font-family:var(--font-display);font-size:14px;font-weight:700}
-  .sigind .op{font-size:12px;color:var(--text-4);font-weight:400}
-  .netbadge{display:flex;align-items:center;gap:var(--space-sm);background:var(--gradient-surface);box-shadow:var(--shadow-card);border-radius:var(--radius-pill);padding:var(--space-xs) var(--space-md);font-size:12px;font-weight:700}
-  .dot{width:8px;height:8px;border-radius:50%;flex:none}
-  .dot.green{background:var(--brand-end)}.dot.amber{background:var(--sunflower-end)}.dot.red{background:var(--coral-end)}.dot.off{background:var(--silver-35)}
+  .bars.g>i.on{background:var(--teal)}.bars.a>i.on{background:var(--amber)}.bars.r>i.on{background:var(--red)}
+  .sigind .lab{font-family:var(--font-display);font-size:15px;font-weight:700;letter-spacing:-.01em}
+  .sigind .op{font-size:11px;color:var(--ink-3)}
+  .clockcard{padding:var(--space-md)}
+  .clocktime{font-family:var(--font-display);font-size:clamp(30px,9vw,40px);font-weight:700;line-height:1.05;letter-spacing:-.02em;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .clockdate{margin-top:var(--space-xs);font-size:12.5px;font-weight:600;color:var(--ink-2)}
+  .clocklunar{margin-top:2px;font-size:11.5px;color:var(--ink-3)}
+  .hdrbtn{flex:none;width:34px;height:34px;display:grid;place-items:center;border-radius:var(--radius-sm);background:var(--surface-inset);border:1px solid var(--line);color:var(--ink-3)}
+  .hdrbtn svg{width:16px;height:16px}
+  .netbadge{display:flex;align-items:center;gap:var(--space-sm);background:var(--surface-inset);border:1px solid var(--line);border-radius:var(--radius-pill);padding:var(--space-xs) var(--space-md);font-size:12px;font-weight:700}
+  .dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--track)}
+  .dot.green{background:var(--green);box-shadow:0 0 10px color-mix(in srgb,var(--green) 55%,transparent)}
+  .dot.amber{background:var(--amber);box-shadow:0 0 10px color-mix(in srgb,var(--amber) 55%,transparent)}
+  .dot.red{background:var(--red);box-shadow:0 0 10px color-mix(in srgb,var(--red) 55%,transparent)}
 
-  /* §1.2 Card */
-  .card{background:var(--gradient-surface);box-shadow:var(--shadow-card);border-radius:var(--radius-md);padding:var(--space-lg)}
-  .card+.card,.grid+.card,.card+.grid,.duo+.card,.duo+.grid{margin-top:var(--space-lg)}
+  /* Card: frosted glass — translucent surface, hairline border, a soft drop
+     shadow and a 1px top inner highlight so light reads as coming from above. */
+  .card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-lg);box-shadow:0 10px 30px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  .card+.card,.grid+.card,.card+.grid,.duo+.card,.duo+.grid{margin-top:var(--space-md)}
   .duo>.card{margin-top:0}
   .hero{display:flex;flex-direction:column;align-items:center;padding:var(--space-lg)}
   .ring-wrap{position:relative;width:min(44vw,180px);aspect-ratio:1}
   .ring-wrap svg{width:100%;height:100%;transform:rotate(-90deg)}
   .ring-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-xs);text-align:center}
-  .ring-pct{font-family:var(--font-display);font-size:clamp(34px,11vw,46px);font-weight:700;line-height:1}
-  .ring-pct span{font-size:.5em;font-weight:600;color:var(--text-2)}
-  .ring-sub{font-size:12px;color:var(--text-2);font-weight:400}
-  .ring-label{margin-top:var(--space-sm);font-size:12px;font-weight:600;color:var(--text-3)}
-  .ring-caption{margin-top:var(--space-xs);font-size:12px;color:var(--text-2)}
-  .ring-caption b{color:var(--text);font-weight:600}
+  .ring-pct{font-family:var(--font-display);font-size:clamp(34px,11vw,46px);font-weight:700;line-height:1;letter-spacing:-.03em}
+  .ring-pct span{font-size:.5em;font-weight:600;color:var(--ink-2)}
+  .ring-sub{font-size:12px;color:var(--ink-2);font-weight:400}
+  .ring-label{margin-top:var(--space-sm);font-size:11px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.07em}
+  .ring-caption{margin-top:var(--space-xs);font-size:12px;color:var(--ink-2)}
+  .ring-caption b{color:var(--ink);font-weight:600}
 
   .grid{display:grid;grid-template-columns:1fr;gap:var(--space-md)}
-  .duo{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);margin-top:var(--space-lg)}
-  .stat-head{display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:600;color:var(--text-3);margin-bottom:var(--space-md)}
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);margin-top:var(--space-md)}
+  .stat-head{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:var(--space-md)}
   .stat-head h2{font:inherit;margin:0;color:inherit;letter-spacing:inherit}
-  .stat-head .accent{width:8px;height:8px;border-radius:50%;background:var(--gradient-primary)}
-  .stat-val{font-family:var(--font-display);font-size:32px;font-weight:700;line-height:1}
-  .stat-val small{font-size:.5em;font-weight:600;color:var(--text-2)}
-  .stat-sub{margin-top:var(--space-xs);font-size:12px;color:var(--text-2)}
-  /* wells are inset, per §2.3 cocoon-surface--inset */
-  .bar{margin-top:var(--space-md);height:8px;border-radius:var(--radius-sm);background:var(--well);box-shadow:var(--shadow-inset);overflow:hidden}
-  /* scaleX, not width: width animation relayouts on every poll tick */
-  .bar>i{display:block;height:100%;width:100%;transform-origin:left center;background:var(--gradient-primary);transition:transform .4s var(--smooth)}
+  .stat-head .accent{width:8px;height:8px;border-radius:50%;background:var(--track)}
+  .stat-val{font-family:var(--font-display);font-size:30px;font-weight:700;line-height:1;letter-spacing:-.02em}
+  .stat-val small{font-size:.5em;font-weight:600;color:var(--ink-2)}
+  .stat-sub{margin-top:var(--space-xs);font-size:12px;color:var(--ink-2)}
+  /* meters animate transform, never layout */
+  .bar{margin-top:var(--space-md);height:8px;border-radius:4px;background:var(--track);overflow:hidden}
+  .bar>i{display:block;height:100%;width:100%;transform-origin:left center;background:var(--accent-grad);transition:transform .4s var(--smooth)}
 
   .cpu-head{display:flex;align-items:baseline;justify-content:space-between;gap:var(--space-sm);margin-bottom:var(--space-md)}
-  .cpu-load{font-family:var(--font-display);font-size:32px;font-weight:700;line-height:1}
-  .cpu-load small{font-size:.4em;font-weight:600;color:var(--text-2);margin-left:var(--space-xs)}
-  .cpu-meta{font-size:12px;color:var(--text-3);font-weight:600;text-align:right}
-  .cores{display:flex;align-items:flex-end;gap:var(--space-xs);height:64px}
+  .cpu-load{font-family:var(--font-display);font-size:30px;font-weight:700;line-height:1;letter-spacing:-.02em}
+  .cpu-load small{font-size:.4em;font-weight:600;color:var(--ink-2);margin-left:var(--space-xs)}
+  .cpu-meta{font-size:11px;font-weight:600;color:var(--ink-3);text-align:right}
+  .cores{display:flex;align-items:flex-end;gap:var(--space-xs);height:60px}
   .core{flex:1;display:flex;flex-direction:column;align-items:center;gap:var(--space-xs);height:100%;justify-content:flex-end}
-  .core .track{position:relative;width:100%;flex:1;background:var(--well);box-shadow:var(--shadow-inset);border-radius:var(--radius-sm);overflow:hidden;display:flex;align-items:flex-end}
-  .core .fill{width:100%;height:100%;transform-origin:bottom center;background:var(--gradient-primary);transition:transform .4s var(--smooth)}
-  .core .idx{font-size:12px;color:var(--text-4);font-weight:600}
-  .core.off{opacity:.6}
-  .core.off .fill{background:var(--silver-35)!important}
+  .core .track{position:relative;width:100%;flex:1;background:var(--track);border-radius:4px;overflow:hidden;display:flex;align-items:flex-end}
+  /* the CPU lane is the one place violet appears */
+  .core .fill{width:100%;height:100%;transform-origin:bottom center;background:linear-gradient(180deg,var(--violet),#6d5ae0);transition:transform .4s var(--smooth)}
+  .core .idx{font-size:11px;color:var(--ink-3);font-weight:600}
+  .core.off{opacity:.45}
+  .core.off .fill{background:var(--track)}
 
-  /* Instrument surface (AGENTS.md §6 precedent): signal readouts are numbers
-     acted on at density, so status colour is a correctness signal here. */
+  /* signal readouts are numbers acted on at density: status colour is a
+     correctness signal here */
   .sg{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-xs) var(--space-lg)}
   .sgrow{display:flex;justify-content:space-between;font-size:13px;padding:var(--space-xs) 0;font-variant-numeric:tabular-nums}
-  .sgrow span{color:var(--text-2)}
-  .sgrow b{font-weight:600}
-  .good{color:var(--brand-end)}.mid{color:var(--sunflower-end)}.low{color:var(--coral-end)}
+  .sgrow span{color:var(--ink-2)}
+  .sgrow b{font-weight:600;color:var(--ink)}
+  .good{color:var(--green)}.mid{color:var(--amber)}.low{color:var(--red)}
 
-  /* rows: no cell borders (§2.7); separation via a hairline of silver at low alpha */
-  details.cli{border-top:1px solid var(--hairline)}
+  /* rows: hairline rules, no cell borders */
+  details.cli{border-top:1px solid var(--line-soft)}
   details.cli:first-of-type{border-top:0}
   details.cli summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:var(--space-sm);font-size:13px;min-height:48px;padding:var(--space-xs) 0}
   details.cli summary::-webkit-details-marker{display:none}
-  details.cli summary .chev{margin-left:auto;color:var(--text-4);transition:transform .14s var(--pop)}
+  details.cli summary .chev{margin-left:auto;color:var(--ink-3);transition:transform .14s var(--smooth)}
   details.cli[open] summary .chev{transform:rotate(90deg)}
-  .clibody{font-size:12px;color:var(--text-2);margin:0 0 var(--space-md) var(--space-lg);display:grid;gap:var(--space-xs)}
+  .clibody{font-size:12px;color:var(--ink-2);margin:0 0 var(--space-md) var(--space-lg);display:grid;gap:var(--space-xs)}
   .clibody .r{display:flex;justify-content:space-between;gap:var(--space-md)}
-  .clibody .r b{color:var(--text);font-weight:600;word-break:break-all;text-align:right}
+  .clibody .r b{color:var(--ink);font-weight:600;word-break:break-all;text-align:right}
   .state-row{display:flex;align-items:center;justify-content:space-between;min-height:48px;padding:var(--space-xs) 0}
-  .state-row+.state-row{border-top:1px solid var(--hairline)}
-  .state-row .k{font-size:13px;color:var(--text-2);font-weight:400}
+  .state-row+.state-row{border-top:1px solid var(--line-soft)}
+  .state-row .k{font-size:13px;color:var(--ink-2)}
   .state-row .v{display:flex;align-items:center;gap:var(--space-sm);font-size:13px;font-weight:600;text-align:right}
 
-  /* §1.3 inputs: gradient surface + inset, radius-sm */
+  /* inputs: recessed into the card */
   .setgrid{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);margin-top:var(--space-sm)}
-  label.f{font-size:12px;color:var(--text-3);font-weight:600;display:block;margin-bottom:var(--space-xs)}
-  input,textarea,select{width:100%;background:var(--gradient-surface);border:0;border-radius:var(--radius-sm);color:var(--text);padding:var(--space-md) var(--space-lg);font-size:14px;font-family:var(--font-body);min-height:44px;box-shadow:var(--shadow-inset)}
+  label.f{font-size:10.5px;color:var(--ink-3);font-weight:600;display:block;margin-bottom:var(--space-xs);text-transform:uppercase;letter-spacing:.07em}
+  input,textarea,select{width:100%;background:var(--surface-inset);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--ink);padding:var(--space-md);font-size:14px;font-family:var(--font-body);min-height:44px}
   textarea{min-height:76px;resize:vertical;line-height:1.5}
-  select{padding-right:var(--space-xl);-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23fafafa' stroke-width='2.5' stroke-linecap='round' opacity='.7'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"),var(--gradient-surface);background-repeat:no-repeat,no-repeat;background-position:right var(--space-md) center,0 0}
+  select{padding-right:var(--space-xl);-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a8b3c2' stroke-width='2.5' stroke-linecap='round' opacity='.9'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"),linear-gradient(var(--surface-inset),var(--surface-inset));background-repeat:no-repeat;background-position:right var(--space-md) center,0 0}
   .settok{margin-top:var(--space-lg)}
 
-  /* §1.1 Buttons: radius 13-15, gradient fill, card shadow, no 3D lip */
-  .setbtn{margin-top:var(--space-md);width:100%;background:var(--primary-fill);color:var(--on-primary);border:0;border-radius:var(--radius-btn);padding:var(--space-md);font-size:14px;font-weight:700;font-family:var(--font-body);cursor:pointer;min-height:48px;box-shadow:var(--shadow-card);transition:transform .14s var(--pop),box-shadow .14s var(--pop)}
-  .setbtn:disabled{opacity:.6;cursor:default}
-  .setbtn:active:not(:disabled){box-shadow:var(--shadow-inset);transform:scale(0.97)}
-  /* 1.1: 'on' is a success action (brand pair); 'danger' is the coral variant,
-     reserved for the destructive direction of a toggle. */
-  .setbtn.on{background:linear-gradient(180deg,var(--brand-start) 0%,var(--brand-end) 100%);color:var(--color-body)}
-  .setbtn.danger{background:linear-gradient(180deg,var(--coral-start) 0%,var(--coral-end) 100%);color:var(--color-body)}
-  .setbtn.sec{background:var(--gradient-surface);color:var(--text);font-weight:600;box-shadow:var(--shadow-card)}
-  .minibtn{background:var(--gradient-surface);color:var(--text);border-radius:var(--radius-btn);padding:var(--space-sm) var(--space-md);font-size:12px;font-weight:600;font-family:var(--font-body);cursor:pointer;min-height:44px;box-shadow:var(--shadow-card);transition:transform .14s var(--pop),box-shadow .14s var(--pop)}
-  /* the affirmative half of a paired control gets the section accent, so a
-     field and a control are never the same object (audit P1) */
-  .minibtn.primary{background:var(--primary-fill);color:var(--on-primary)}
-  .minibtn:disabled{opacity:.6;cursor:default}
-  .minibtn:active:not(:disabled){transform:scale(0.97);box-shadow:var(--shadow-inset)}
+  /* buttons: one gradient commit per card; ghosts and minis around it. Fill IS
+     the state for on/off actions — the label says what a press does. */
+  .setbtn{margin-top:var(--space-md);width:100%;background:var(--accent-grad);color:var(--on-teal);border:0;border-radius:var(--radius-btn);padding:13px;font-size:14px;font-weight:700;font-family:var(--font-body);cursor:pointer;min-height:48px;box-shadow:0 6px 20px color-mix(in srgb,var(--teal) 28%,transparent);transition:transform .15s var(--pop),filter .15s var(--smooth),box-shadow .15s var(--smooth)}
+  .setbtn:disabled{opacity:.55;cursor:default}
+  .setbtn:active:not(:disabled){filter:brightness(1.1);transform:scale(.98)}
+  .setbtn.on{background:linear-gradient(135deg,#34d399,#10b981);color:#032015;box-shadow:0 6px 20px color-mix(in srgb,#34d399 28%,transparent)}
+  .setbtn.danger{background:linear-gradient(135deg,#fb7185,#f43f5e);color:#2b0409;box-shadow:0 6px 20px color-mix(in srgb,#f43f5e 26%,transparent)}
+  .setbtn.sec{background:var(--surface-inset);color:var(--teal);border:1px solid var(--line);font-weight:600;box-shadow:none}
+  .minibtn{background:var(--surface-inset);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius-sm);padding:var(--space-sm) var(--space-md);font-size:12.5px;font-weight:600;font-family:var(--font-body);cursor:pointer;min-height:44px;transition:border-color .15s var(--smooth),color .15s var(--smooth),transform .15s var(--pop)}
+  /* the affirmative half of a paired control carries the accent */
+  .minibtn.primary{background:var(--accent-grad);color:var(--on-teal);border-color:transparent;box-shadow:0 4px 14px color-mix(in srgb,var(--teal) 24%,transparent)}
+  .minibtn:disabled{opacity:.55;cursor:default}
+  .minibtn:active:not(:disabled){transform:scale(.97)}
 
   .spd{display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-sm);margin-bottom:var(--space-xs)}
   /* a well carved into the card, not another card stacked on it */
-  .spdcell{text-align:center;background:none;border-radius:var(--radius-sm);padding:var(--space-md) var(--space-sm);box-shadow:var(--shadow-inset)}
+  .spdcell{text-align:center;background:var(--surface-inset);border-radius:var(--radius-sm);padding:var(--space-md) var(--space-sm)}
   .spdv{font-family:var(--font-display);font-size:24px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;transition:color .2s var(--smooth)}
-  .spdv:not(.has-value){color:var(--text-4);font-size:20px}
-  .spdl{font-size:12px;color:var(--text-3);font-weight:600;margin-top:var(--space-xs)}
+  .spdv:not(.has-value){color:var(--ink-3);font-size:20px}
+  .spdl{font-size:11px;font-weight:600;color:var(--ink-3);margin-top:var(--space-xs);text-transform:uppercase;letter-spacing:.06em}
   .apbtns{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-md);margin-top:var(--space-md)}
   .apbtns .minibtn{min-height:44px}
 
-  .nrow{display:flex;align-items:center;gap:var(--space-md);width:100%;background:none;border:0;border-top:1px solid var(--hairline);padding:var(--space-md) 2px;min-height:48px;cursor:pointer;color:var(--text);font-family:var(--font-body);text-align:left;animation:acPop .24s var(--pop)}
+  .thChart{display:block;width:100%;height:90px;margin-top:var(--space-md);border-radius:var(--radius-sm);background:rgba(255,255,255,.03);border:1px solid var(--line-soft)}
+  .thChart polyline{stroke:var(--teal);stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round;filter:drop-shadow(0 0 4px color-mix(in srgb,var(--teal) 45%,transparent))}
+  .thChart line{stroke:var(--red);stroke-width:1;stroke-dasharray:4 4;vector-effect:non-scaling-stroke}
+
+  .nrow{display:flex;align-items:center;gap:var(--space-md);width:100%;border-top:1px solid var(--line-soft);padding:var(--space-md) 2px;min-height:48px;cursor:pointer;color:var(--ink);font-family:var(--font-body);text-align:left;animation:acPop .24s var(--smooth)}
   .nrow:first-child{border-top:0}
   .nname{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .nchip{flex:none;font-size:12px;font-weight:600;color:var(--text-4)}
-  .nrow.on .nchip{color:var(--color-primary-end)}
-  .nbars{display:inline-flex;align-items:flex-end;gap:var(--space-xs);height:16px;flex:none}
-  .nbars>i{width:3px;background:var(--silver-35);border-radius:1px}
+  .nchip{flex:none;font-size:12px;font-weight:600;color:var(--ink-3)}
+  .nrow.on .nchip{color:var(--teal)}
+  .nbars{display:inline-flex;align-items:flex-end;gap:3px;height:16px;flex:none}
+  .nbars>i{width:3px;background:var(--track);border-radius:1px}
   .nbars>i:nth-child(1){height:5px}.nbars>i:nth-child(2){height:8px}.nbars>i:nth-child(3){height:12px}.nbars>i:nth-child(4){height:16px}
-  .nbars.b1>i:nth-child(-n+1),.nbars.b2>i:nth-child(-n+2),.nbars.b3>i:nth-child(-n+3),.nbars.b4>i:nth-child(-n+4){background:var(--color-primary-end)}
+  .nbars.b1>i:nth-child(-n+1),.nbars.b2>i:nth-child(-n+2),.nbars.b3>i:nth-child(-n+3),.nbars.b4>i:nth-child(-n+4){background:var(--teal)}
 
-  /* inbox rows: a message is text to read, not a control — hairline rules only,
-     no bevel. Collapsed shows two lines; the whole row toggles the rest open
-     (native details/summary, so keyboard and screen readers get it for free). */
-  details.msg{border-top:1px solid var(--hairline);animation:acPop .24s var(--pop)}
+  /* inbox rows: a message is text to read, not a control — hairline rules only */
+  details.msg{border-top:1px solid var(--line-soft);animation:acPop .24s var(--smooth)}
   details.msg:first-of-type{border-top:0}
   details.msg summary{cursor:pointer;list-style:none;padding:var(--space-md) 0}
   details.msg summary::-webkit-details-marker{display:none}
   .msghead{display:flex;align-items:baseline;gap:var(--space-sm)}
   .msgfrom{flex:1;min-width:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .msgwhen{flex:none;font-size:12px;color:var(--text-4);font-variant-numeric:tabular-nums}
-  .msgbody{margin-top:var(--space-xs);font-size:13px;color:var(--text-2);line-height:1.45;overflow-wrap:anywhere;white-space:pre-wrap;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+  .msgwhen{flex:none;font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  .msgbody{margin-top:var(--space-xs);font-size:13px;color:var(--ink-2);line-height:1.45;overflow-wrap:anywhere;white-space:pre-wrap;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
   details.msg[open] .msgbody{-webkit-line-clamp:unset;overflow:visible}
-  .msgapp{margin-top:var(--space-xs);font-size:12px;color:var(--text-4)}
-  /* The chevron is only drawn on rows whose text is actually clipped (JS adds
-     .can after measuring), so it never promises more than the row holds. */
-  .msgmore{flex:none;display:none;color:var(--text-4);transition:transform .14s var(--pop)}
+  .msgapp{margin-top:var(--space-xs);font-size:12px;color:var(--ink-3)}
+  /* the chevron is only drawn on rows whose text is actually clipped */
+  .msgmore{flex:none;display:none;color:var(--ink-3);transition:transform .14s var(--smooth)}
   details.msg.can .msgmore{display:inline-flex}
   details.msg:not(.can) summary{cursor:default}
   details.msg[open] .msgmore{transform:rotate(90deg)}
-  /* §1.9 skeleton: matches the row it replaces, so nothing jumps on arrival */
-  .sk{height:12px;border-radius:var(--radius-sm);background:rgba(250,250,250,.06);animation:acPulse 1.2s var(--smooth) infinite}
-  .skrow{padding:var(--space-md) 0;border-top:1px solid var(--hairline)}
+  /* skeleton: matches the row it replaces, so nothing jumps on arrival */
+  .sk{height:12px;border-radius:var(--radius-sm);background:rgba(255,255,255,.07);animation:acPulse 1.2s var(--smooth) infinite}
+  .skrow{padding:var(--space-md) 0;border-top:1px solid var(--line-soft)}
   .skrow:first-child{border-top:0}
   .skrow .sk+.sk{margin-top:var(--space-sm)}
 
-  .wlhead{font-size:12px;font-weight:600;color:var(--text-3);margin:var(--space-lg) 0 var(--space-sm)}
-  .wlchip{display:flex;align-items:center;gap:var(--space-sm);background:var(--gradient-surface);box-shadow:var(--shadow-inset);border-radius:var(--radius-sm);padding:var(--space-xs) var(--space-xs) var(--space-xs) var(--space-md);margin-bottom:var(--space-sm);min-height:44px;animation:acPop .24s var(--pop)}
+  .wlhead{font-size:10.5px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.07em;margin:var(--space-lg) 0 var(--space-sm)}
+  .wlchip{display:flex;align-items:center;gap:var(--space-sm);background:var(--surface-inset);border:1px solid var(--line);border-radius:var(--radius-sm);padding:var(--space-xs) var(--space-xs) var(--space-xs) var(--space-md);margin-bottom:var(--space-sm);min-height:44px;animation:acPop .24s var(--smooth)}
   .wlname{flex:1;min-width:0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .wlx{flex:none;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--text-3);cursor:pointer;width:44px;height:44px;border-radius:var(--radius-sm);font-family:var(--font-body)}
-  .wlx:active,.wlx:focus-visible{color:var(--coral-end);outline:none}
+  .wlx{flex:none;display:flex;align-items:center;justify-content:center;background:none;border:0;color:var(--ink-3);cursor:pointer;width:44px;height:44px;border-radius:var(--radius-sm);font-family:var(--font-body)}
+  .wlx:active,.wlx:focus-visible{color:var(--red)}
 
-  .prow{display:flex;align-items:center;gap:var(--space-md);padding:var(--space-sm) 0;border-top:1px solid var(--hairline);animation:acPop .24s var(--pop)}
+  .prow{display:flex;align-items:center;gap:var(--space-md);padding:var(--space-sm) 0;border-top:1px solid var(--line-soft);animation:acPop .24s var(--smooth)}
   .prow:first-child{border-top:0}
-  .pmain{flex:1;min-width:0;background:none;border:0;text-align:left;color:var(--text);font-family:var(--font-body);cursor:pointer;padding:var(--space-xs) 0}
+  .pmain{flex:1;min-width:0;background:none;border:0;text-align:left;color:var(--ink);font-family:var(--font-body);cursor:pointer;padding:var(--space-xs) 0}
   .pname{font-size:14px;font-weight:600;display:flex;align-items:center;gap:var(--space-sm);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* §1.5 tag: accent at 16%, label is the accent end-stop */
-  .pname .tag{flex:none;font-size:12px;font-weight:700;color:var(--color-primary-end);background:color-mix(in srgb,var(--color-primary-end) 16%,transparent);border-radius:var(--radius-pill);padding:3px var(--space-md)}
-  .pmeta{font-size:12px;color:var(--text-4);margin-top:var(--space-xs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pname .tag{flex:none;font-size:11px;font-weight:700;color:var(--teal);background:color-mix(in srgb,var(--teal) 16%,transparent);border-radius:var(--radius-pill);padding:3px var(--space-md)}
+  .pmeta{font-size:12px;color:var(--ink-3);margin-top:var(--space-xs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .papply{flex:none}
   .pchips{display:flex;flex-wrap:wrap;gap:var(--space-sm);margin-top:var(--space-sm)}
-  .pchip{background:var(--gradient-surface);box-shadow:var(--shadow-card);color:var(--text-2);border-radius:var(--radius-pill);padding:var(--space-sm) var(--space-md);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--font-body);min-height:36px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:acPop .24s var(--pop)}
-  .pchip.added{color:var(--color-primary-end)}
+  .pchip{background:var(--surface-inset);border:1px solid var(--line);color:var(--ink-2);border-radius:var(--radius-pill);padding:var(--space-sm) var(--space-md);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font-body);min-height:36px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;animation:acPop .24s var(--smooth)}
+  .pchip.added{color:var(--teal);border-color:color-mix(in srgb,var(--teal) 35%,var(--line))}
 
-  .visually-hidden{/* -1px is the standard screen-reader clip idiom, not layout spacing */position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-  .setmsg{margin-top:var(--space-sm);font-size:12px;color:var(--text-2);min-height:14px}
-  .footer{margin-top:var(--space-lg);text-align:center;font-size:12px;color:var(--text-4);font-weight:400}
-  /* §1.7 speech bubble: errors get the bubble, with its tail */
-  .errslot,.bub{position:relative;margin-top:var(--space-md);background:var(--gradient-surface);box-shadow:var(--shadow-card);color:var(--text);border-radius:var(--radius-lg);padding:var(--space-lg) var(--space-xl);font-size:13px;font-weight:400}
-  .errslot{display:none}
-  .errslot.show,.bub{display:block;animation:acPop .24s var(--pop)}
-  .errslot::after,.bub::after{content:"";position:absolute;bottom:-10px;left:var(--space-xl);width:12px;height:12px;background:#2a2a2a;clip-path:polygon(0 0,100% 0,0 100%)}
-  .sec-label{font-size:12px;font-weight:600;color:var(--text-3);margin:var(--space-lg) var(--space-xs) var(--space-sm)}
+  .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .setmsg{margin-top:var(--space-sm);font-size:12px;color:var(--ink-2);min-height:14px}
+  .footer{margin-top:var(--space-lg);text-align:center;font-size:11px;color:var(--ink-3)}
+  /* errors and empty-state notes: quiet glass; an alert gets a red left rule */
+  .errslot,.bub{position:relative;margin-top:var(--space-md);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-md) var(--space-lg);font-size:13px;color:var(--ink-2);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  .errslot{display:none;border-left:3px solid var(--red);color:var(--ink)}
+  .errslot.show,.bub{display:block;animation:acPop .24s var(--smooth)}
+  .sec-label{font-size:10.5px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.07em;margin:var(--space-lg) var(--space-xs) var(--space-sm)}
   .intg{display:flex;align-items:flex-start;gap:var(--space-md)}
-  .intg .logo{width:40px;height:40px;border-radius:var(--radius-md);flex:none;display:grid;place-items:center}
+  .intg .logo{width:40px;height:40px;border-radius:var(--radius-sm);flex:none;display:grid;place-items:center;background:var(--surface-inset)}
   .intg .body{flex:1;min-width:0}
   .intg .name{font-size:14px;font-weight:600}
-  .intg .desc{font-size:12px;color:var(--text-2);margin-top:var(--space-xs)}
-  .intg-foot{margin-top:var(--space-md);padding-top:var(--space-md);border-top:1px solid var(--hairline);display:flex;align-items:center;gap:var(--space-sm);font-size:12px;color:var(--text-2);font-weight:400}
-  .managed{display:inline-flex;align-items:center;gap:var(--space-sm);flex:none;font-size:12px;font-weight:700;background:color-mix(in srgb,var(--brand-end) 16%,transparent);color:var(--brand-end);padding:3px var(--space-md);border-radius:var(--radius-pill)}
+  .intg .desc{font-size:12px;color:var(--ink-2);margin-top:var(--space-xs)}
+  .intg-foot{margin-top:var(--space-md);padding-top:var(--space-md);border-top:1px solid var(--line-soft);display:flex;align-items:center;gap:var(--space-sm);font-size:12px;color:var(--ink-2)}
+  .managed{display:inline-flex;align-items:center;gap:var(--space-sm);flex:none;font-size:12px;font-weight:700;background:color-mix(in srgb,var(--green) 16%,transparent);color:var(--green);padding:3px var(--space-md);border-radius:var(--radius-pill)}
 
-  /* §2.2 navbar anatomy applied to a bottom-docked bar: gradient fill,
-     radius 20 (NOT a full pill), navbar shadow, one selected pill at a time. */
-  nav{flex:none;width:calc(100% - var(--space-xl));max-width:696px;margin:0 auto calc(var(--space-md) + env(safe-area-inset-bottom));height:var(--tabbar-h);background:var(--gradient-surface);box-shadow:var(--shadow-nav);border-radius:var(--radius-nav);display:flex;align-items:center;justify-content:space-between;padding:var(--space-sm) var(--space-md);gap:var(--space-xs)}
-  /* §1.4: the pill hugs its own label. With seven tabs an equal-width 1fr cell
-     made the selected pill far wider than its text — the tabs share the leftover
-     space as gaps instead, so every pill matches the word inside it. */
-  nav .tab{flex:0 1 auto;min-width:0;background:none;border:0;cursor:pointer;color:var(--text-2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-xs);font-size:10px;font-weight:600;border-radius:var(--radius-pill);height:100%;padding:0 var(--space-md);transition:color .14s var(--pop),box-shadow .14s var(--pop)}
+  /* tab bar: a floating glass dock — frosted, hairline border, soft shadow;
+     the active tab earns ink text on a light pill and a gradient glyph */
+  nav{flex:none;width:calc(100% - var(--space-lg));max-width:688px;margin:0 auto calc(var(--space-sm) + env(safe-area-inset-bottom));height:var(--tabbar-h);display:flex;align-items:stretch;justify-content:space-between;background:color-mix(in srgb,var(--ground) 72%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid var(--line);border-radius:var(--radius-nav);box-shadow:0 12px 32px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.05);padding:var(--space-xs) var(--space-sm)}
+  nav .tab{flex:0 1 auto;min-width:0;background:none;border:0;cursor:pointer;color:var(--ink-3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;font-size:10px;font-weight:600;border-radius:14px;padding:0 var(--space-md);transition:color .15s var(--smooth),background .15s var(--smooth)}
   nav .tab svg{width:18px;height:18px;color:currentColor}
-  /* §0.5 selected = surface gradient + raised bevel. Never a darker fill,
-     never a coloured circle behind the icon. */
-  nav .tab.active{color:var(--text);background:var(--gradient-surface);box-shadow:var(--bevel)}
-  /* §0.11 icon accent layer: the selected glyph carries the bound accent */
-  nav .tab.active svg{color:var(--color-primary-end)}
+  nav .tab.active{color:var(--ink);background:rgba(255,255,255,.07)}
+  nav .tab.active svg{color:var(--teal)}
 
-  :focus-visible{outline:none;box-shadow:var(--focus-ring)}
-  nav .tab:focus-visible{box-shadow:var(--bevel),var(--focus-ring)}
-  input:focus,textarea:focus,select:focus{outline:none;box-shadow:var(--shadow-inset),var(--focus-ring)}
-  input::placeholder,textarea::placeholder{color:var(--text-4);opacity:1}
+  :focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 20%,transparent)}
+  input::placeholder,textarea::placeholder{color:var(--ink-3);opacity:1}
 
   @media (hover:hover){
-    .setbtn:hover:not(:disabled){transform:translateY(-2px) scale(1.03)}
-    .minibtn:hover:not(:disabled){transform:translateY(-2px) scale(1.03)}
-    .card:hover{box-shadow:0 2px 2px rgba(33,33,33,.26),0 6px 14px rgba(33,33,33,.28)}
-    nav .tab:hover{color:var(--text)}
+    .setbtn:hover:not(:disabled){filter:brightness(1.08)}
+    .minibtn:hover:not(:disabled){border-color:var(--teal);color:var(--teal)}
+    .minibtn.primary:hover:not(:disabled){color:var(--on-teal);border-color:transparent}
+    nav .tab:hover{color:var(--ink)}
+    .nrow:hover{color:var(--ink)}
   }
   @media (prefers-reduced-motion:reduce){
     *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
   }
-  /* Narrow screens (cover screen, small phones): there is no room left to share,
-     so tabs go back to equal cells — the pill hugs its label anyway at that size. */
+  /* Narrow screens (cover screen, small phones): no room left to share, so
+     tabs go back to equal cells and the dock hugs the edges. */
   @media (max-width:480px){
-    nav{padding:var(--space-sm);gap:0}
+    nav{width:calc(100% - var(--space-sm))}
     nav .tab{flex:1;padding:0}
   }
+  /* Cover-screen accent picker. The swatch IS the colour; selected is a ring. */
+  .swatches{display:flex;flex-wrap:wrap;gap:var(--space-sm)}
+  .sw{position:relative;width:42px;height:42px;border-radius:12px;border:1px solid var(--line);transition:transform .15s var(--pop)}
+  .sw:hover:not(.on){transform:translateY(-2px) scale(1.04)}
+  .sw.on::after{content:"";position:absolute;inset:0;border-radius:inherit;box-shadow:inset 0 0 0 2px var(--ink)}
+
+  /* Floating "refresh status" action, above the nav dock on every screen. */
+  .fab{position:fixed;right:var(--space-lg);bottom:calc(var(--tabbar-h) + 24px + env(safe-area-inset-bottom));z-index:30;width:50px;height:50px;display:grid;place-items:center;border-radius:var(--radius-pill);background:var(--accent-grad);color:var(--on-teal);border:0;box-shadow:0 8px 24px color-mix(in srgb,var(--teal) 32%,transparent),0 2px 8px rgba(0,0,0,.4);transition:transform .15s var(--pop),filter .15s var(--smooth)}
+  .fab:active{filter:brightness(1.1);transform:scale(.92)}
+  .fab:disabled{opacity:.55}
+  .fab svg{width:22px;height:22px}
+  .fab.spin svg{animation:acSpin .9s linear infinite}
+  @keyframes acSpin{to{transform:rotate(360deg)}}
   /* Cover screen (~352x308): trim chrome so each tab is at most a short scroll */
   @media (max-height:420px){
-    header{padding:var(--space-sm)}
+    header{padding:6px var(--space-md)}
     .hero{padding:var(--space-md)}
     .ring-wrap{width:min(38vh,140px)}
     .ring-label{margin-top:var(--space-xs)}
     .card{padding:var(--space-md)}
     .stat-val,.cpu-load{font-size:26px}
     .cores{height:52px}
-    :root{--tabbar-h:54px}
+    :root{--tabbar-h:52px}
   }
 </style>
 </head>
@@ -561,42 +598,54 @@ const dashboardHTML = `<!DOCTYPE html>
       <div><div class="lab" id="tech">—</div><div class="op mono" id="wanip">—</div></div>
     </div>
     <div class="netbadge"><span class="dot amber" id="statusDot"></span><span id="netType">—</span></div>
+    <a class="hdrbtn" href="/" aria-label="Back to the cover screen" title="Cover screen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2.5"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg></a>
     <!-- op kept for the operator name, shown on the Network signal card -->
   </header>
   <div class="errslot" id="errSlot" role="alert"></div>
 
   <main>
-  <h1 class="visually-hidden">Z Flip 5 modem</h1>
+  <h1 class="visually-hidden">Ametsuyu Flippost</h1>
 
-  <section class="screen active" id="home" role="tabpanel" aria-labelledby="tab-home" tabindex="-1">
+  <section class="screen" id="home" role="tabpanel" aria-labelledby="tab-home" tabindex="-1">
+    <div class="card clockcard">
+      <div class="clocktime num" id="clkTime">--:--:--</div>
+      <div class="clockdate" id="clkDate">—</div>
+      <div class="clocklunar" id="clkLunar">—</div>
+    </div>
     <div class="card hero">
       <div class="ring-wrap">
         <svg viewBox="0 0 120 120" aria-hidden="true">
-          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--well)" stroke-width="11"/>
-          <circle id="ringFill" cx="60" cy="60" r="52" fill="none" stroke="var(--color-primary-end)" stroke-width="11" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" style="transition:stroke-dashoffset .4s cubic-bezier(0.4,0,0.2,1),stroke .4s cubic-bezier(0.4,0,0.2,1)"/>
+          <defs>
+            <linearGradient id="ringGrad" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#34d399"/>
+            </linearGradient>
+          </defs>
+          <circle cx="60" cy="60" r="52" fill="none" stroke="var(--track)" stroke-width="11"/>
+          <circle id="ringFill" cx="60" cy="60" r="52" fill="none" stroke="url(#ringGrad)" stroke-width="11" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" style="transition:stroke-dashoffset .4s cubic-bezier(0.4,0,0.2,1),stroke .4s cubic-bezier(0.4,0,0.2,1)"/>
         </svg>
         <div class="ring-center">
           <div class="ring-pct num"><span id="ringPct">0</span><span>%</span></div>
-          <div class="ring-sub"><b class="num" id="ringUsed" style="color:var(--text)">—</b> of 512 GB</div>
+          <div class="ring-sub"><b class="num" id="ringUsed" style="color:var(--text)">—</b> <span id="ringCap">of —</span></div>
         </div>
       </div>
-      <div class="ring-label">Mobile data · this month</div>
+      <div class="ring-label" id="ringLbl">Mobile data · this month</div>
       <div class="ring-caption">Today <b class="num" id="capToday">—</b> · Week <b class="num" id="capWeek">—</b></div>
+      <button class="minibtn" id="quotaSetBtn" style="display:none;margin-top:var(--space-xs)">Set a data limit</button>
     </div>
     <div class="duo">
       <div class="card">
-        <div class="stat-head"><h2>Battery</h2><span class="accent" id="battAccent" style="background:var(--brand-end)"></span></div>
+        <div class="stat-head"><h2>Battery</h2><span class="accent" id="battAccent" style="background:var(--green)"></span></div>
         <div class="stat-val num"><span id="battLevel">—</span><small>%</small></div>
         <div class="stat-sub num" id="battSub">—</div>
       </div>
       <div class="card" id="tempCard">
-        <div class="stat-head"><h2>Temp</h2><span class="accent" id="tempAccent" style="background:var(--sunflower-end)"></span></div>
-        <div class="stat-val num" id="tempVal" style="color:var(--sunflower-end)"><span id="tempMax">—</span><small>°C</small></div>
+        <div class="stat-head"><h2>Temp</h2><span class="accent" id="tempAccent" style="background:var(--amber)"></span></div>
+        <div class="stat-val num" id="tempVal" style="color:var(--amber)"><span id="tempMax">—</span><small>°C</small></div>
         <div class="stat-sub num" id="tempSub">—</div>
       </div>
     </div>
     <div class="card">
-      <div class="stat-head"><h2>Hotspot preset</h2><span id="hpActive" style="color:var(--text-2)">—</span></div>
+      <div class="stat-head"><h2>Hotspot preset</h2><span id="hpActive" style="color:var(--ink-2)">—</span></div>
       <div id="hpQuick" class="pchips"><div class="stat-sub">No presets — add them in the Presets tab.</div></div>
       <div class="setmsg" id="hpMsg">Tap to switch the hotspot. Clients drop briefly (~5s), then reconnect.</div>
     </div>
@@ -615,15 +664,26 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <section class="screen" id="net" role="tabpanel" aria-labelledby="tab-net" tabindex="-1">
     <div class="card">
-      <div class="stat-head"><h2>Signal</h2><span id="sigTech" style="color:var(--text-2)"></span></div>
+      <div class="stat-head"><h2>Signal</h2><span id="sigTech" style="color:var(--ink-2)"></span></div>
       <div class="sg" id="sig"><div class="stat-sub">loading…</div></div>
     </div>
     <div class="card">
-      <div class="stat-head"><h2>Hotspot</h2><span class="accent" id="hsAccent" style="background:var(--brand-end)"></span></div>
+      <div class="stat-head"><h2>Hotspot</h2><span class="accent" id="hsAccent" style="background:var(--green)"></span></div>
       <div class="state-row"><span class="k">State</span><span class="v"><span class="dot off" id="hsDot"></span><span id="hsState">—</span></span></div>
       <div class="state-row"><span class="k">Auto (SSID whitelist)</span><span class="v" id="hsAuto">off</span></div>
       <div class="state-row" id="hsMatchRow" style="display:none"><span class="k">Seen nearby</span><span class="v" id="hsMatch">—</span></div>
       <div class="stat-sub" id="hsSub"></div>
+      <div class="setmsg" id="hsPause" style="display:none"></div>
+      <div class="state-row" id="hsOvRow" style="display:none"><span class="k">Forced on</span><span class="v" id="hsOvLeft">—</span></div>
+      <div class="apbtns" id="hsOvBtns">
+        <button class="minibtn" id="hsOv2" data-hours="2">2h</button>
+        <button class="minibtn" id="hsOv4" data-hours="4">4h</button>
+        <button class="minibtn" id="hsOv8" data-hours="8">8h</button>
+        <button class="minibtn" id="hsOv12" data-hours="12">12h</button>
+        <button class="minibtn" id="hsOv24" data-hours="24">24h</button>
+      </div>
+      <button class="minibtn" id="hsOvCancel" style="display:none;width:100%">Cancel forced-on</button>
+      <div class="setmsg" id="hsOvMsg">Keeps the hotspot on for the chosen time even when a whitelisted network is in range; survives daemon restarts.</div>
     </div>
     <div class="card">
       <div class="stat-head"><h2>USB tethering</h2></div>
@@ -652,7 +712,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <section class="screen" id="clientsScr" role="tabpanel" aria-labelledby="tab-clientsScr" tabindex="-1">
     <div class="card">
-      <div class="stat-head"><h2>Clients</h2><span id="clientsN" style="color:var(--text-2)">0</span></div>
+      <div class="stat-head"><h2>Clients</h2><span id="clientsN" style="color:var(--ink-2)">0</span></div>
       <div id="clients"><div class="stat-sub">no clients</div></div>
     </div>
   </section>
@@ -665,7 +725,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg">Full message text, nothing masked. Tap a row to read the rest. Read-only — nothing here sends, replies or deletes.</div>
     </div>
     <div class="card">
-      <div class="stat-head"><h2>Notifications</h2><span id="notifN" style="color:var(--text-3)">—</span></div>
+      <div class="stat-head"><h2>Notifications</h2><span id="notifN" style="color:var(--ink-3)">—</span></div>
       <div id="notifList" aria-busy="true"><div class="skrow"><div class="sk" style="width:38%"></div><div class="sk" style="width:92%"></div></div><div class="skrow"><div class="sk" style="width:30%"></div><div class="sk" style="width:80%"></div></div><div class="skrow"><div class="sk" style="width:44%"></div><div class="sk" style="width:88%"></div></div></div>
       <div id="notifNote"></div>
       <div class="setmsg">What's on the phone's shade right now. Tap a row for the full text. Read-only — dismissing or acting on one has to happen on the phone.</div>
@@ -691,6 +751,26 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="stat-val num"><span id="memPct">—</span><small>%</small></div>
       <div class="bar"><i id="memBar" style="transform:scaleX(0)"></i></div>
     </div>
+    <div class="card" id="tempHist">
+      <div class="stat-head"><h2>Temperature · history</h2><span id="thN" style="color:var(--ink-3)">—</span></div>
+      <div class="apbtns" id="thRanges" style="grid-template-columns:repeat(4,1fr);margin-top:0">
+        <button class="minibtn primary" data-range="1h">1h</button>
+        <button class="minibtn" data-range="24h">24h</button>
+        <button class="minibtn" data-range="7d">7d</button>
+        <button class="minibtn" data-range="40d">40d</button>
+      </div>
+      <svg class="thChart" viewBox="0 0 300 90" preserveAspectRatio="none" aria-hidden="true">
+        <line id="thGate" x1="0" x2="300" style="display:none"/>
+        <polyline id="thLine" fill="none" points=""/>
+      </svg>
+      <div class="sg">
+        <div class="sgrow"><span>Min</span><b class="num" id="thMin">—</b></div>
+        <div class="sgrow"><span>Max</span><b class="num" id="thMax">—</b></div>
+        <div class="sgrow"><span>Average</span><b class="num" id="thAvg">—</b></div>
+        <div class="sgrow"><span>Latest</span><b class="num" id="thLast">—</b></div>
+      </div>
+      <div class="setmsg" id="thMsg">One sample a minute (the 14 s display median). Hour and day points are means of those samples.</div>
+    </div>
     <div class="card">
       <div class="state-row"><span class="k">Thermal policy</span><span class="v"><span class="dot amber" id="policyDot"></span><span id="policyState">—</span></span></div>
       <div class="state-row"><span class="k">CPU mode</span><span class="v"><span class="dot green" id="cpuDot"></span><span id="cpuModeRow">—</span></span></div>
@@ -699,7 +779,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <section class="screen" id="presets" role="tabpanel" aria-labelledby="tab-presets" tabindex="-1">
     <div class="card">
-      <div class="stat-head"><h2>Auto-switch by location</h2><span class="accent" id="paAccent" style="background:var(--text-3)"></span></div>
+      <div class="stat-head"><h2>Auto-switch by location</h2><span class="accent" id="paAccent" style="background:var(--ink-3)"></span></div>
       <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="paDot"></span><span id="paState">off</span></span></div>
       <div class="setgrid" style="grid-template-columns:1fr 1fr">
         <button class="minibtn" id="paOnBtn" style="min-height:44px">Turn on</button>
@@ -708,7 +788,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg">Switches the hotspot preset when a preset's trigger Wi-Fi comes into range. Rides the hotspot scan; needs location services ON.</div>
     </div>
     <div class="card">
-      <div class="stat-head"><h2>Presets</h2><span id="pCount" style="color:var(--text-2)"></span></div>
+      <div class="stat-head"><h2>Presets</h2><span id="pCount" style="color:var(--ink-2)"></span></div>
       <div id="pList"><div class="stat-sub">No presets yet — create one below.</div></div>
     </div>
     <div class="card">
@@ -733,6 +813,34 @@ const dashboardHTML = `<!DOCTYPE html>
   </section>
 
   <section class="screen" id="settings" role="tabpanel" aria-labelledby="tab-settings" tabindex="-1">
+    <div class="card">
+      <div class="stat-head"><h2>Data limit</h2></div>
+      <div class="setgrid">
+        <div><label class="f" for="qLimit">Limit (GB)</label><input id="qLimit" type="number" min="0" step="0.1" inputmode="decimal" placeholder="0 = none"></div>
+        <div><label class="f" for="qPeriod">Resets</label><select id="qPeriod">
+          <option value="monthly">Monthly</option>
+          <option value="weekly">Weekly (Mon)</option>
+          <option value="daily">Daily</option>
+          <option value="manual">Manual only</option>
+        </select></div>
+      </div>
+      <div class="setgrid">
+        <div><label class="f" for="qTime">Reset time</label><input id="qTime" type="time"></div>
+        <div><label class="f" for="qDay">Day of month (monthly)</label><input id="qDay" type="number" min="1" max="28" step="1" inputmode="numeric"></div>
+      </div>
+      <button class="setbtn" id="qBtn">Save data limit</button>
+      <div class="setmsg" id="qMsg">Enter your plan's cap to start tracking a period. 0 = no limit.</div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><h2>Cover screen</h2></div>
+      <button class="setbtn sec" id="coverHomeBtn">Exit to cover screen</button>
+      <div class="setmsg" id="coverHomeMsg">Hands the cover screen back to the Samsung clock. Reopen this app to take it back.</div>
+    </div>
+    <div class="card">
+      <div class="stat-head"><h2>Cover screen buttons</h2></div>
+      <div class="swatches" id="accentRow"></div>
+      <div class="setmsg" id="accentMsg">Paints the cover screen's buttons in one of the seven accents. The kiosk picks it up within ten seconds.</div>
+    </div>
     <div class="card">
       <div class="stat-head"><h2>Thermal gate · adjust</h2></div>
       <div class="setgrid">
@@ -769,7 +877,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg" id="qrMsg"></div>
     </div>
     <div class="card">
-      <div class="stat-head"><h2>Open reads (no token on the tailnet)</h2><span class="accent" id="orAccent" style="background:var(--text-3)"></span></div>
+      <div class="stat-head"><h2>Open reads (no token on the tailnet)</h2><span class="accent" id="orAccent" style="background:var(--ink-3)"></span></div>
       <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="orDot"></span><span id="orState">off</span></span></div>
       <div class="setgrid" style="grid-template-columns:1fr 1fr">
         <button class="minibtn primary" id="orOnBtn" style="min-height:44px">Turn on</button>
@@ -778,7 +886,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div class="setmsg" id="orMsg">On: any device on your tailnet opens the dashboard with no token — read-only, inbox included. Off: a token (or the QR) is required. Needs the radio-control token to change.</div>
     </div>
     <div class="card">
-      <div class="stat-head"><h2>Open control (no token for writes)</h2><span class="accent" id="ocAccent" style="background:var(--text-3)"></span></div>
+      <div class="stat-head"><h2>Open control (no token for writes)</h2><span class="accent" id="ocAccent" style="background:var(--ink-3)"></span></div>
       <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="ocDot"></span><span id="ocState">off</span></span></div>
       <div class="setgrid" style="grid-template-columns:1fr 1fr">
         <button class="minibtn primary" id="ocOnBtn" style="min-height:44px">Turn on</button>
@@ -789,7 +897,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div id="adminCard" style="display:none">
       <div class="sec-label">Admin · unlocked</div>
       <div class="card">
-        <div class="stat-head"><h2>Bench mode · battery-less donor</h2><span class="accent" id="bmAccent" style="background:var(--text-3)"></span></div>
+        <div class="stat-head"><h2>Bench mode · battery-less donor</h2><span class="accent" id="bmAccent" style="background:var(--ink-3)"></span></div>
         <div class="state-row"><span class="k">Status</span><span class="v"><span class="dot off" id="bmDot"></span><span id="bmState">off</span></span></div>
         <div class="state-row"><span class="k">Zones disabled</span><span class="v" id="bmZones">—</span></div>
         <div class="setgrid" style="grid-template-columns:1fr 1fr">
@@ -818,6 +926,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <div class="setgrid" style="grid-template-columns:1fr 1fr">
           <button class="setbtn sec" id="coolBtn" style="min-height:44px">Force CPU cooldown</button>
           <button class="setbtn sec" id="rebootBtn" style="min-height:44px">Reboot device</button>
+          <button class="setbtn sec" id="usageResetBtn" style="min-height:44px;grid-column:1/-1">Reset data usage</button>
         </div>
         <div class="setmsg" id="dangerMsg">Cooldown parks the prime core + caps the mid cluster. Reboot restarts the whole phone; the module comes back by itself.</div>
       </div>
@@ -850,6 +959,7 @@ const dashboardHTML = `<!DOCTYPE html>
   <button class="tab" data-screen="presets" role="tab" id="tab-presets" aria-controls="presets" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>Presets</button>
   <button class="tab" data-screen="settings" role="tab" id="tab-settings" aria-controls="settings" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
 </nav>
+<button class="fab" id="refreshFab" type="button" aria-label="Refresh status" title="Refresh status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16"/><path d="M3 21v-5h5"/></svg></button>
 
 <script>
 (function(){
@@ -857,7 +967,7 @@ const dashboardHTML = `<!DOCTYPE html>
   // Same-origin (relative) so the page works whether served on 127.0.0.1:18080
   // in the kiosk WebView, on a non-default bind_port, or proxied over Tailscale
   // — and never fetches the viewer's own localhost when opened remotely.
-  var API="", GIB=1024*1024*1024, CAP=512*GIB;
+  var API="", GB=1e9, CAP=0, quotaSeeded=false;
   var WARN_C=44, GATE_C=46;
 
   var token="";
@@ -881,29 +991,149 @@ const dashboardHTML = `<!DOCTYPE html>
   var ICN_CHECK='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px"><polyline points="20 6 9 17 4 12"/></svg>';
   var ICN_X='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
   var ICN_CHEVRON='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
-  var ICN_DOT='<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;margin-right:4px;color:var(--color-primary-end)"><circle cx="12" cy="12" r="9"/></svg>';
+  var ICN_DOT='<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;margin-right:4px;color:var(--teal)"><circle cx="12" cy="12" r="9"/></svg>';
 
   var active="home", lastKick=0;
   var tabs=document.querySelectorAll("nav .tab");
-  tabs.forEach(function(tab){tab.addEventListener("click",function(){
-    var id=tab.getAttribute("data-screen");
-    tabs.forEach(function(t){var on=t===tab;t.classList.toggle("active",on);t.setAttribute("aria-selected",on?"true":"false");if(on)t.setAttribute("aria-current","page");else t.removeAttribute("aria-current");});
-    document.querySelectorAll(".screen").forEach(function(sc){sc.classList.toggle("active",sc.id===id);});
-    // One named accent per section (DESIGN.md 1.3): rebinding these two vars
-    // recolours the whole screen, so no call site ever names an accent.
-    document.documentElement.setAttribute("data-accent",id);
-    // Move focus into the newly shown panel: without this the view changes
-    // silently for screen-reader and keyboard users.
-    var panel=document.getElementById(id); if(panel)panel.focus({preventScroll:true});
-    var appEl=document.querySelector(".app"); if(appEl)appEl.scrollTop=0;
-    active=id;
+  var deck=document.querySelector("main");
+  var screens=[].slice.call(document.querySelectorAll(".screen"));
+
+  // Both routes into a page land here: a nav tap (which scrolls the deck) and a
+  // swipe (which settles on it). Idempotent, so the scroll ending on the page a
+  // tap already selected costs nothing.
+  function selectScreen(id,moveFocus){
+    if(id===active&&!moveFocus)return;
+    tabs.forEach(function(t){var on=t.getAttribute("data-screen")===id;t.classList.toggle("active",on);t.setAttribute("aria-selected",on?"true":"false");if(on)t.setAttribute("aria-current","page");else t.removeAttribute("aria-current");});
+    var panel=document.getElementById(id);
+    // Move focus into the page a tap or keypress opened: without it the view
+    // changes silently for screen-reader and keyboard users. A swipe already
+    // has the owner looking at the page, and taking focus mid-gesture fights it.
+    if(panel){panel.scrollTop=0;if(moveFocus)panel.focus({preventScroll:true});}
+    var was=active; active=id;
+    try{history.replaceState(null,"",location.pathname+location.search+"#"+id);}catch(e){}
     if(id==="settings"&&typeof loadQR==="function")loadQR();
     if(id==="inbox"&&typeof loadInbox==="function")loadInbox();
-    // Refresh the newly shown tab, but throttle: rapid tab-hopping must not burst
-    // past the read-status rate limit (each tick is 2-3 requests).
-    var now=Date.now();
-    if(now-lastKick>1500){lastKick=now;tick();}
+    // Refresh the newly shown page, but throttle: rapid page-hopping must not
+    // burst past the read-status rate limit (each tick is 2-3 requests).
+    if(was!==id){var now=Date.now();if(now-lastKick>1500){lastKick=now;tick();}}
+  }
+
+  tabs.forEach(function(tab){tab.addEventListener("click",function(){
+    // Jump, don't glide: scroll-behavior:smooth is a no-op wherever the browser
+    // has smooth scrolling switched off, which would leave the nav bar selecting
+    // a page the deck never moved to. Swipes animate themselves.
+    var id=tab.getAttribute("data-screen"), i=screens.indexOf(document.getElementById(id));
+    if(i>=0)deck.scrollLeft=i*deck.clientWidth;
+    selectScreen(id,true);
   });});
+
+  // Swipe: the deck is a snap scroller, so whichever page it comes to rest on
+  // is the selection. Debounced rather than a scrollend listener — that event stayed
+  // silent for programmatic scrolls in testing, and a missed one would leave the
+  // nav bar pointing at a page the owner already swiped away from.
+  var settleT=0;
+  function deckSettled(){
+    if(!deck.clientWidth)return;
+    var i=Math.round(deck.scrollLeft/deck.clientWidth);
+    var sc=screens[Math.max(0,Math.min(screens.length-1,i))];
+    if(sc)selectScreen(sc.id,false);
+  }
+  deck.addEventListener("scroll",function(){clearTimeout(settleT);settleT=setTimeout(deckSettled,120);});
+
+  // Vietnamese lunar calendar (Ho Ngoc Duc's algorithm, the reference one every
+  // Vietnamese calendar uses). Same astronomy as the Chinese calendar but
+  // evaluated at UTC+7, not UTC+8 — that offset is the whole difference, and it
+  // is what decides which day Tet falls on in the years the two disagree. The
+  // browser's own Intl "chinese" calendar would silently give the UTC+8 answer.
+  var LUNAR_TZ=7;
+  function jdFromDate(dd,mm,yy){
+    var a=Math.floor((14-mm)/12), y=yy+4800-a, m=mm+12*a-3;
+    var jd=dd+Math.floor((153*m+2)/5)+365*y+Math.floor(y/4)-Math.floor(y/100)+Math.floor(y/400)-32045;
+    if(jd<2299161)jd=dd+Math.floor((153*m+2)/5)+365*y+Math.floor(y/4)-32083;
+    return jd;
+  }
+  // Julian day of the k-th new moon since 1900-01-01 (Meeus, Astronomical Algorithms ch.49).
+  function newMoon(k){
+    var T=k/1236.85, T2=T*T, T3=T2*T, dr=Math.PI/180;
+    var jd1=2415020.75933+29.53058868*k+0.0001178*T2-0.000000155*T3;
+    jd1=jd1+0.00033*Math.sin((166.56+132.87*T-0.009173*T2)*dr);
+    var M=359.2242+29.10535608*k-0.0000333*T2-0.00000347*T3;
+    var Mpr=306.0253+385.81691806*k+0.0107306*T2+0.00001236*T3;
+    var F=21.2964+390.67050646*k-0.0016528*T2-0.00000239*T3;
+    var c1=(0.1734-0.000393*T)*Math.sin(M*dr)+0.0021*Math.sin(2*dr*M);
+    c1=c1-0.4068*Math.sin(Mpr*dr)+0.0161*Math.sin(dr*2*Mpr);
+    c1=c1-0.0004*Math.sin(dr*3*Mpr);
+    c1=c1+0.0104*Math.sin(dr*2*F)-0.0051*Math.sin(dr*(M+Mpr));
+    c1=c1-0.0074*Math.sin(dr*(M-Mpr))+0.0004*Math.sin(dr*(2*F+M));
+    c1=c1-0.0004*Math.sin(dr*(2*F-M))-0.0006*Math.sin(dr*(2*F+Mpr));
+    c1=c1+0.0010*Math.sin(dr*(2*F-Mpr))+0.0005*Math.sin(dr*(2*Mpr+M));
+    var deltat=T<-11?(0.001+0.000839*T+0.0002261*T2-0.00000845*T3-0.000000081*T*T3)
+                    :(-0.000278+0.000265*T+0.000262*T2);
+    return jd1+c1-deltat;
+  }
+  function sunLongitude(jdn){
+    var T=(jdn-2451545.0)/36525, T2=T*T, dr=Math.PI/180;
+    var M=357.52910+35999.05030*T-0.0001559*T2-0.00000048*T*T2;
+    var L0=280.46645+36000.76983*T+0.0003032*T2;
+    var DL=(1.914600-0.004817*T-0.000014*T2)*Math.sin(dr*M);
+    DL=DL+(0.019993-0.000101*T)*Math.sin(dr*2*M)+0.000290*Math.sin(dr*3*M);
+    var L=(L0+DL)*dr;
+    return L-Math.PI*2*Math.floor(L/(Math.PI*2));
+  }
+  function sunZodiac(dayNumber,tz){return Math.floor(sunLongitude(dayNumber-0.5-tz/24)/Math.PI*6);}
+  function newMoonDay(k,tz){return Math.floor(newMoon(k)+0.5+tz/24);}
+  // The 11th lunar month is the one containing the winter solstice.
+  function lunarMonth11(yy,tz){
+    var k=Math.floor((jdFromDate(31,12,yy)-2415021)/29.530588853);
+    var nm=newMoonDay(k,tz);
+    if(sunZodiac(nm,tz)>=9)nm=newMoonDay(k-1,tz);
+    return nm;
+  }
+  // In a 13-month year the leap month is the first that holds no principal term.
+  function leapMonthOffset(a11,tz){
+    var k=Math.floor((a11-2415021.076998695)/29.530588853+0.5), last=0, i=1;
+    var arc=sunZodiac(newMoonDay(k+i,tz),tz);
+    do{last=arc;i++;arc=sunZodiac(newMoonDay(k+i,tz),tz);}while(arc!==last&&i<14);
+    return i-1;
+  }
+  // -> [day, month, year, isLeapMonth]
+  function solarToLunar(dd,mm,yy,tz){
+    var dayNumber=jdFromDate(dd,mm,yy);
+    var k=Math.floor((dayNumber-2415021.076998695)/29.530588853);
+    var monthStart=newMoonDay(k+1,tz);
+    if(monthStart>dayNumber)monthStart=newMoonDay(k,tz);
+    var a11=lunarMonth11(yy,tz), b11=a11, lunarYear;
+    if(a11>=monthStart){lunarYear=yy;a11=lunarMonth11(yy-1,tz);}
+    else{lunarYear=yy+1;b11=lunarMonth11(yy+1,tz);}
+    var lunarDay=dayNumber-monthStart+1;
+    var diff=Math.floor((monthStart-a11)/29);
+    var lunarLeap=0, lunarMonth=diff+11;
+    if(b11-a11>365){
+      var off=leapMonthOffset(a11,tz);
+      if(diff>=off){lunarMonth=diff+10;if(diff===off)lunarLeap=1;}
+    }
+    if(lunarMonth>12)lunarMonth=lunarMonth-12;
+    if(lunarMonth>=11&&diff<4)lunarYear-=1;
+    return [lunarDay,lunarMonth,lunarYear,lunarLeap];
+  }
+
+  var clkTime=document.getElementById("clkTime"), clkDate=document.getElementById("clkDate"), clkLunar=document.getElementById("clkLunar");
+  var DOW=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  var MON=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  var clkDay=-1;
+  function tickClock(){
+    var d=new Date();
+    clkTime.textContent=d.toTimeString().slice(0,8);
+    renderOvLeft(); // local hotspot-override countdown; zero requests
+    // Date and lunar conversion only change at midnight; rerunning the astronomy
+    // every second would burn the cover screen's battery for nothing.
+    if(clkDay===d.getDate())return;
+    clkDay=d.getDate();
+    clkDate.textContent=DOW[d.getDay()]+", "+d.getDate()+" "+MON[d.getMonth()]+" "+d.getFullYear();
+    var l=solarToLunar(d.getDate(),d.getMonth()+1,d.getFullYear(),LUNAR_TZ);
+    clkLunar.textContent="Lunar "+l[0]+"/"+l[1]+(l[3]?" (leap)":"")+" · "+l[2];
+  }
+  tickClock(); setInterval(tickClock,1000);
 
   var coresEl=document.getElementById("cores"), coreEls=[];
   function buildCores(n){coresEl.innerHTML="";coreEls=[];for(var i=0;i<n;i++){var c=document.createElement("div");c.className="core";var tr=document.createElement("div");tr.className="track";var f=document.createElement("div");f.className="fill";f.style.transform="scaleY(0)";var idx=document.createElement("div");idx.className="idx num";idx.textContent=i;tr.appendChild(f);c.appendChild(tr);c.appendChild(idx);coresEl.appendChild(c);coreEls.push({core:c,fill:f});}}
@@ -917,9 +1147,8 @@ const dashboardHTML = `<!DOCTYPE html>
   // Skips the innerHTML write (and its DOM-recreate, which would replay the
   // acPop entrance animation on every poll tick) when the markup hasn't changed.
   function setListHTML(box,html){if(box._lastHtml===html)return false;box._lastHtml=html;box.innerHTML=html;return true;}
-  function fmtBytes(b){var gb=b/GIB;if(gb>=1000)return (gb/1024).toFixed(2)+" TB";return (gb>=10?Math.round(gb):gb.toFixed(1))+" GB";}
-  function tempColor(c){return c>=GATE_C?"var(--coral-end)":(c>=WARN_C?"var(--sunflower-end)":"var(--color-primary-end)");}
-  function usageColor(p){return p>0.9?"var(--coral-end)":(p>=0.7?"var(--sunflower-end)":"var(--color-primary-end)");}
+  function fmtBytes(b){var gb=b/GB;if(gb>=1000)return (gb/1000).toFixed(2)+" TB";return (gb>=10?Math.round(gb):gb.toFixed(1))+" GB";}
+  function tempColor(c){return c>=GATE_C?"var(--red)":(c>=WARN_C?"var(--amber)":"var(--teal)");}
   var CIRC=2*Math.PI*52;
 
   function rsrpCls(v){return v>=-95?"good":(v>=-110?"mid":"low");}
@@ -931,12 +1160,14 @@ const dashboardHTML = `<!DOCTYPE html>
   function polColor(p){return (p==="SAFE"||p==="RECOVERY")?"green":(p==="WARM"?"amber":"red");}
   function renderStatus(s){
     var net=s.network||{}, bat=s.battery||{}, th=s.thermal||{}, ip=s.wan_ip||{};
+    if(typeof s.cover_home==="boolean"&&typeof renderCoverHome==="function")renderCoverHome(s.cover_home);
+    if(s.cover_accent&&typeof renderAccent==="function")renderAccent(s.cover_accent);
     if(typeof s.open_reads==="boolean"&&document.getElementById("orState"))renderOpenReads(s.open_reads);
     if(typeof s.open_control==="boolean"){openControl=s.open_control;if(document.getElementById("ocState"))renderOpenControl(s.open_control);}
     if(s.hotspot_presets)renderPresets(s.hotspot_presets);
     if(s.bench)renderBench(s.bench);
     // Always show the WAN IP (header). Airplane on / no data -> explicit label.
-    document.getElementById("wanip").innerHTML=s.airplane?(ICN_PLANE+"airplane"):esc(ip.available&&ip.ip?ip.ip:"no data");
+    setListHTML(document.getElementById("wanip"),s.airplane?(ICN_PLANE+"airplane"):esc(ip.available&&ip.ip?ip.ip:"no data"));
     var ipEl=document.getElementById("wanIp"); if(ipEl){ipEl.textContent=ip.available&&ip.ip?ip.ip:(s.airplane?"— (airplane on)":"— (no data)");}
     var apEl=document.getElementById("apState"); if(apEl){apEl.textContent=s.airplane?"ON":"off";document.getElementById("apDot").className="dot "+(s.airplane?"amber":"off");}
     var pol=s.policy_state||"—", dc=polColor(pol);
@@ -952,16 +1183,16 @@ const dashboardHTML = `<!DOCTYPE html>
     var battEl=document.getElementById("battLevel");
     if(bat.available===false||bat.level==null){
       battEl.textContent="—";document.getElementById("battSub").textContent="unavailable";
-      document.getElementById("battAccent").style.background="var(--text-3)";
+      document.getElementById("battAccent").style.background="var(--ink-3)";
     }else{
       var lvl=Math.round(bat.level);
       battEl.textContent=lvl;
       document.getElementById("battSub").textContent=(bat.plugged||"")+" · "+(bat.temp_c!=null?bat.temp_c.toFixed(1)+"°C":"");
-      var bcol=lvl<=10?"var(--coral-end)":(lvl<=20?"var(--sunflower-end)":"var(--brand-end)");
+      var bcol=lvl<=10?"var(--red)":(lvl<=20?"var(--amber)":"var(--green)");
       document.getElementById("battAccent").style.background=bcol;
     }
 
-    var tmax=th.temp_max_c, hasT=tmax!=null&&tmax>0, tcol=hasT?tempColor(tmax):"var(--text-3)";
+    var tmax=th.temp_max_c, hasT=tmax!=null&&tmax>0, tcol=hasT?tempColor(tmax):"var(--ink-3)";
     document.getElementById("tempMax").textContent=hasT?tmax.toFixed(1):"—";
     document.getElementById("tempVal").style.color=tcol;
     document.getElementById("tempAccent").style.background=tcol;
@@ -974,18 +1205,55 @@ const dashboardHTML = `<!DOCTYPE html>
     var per=h.per_core_pct;
     if(!per||!per.length){per=[];for(var i=0;i<cores;i++)per.push(0);}
     if(per.length&&coreEls.length!==per.length)buildCores(per.length);
-    per.forEach(function(p,i){if(!coreEls[i])return;p=Math.max(0,Math.min(100,p));coreEls[i].fill.style.transform="scaleY("+(p/100)+")";coreEls[i].fill.style.background=p>85?"var(--coral-end)":(p>60?"var(--sunflower-end)":"var(--color-primary-end)");});
+    per.forEach(function(p,i){if(!coreEls[i])return;p=Math.max(0,Math.min(100,p));coreEls[i].fill.style.transform="scaleY("+(p/100)+")";coreEls[i].fill.style.background=p>85?"var(--red)":(p>60?"var(--amber)":"var(--teal)");});
 
     var mp=h.mem_used_pct!=null?h.mem_used_pct:0;document.getElementById("memPct").textContent=h.mem_used_pct!=null?mp:"—";document.getElementById("memBar").style.transform="scaleX("+(mp/100)+")";
     document.getElementById("updated").textContent=new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});
   }
 
+  // Local, human string for an RFC3339 instant (next_reset/last_reset); "" for
+  // a manual period (the daemon sends no next_reset then).
+  function fmtWhenIso(iso){
+    if(!iso)return "";
+    var d=new Date(iso);
+    return isNaN(d.getTime())?"":d.toLocaleString([],{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+  }
+  var RING_LABEL={daily:"Mobile data · today",weekly:"Mobile data · this week",monthly:"Mobile data · this cycle",manual:"Mobile data · since reset"};
   function renderUsage(u){
-    var pct=u.month_bytes/CAP, pc=Math.min(1,pct);
-    document.getElementById("ringPct").textContent=Math.round(pct*100);
-    document.getElementById("ringUsed").textContent=fmtBytes(u.month_bytes);
-    var ring=document.getElementById("ringFill");ring.style.stroke=usageColor(pct);ring.style.strokeDashoffset=(CIRC*(1-pc)).toFixed(1);
+    CAP=u.limit_bytes||0;
+    var used=u.period_bytes||0, ring=document.getElementById("ringFill"), ringCap=document.getElementById("ringCap");
+    if(CAP>0){
+      var pct=used/CAP, pc=Math.min(1,pct);
+      document.getElementById("ringPct").textContent=Math.round(pct*100);
+      // healthy period rides the gradient; amber/red take over past the
+      // warning and over-cap marks so status stays louder than decoration
+      ring.style.stroke=pct>0.9?"var(--red)":(pct>=0.7?"var(--amber)":"url(#ringGrad)");
+      ring.style.strokeDashoffset=(CIRC*(1-pc)).toFixed(1);
+      ringCap.textContent="of "+fmtBytes(CAP);
+    }else{
+      document.getElementById("ringPct").textContent="—";
+      ring.style.stroke="var(--track)";ring.style.strokeDashoffset=CIRC.toFixed(1);
+      ringCap.textContent="· no limit";
+    }
+    // period_human is the daemon's own SI string (MB/KB below 1 GB); fmtBytes
+    // only ever emits GB/TB and would show "0.0 GB" for a sub-GB period.
+    document.getElementById("ringUsed").textContent=u.period_human||fmtBytes(used);
+    document.getElementById("ringLbl").textContent=RING_LABEL[u.period]||RING_LABEL.monthly;
+    document.getElementById("quotaSetBtn").style.display=CAP>0?"none":"";
     document.getElementById("capToday").textContent=u.today_human;document.getElementById("capWeek").textContent=u.week_human;
+
+    // Seed the settings form once from live values; don't clobber a field the
+    // owner is mid-edit on a later poll (same rule as gateSeeded).
+    if(!quotaSeeded){
+      document.getElementById("qLimit").value=CAP?Math.round(CAP/GB*10)/10:"";
+      document.getElementById("qPeriod").value=u.period||"monthly";
+      document.getElementById("qTime").value=u.reset_time||"00:00";
+      document.getElementById("qDay").value=u.reset_day||1;
+      qSyncDisabled();
+      quotaSeeded=true;
+    }
+    var qMsg=document.getElementById("qMsg");
+    if(qMsg)qMsg.textContent=CAP?("Next reset "+fmtWhenIso(u.next_reset)):"No limit set yet — enter your plan's cap.";
   }
 
   function renderSignal(sig){
@@ -998,7 +1266,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var tag=is5g?"NR "+(sig.nr_state||""):(sig.carrier_aggregation?"LTE-CA":"");
     document.getElementById("sigTech").textContent=(sig.operator||"")+(tag?" · "+tag:"");
     var box=document.getElementById("sig");
-    if(!sig.available){box.innerHTML='<div class="stat-sub">unavailable</div>';return;}
+    if(!sig.available){setListHTML(box,'<div class="stat-sub">unavailable</div>');return;}
     function row(k,v,c){return '<div class="sgrow"><span>'+esc(k)+'</span><b class="'+(c||"")+'">'+esc(v)+'</b></div>';}
     // The daemon maps Android's Integer.MAX_VALUE "unavailable" sentinel to 0, so
     // a metric of exactly 0 (non-physical for dBm/dB) means "not reported" — the
@@ -1018,21 +1286,30 @@ const dashboardHTML = `<!DOCTYPE html>
     if(sig.nr_band)h+=row("NR band","n"+sig.nr_band);
     if(sig.nr_rsrp_dbm)h+=row("NR RSRP",sig.nr_rsrp_dbm+" dBm",rsrpCls(sig.nr_rsrp_dbm));
     if(sig.nr_sinr_db)h+=row("NR SINR",sig.nr_sinr_db+" dB",sinrCls(sig.nr_sinr_db));
-    box.innerHTML=h;
+    setListHTML(box,h);
   }
 
   function renderClients(cl){
     document.getElementById("clientsN").textContent=(cl.count||0)+(cl.count===1?" client":" clients");
     var box=document.getElementById("clients");
-    if(!cl.clients||!cl.clients.length){box.innerHTML='<div class="stat-sub">no clients</div>';return;}
+    // A tick can land mid-read: remember which rows the owner had expanded so
+    // a data change (a client joins/leaves, the list reorders) doesn't collapse
+    // them. Keyed by MAC, not index — the list reorders as neighbours age.
+    var openMacs=[];
+    box.querySelectorAll("details.cli[open]").forEach(function(d){openMacs.push(d.getAttribute("data-mac"));});
+    if(!cl.clients||!cl.clients.length){setListHTML(box,'<div class="stat-sub">no clients</div>');return;}
     var html="";
     cl.clients.forEach(function(c){
       var st=c.state||"?";
       var v6=(c.ipv6&&c.ipv6.length)?'<div class="r"><span>IPv6</span><b class="mono" style="font-size:10.5px;text-align:right">'+c.ipv6.map(esc).join("<br>")+'</b></div>':"";
-      html+='<details class="cli"><summary><span class="dot '+stCls(st)+'"></span><b class="mono">'+esc(c.ipv4||"(no IPv4)")+'</b><span style="color:var(--text-3);font-size:11.5px">'+esc(st)+'</span><span class="chev">'+ICN_CHEVRON+'</span></summary>'
+      html+='<details class="cli" data-mac="'+esc(c.mac)+'"><summary><span class="dot '+stCls(st)+'"></span><b class="mono">'+esc(c.ipv4||"(no IPv4)")+'</b><span style="color:var(--ink-3);font-size:11.5px">'+esc(st)+'</span><span class="chev">'+ICN_CHEVRON+'</span></summary>'
         +'<div class="clibody"><div class="r"><span>MAC</span><b class="mono">'+esc(c.mac)+'</b></div><div class="r"><span>State</span><b>'+esc(st)+'</b></div>'+v6+'</div></details>';
     });
-    box.innerHTML=html;
+    if(setListHTML(box,html)&&openMacs.length){
+      box.querySelectorAll("details.cli").forEach(function(d){
+        if(openMacs.indexOf(d.getAttribute("data-mac"))>=0)d.open=true;
+      });
+    }
   }
 
   function renderCPU(c){
@@ -1045,18 +1322,102 @@ const dashboardHTML = `<!DOCTYPE html>
     if(c.cores&&coreEls.length===c.cores.length){c.cores.forEach(function(ci,i){coreEls[i].core.classList.toggle("off",!ci.online);});}
   }
 
+  // Temperature history (System tab). thData is the last /v1/thermal/history
+  // fetch, refetched at the SLOW cadence only while that tab is open (see the
+  // polls table); range switches just re-render already-fetched data, no refetch.
+  var thRange="1h", thData=null;
+  var THMSG_DEFAULT=document.getElementById("thMsg").textContent;
+  function thPick(){
+    if(!thData)return[];
+    if(thRange==="1h")return thData.minutes.slice(-60).map(function(m){return[m[0],m[1],1];});
+    if(thRange==="24h")return thData.minutes.map(function(m){return[m[0],m[1],1];});
+    var b=thRange==="7d"?thData.hours:thData.days;
+    return b.map(function(p){return[p.t,p.c,p.n];});
+  }
+  function renderTempHist(){
+    var pts=thPick(), line=document.getElementById("thLine"), gate=document.getElementById("thGate");
+    if(!pts.length){
+      line.setAttribute("points","");gate.style.display="none";
+      document.getElementById("thN").textContent="—";
+      document.getElementById("thMin").textContent=document.getElementById("thMax").textContent=
+        document.getElementById("thAvg").textContent=document.getElementById("thLast").textContent="—";
+      document.getElementById("thMsg").textContent="Collecting — first point in about a minute.";
+      return;
+    }
+    document.getElementById("thMsg").textContent=THMSG_DEFAULT;
+    var vals=pts.map(function(p){return p[1];});
+    var lo=Math.min.apply(null,vals), hi=Math.max.apply(null,vals);
+    var y0=Math.floor(lo)-1, y1=Math.ceil(hi)+1;
+    if(y1-y0<4){var mid=(y0+y1)/2;y0=mid-2;y1=mid+2;}
+    line.setAttribute("points",pts.map(function(p,i){
+      var x=pts.length>1?i/(pts.length-1)*300:150, y=90-(p[1]-y0)/(y1-y0)*90;
+      return x.toFixed(1)+","+y.toFixed(1);
+    }).join(" "));
+    if(GATE_C>y0&&GATE_C<y1){
+      var gy=(90-(GATE_C-y0)/(y1-y0)*90).toFixed(1);
+      gate.setAttribute("y1",gy);gate.setAttribute("y2",gy);gate.style.display="";
+    }else{gate.style.display="none";}
+    document.getElementById("thMin").textContent=lo.toFixed(1)+"°";
+    document.getElementById("thMax").textContent=hi.toFixed(1)+"°";
+    document.getElementById("thAvg").textContent=(vals.reduce(function(a,v){return a+v;},0)/vals.length).toFixed(1)+"°";
+    document.getElementById("thLast").textContent=vals[vals.length-1].toFixed(1)+"°";
+    var unit=thRange==="7d"?"h":thRange==="40d"?"d":"pts";
+    document.getElementById("thN").textContent=unit==="pts"?(pts.length+" pts"):
+      (pts.length+" "+unit+" · last "+pts[pts.length-1][2]+" samples");
+  }
+  document.querySelectorAll("#thRanges .minibtn").forEach(function(b){
+    b.addEventListener("click",function(){
+      thRange=b.getAttribute("data-range");
+      document.querySelectorAll("#thRanges .minibtn").forEach(function(x){x.classList.toggle("primary",x===b);});
+      renderTempHist();
+    });
+  });
+
   function renderBands(b){
     if(!b||!b.available){document.getElementById("bandsv").textContent="—";return;}
     document.getElementById("bandsv").textContent=b.is_max?"all unlocked (NR+LTE)":(b.nr_enabled?"NR+…":"LTE only");
     document.getElementById("bandDot").className="dot "+(b.is_max?"green":(b.nr_enabled?"amber":"off"));
   }
 
-  var wlLoaded=false;
+  // Hours+minutes left, e.g. "3h 12m"; under an hour, minutes+seconds so the
+  // countdown visibly runs, e.g. "45m 09s".
+  function fmtHM(totalSec){
+    totalSec=Math.max(0,totalSec);
+    var h=Math.floor(totalSec/3600), m=Math.floor((totalSec%3600)/60), s=Math.floor(totalSec%60);
+    return h>0?(h+"h "+m+"m"):(m+"m "+("0"+s).slice(-2)+"s");
+  }
+
+  // Local countdown for the hotspot "forced on" override: ovEnd is a local ms
+  // timestamp set from receive-time + override_left_s (see renderHotspot), so
+  // it ticks down with zero requests and is immune to clock skew between this
+  // browser and the phone. Driven by tickClock's 1s timer, not a new interval.
+  var ovEnd=0;
+  function renderOvLeft(){
+    if(!ovEnd)return;
+    var left=Math.ceil((ovEnd-Date.now())/1000);
+    if(left<=0){
+      ovEnd=0;
+      document.getElementById("hsOvRow").style.display="none";
+      document.getElementById("hsOvBtns").style.display="";
+      document.getElementById("hsOvCancel").style.display="none";
+      lastAt["/v1/hotspot"]=0; // confirm from the daemon on the next heartbeat
+      return;
+    }
+    var until=lastHs&&lastHs.override_until?new Date(lastHs.override_until):null;
+    var untilOk=until&&!isNaN(until.getTime());
+    document.getElementById("hsOvLeft").textContent=fmtHM(left)+" left"
+      +(untilOk?(" · until "+until.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})):"");
+  }
+
+  var wlLoaded=false, lastHs=null;
   function renderHotspot(h){
+    lastHs=h;
     document.getElementById("hsState").textContent=h.active?"on":"off";
     document.getElementById("hsDot").className="dot "+(h.active?"green":"off");
-    document.getElementById("hsAccent").style.background=h.active?"var(--brand-end)":"var(--text-3)";
-    var auto=h.auto?(h.paused?"paused: "+h.paused.replace("_"," "):"watching "+h.whitelist.length+" SSID"+(h.whitelist.length===1?"":"s")):"off";
+    document.getElementById("hsAccent").style.background=h.active?"var(--green)":"var(--ink-3)";
+    // Short here on purpose: the hsPause banner below carries the full hint,
+    // so this row never says "paused: location off" twice.
+    var auto=h.auto?(h.paused?"paused":"watching "+h.whitelist.length+" SSID"+(h.whitelist.length===1?"":"s")):"off";
     document.getElementById("hsAuto").textContent=auto;
     var mr=document.getElementById("hsMatchRow");
     if(h.matched&&h.matched.length){mr.style.display="";document.getElementById("hsMatch").textContent=h.matched.join(", ");}
@@ -1065,6 +1426,29 @@ const dashboardHTML = `<!DOCTYPE html>
     if(h.last_action)sub.push(h.last_action);
     if(h.auto&&h.ap_count)sub.push(h.ap_count+" APs in last scan");
     document.getElementById("hsSub").textContent=sub.join(" · ");
+
+    var pauseEl=document.getElementById("hsPause");
+    if(h.auto&&h.paused){
+      pauseEl.style.display="";
+      setListHTML(pauseEl,h.paused==="location_off"
+        ?(ICN_WARN+"Scanning paused: turn on Location on the phone. Retries automatically.")
+        :(ICN_WARN+"Scanning paused: scan failed ("+esc(h.paused_detail||"unknown")+"). Retrying automatically."));
+    }else{
+      pauseEl.style.display="none";
+    }
+
+    var ovActive=!!h.override_until;
+    document.getElementById("hsOvRow").style.display=ovActive?"":"none";
+    document.getElementById("hsOvBtns").style.display=ovActive?"none":"";
+    document.getElementById("hsOvCancel").style.display=ovActive?"":"none";
+    // Anchor on receive-time + the daemon's own left_s, not on override_until
+    // vs the browser clock — a tailnet laptop's clock can be minutes off a
+    // donor phone's. renderOvLeft() (driven by the 1s clock tick) recomputes
+    // the remaining seconds locally between polls, so the countdown runs with
+    // zero extra requests.
+    ovEnd=ovActive?Date.now()+(h.override_left_s||0)*1000:0;
+    if(ovActive)renderOvLeft();
+
     if(!wlLoaded&&h.whitelist){document.getElementById("wlBox").value=h.whitelist.join("\n");wlLoaded=true;}
     renderWhitelist(h.whitelist||[]);
     renderNearby(h);
@@ -1317,7 +1701,7 @@ const dashboardHTML = `<!DOCTYPE html>
   function renderOpenReads(on){
     document.getElementById("orState").textContent=on?"on":"off";
     document.getElementById("orDot").className="dot "+(on?"amber":"off");
-    document.getElementById("orAccent").style.background=on?"var(--sunflower-end)":"var(--text-3)";
+    document.getElementById("orAccent").style.background=on?"var(--amber)":"var(--ink-3)";
   }
 
   // --- Open control toggle (tokenless radio-control writes). radio-control gated
@@ -1338,7 +1722,7 @@ const dashboardHTML = `<!DOCTYPE html>
     openControl=on;
     document.getElementById("ocState").textContent=on?"on":"off";
     document.getElementById("ocDot").className="dot "+(on?"red":"off");
-    document.getElementById("ocAccent").style.background=on?"var(--coral-end)":"var(--text-3)";
+    document.getElementById("ocAccent").style.background=on?"var(--red)":"var(--ink-3)";
   }
 
   // --- Secret admin unlock: 8 taps on the Home temp card. Locked by default;
@@ -1364,7 +1748,7 @@ const dashboardHTML = `<!DOCTYPE html>
     document.getElementById("bmState").textContent=b.enabled?(b.tripped?"tripped":"on"):"off";
     document.getElementById("bmDot").className="dot "+(b.enabled&&!b.tripped?"red":(b.enabled?"amber":"off"));
     document.getElementById("bmZones").textContent=b.enabled?(b.zones_disabled||0)+"/95":"—";
-    document.getElementById("bmAccent").style.background=(b.enabled&&!b.tripped)?"var(--coral-end)":"var(--text-3)";
+    document.getElementById("bmAccent").style.background=(b.enabled&&!b.tripped)?"var(--red)":"var(--ink-3)";
   }
   function setBench(on){
     var rt=rtok(bmMsg); if(!rt)return;
@@ -1413,7 +1797,103 @@ const dashboardHTML = `<!DOCTYPE html>
       dangerMsg.textContent=res.ok?(res.j.note||"Rebooting…"):("Error: "+(res.j.error||"failed"));
     }).catch(function(e){dangerMsg.textContent="Error: "+e.message;});
   });
+  var usageResetBtn=document.getElementById("usageResetBtn"), usageResetArmed=0;
+  usageResetBtn.addEventListener("click",function(){
+    var now=Date.now();
+    if(now>usageResetArmed){
+      usageResetArmed=now+5000; usageResetBtn.textContent="Tap again to confirm reset";
+      return;
+    }
+    usageResetBtn.textContent="Reset data usage";
+    var rt=rtok(dangerMsg); if(!rt)return;
+    post("/v1/usage/reset",{},rt).then(function(res){
+      if(!res.ok){dangerMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      renderUsage(res.j); // limit/period/schedule are unchanged; only period_bytes/last_reset moved
+      dangerMsg.textContent="Data usage reset — period starts now.";
+    }).catch(function(e){dangerMsg.textContent="Error: "+e.message;});
+  });
+
+  // Cover-screen accent. The kiosk has no settings screen of its own (352px),
+  // so its one appearance control lives here and rides /v1/status back down.
+  var ACCENTS=["dawn","sunflower","coral","breeze","ocean","wisteria","slate"];
+  var accentRow=document.getElementById("accentRow"), accentMsg=document.getElementById("accentMsg");
+  ACCENTS.forEach(function(a){
+    var b=document.createElement("button");
+    b.type="button"; b.className="sw"; b.title=a;
+    b.setAttribute("data-a",a);
+    b.setAttribute("aria-label","Cover screen accent: "+a);
+    b.style.background="linear-gradient(180deg,var(--"+a+"-start) 0%,var(--"+a+"-end) 100%)";
+    b.addEventListener("click",function(){setAccent(a);});
+    accentRow.appendChild(b);
+  });
+  function renderAccent(a){
+    accentRow.querySelectorAll(".sw").forEach(function(b){
+      var on=b.getAttribute("data-a")===a;
+      b.classList.toggle("on",on);
+      b.setAttribute("aria-pressed",on?"true":"false");
+    });
+  }
+  function setAccent(a){
+    var rt=rtok(accentMsg); if(!rt)return;
+    accentMsg.textContent="applying…";
+    post("/v1/cover/accent",{accent:a},rt).then(function(res){
+      if(!res.ok){accentMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      renderAccent(a);
+      accentMsg.textContent="Cover screen buttons are now "+a+".";
+    }).catch(function(e){accentMsg.textContent="Error: "+e.message;});
+  }
+
+  // Cover home. The label follows the live state, so the one button reads as
+  // whichever move is available rather than as a toggle you have to decode.
+  var coverHomeBtn=document.getElementById("coverHomeBtn"), coverHomeMsg=document.getElementById("coverHomeMsg"), coverHomeState=true;
+  function renderCoverHome(on){
+    coverHomeState=on;
+    coverHomeBtn.textContent=on?"Exit to cover screen":"Take over cover screen";
+  }
+  coverHomeBtn.addEventListener("click",function(){
+    var rt=rtok(coverHomeMsg); if(!rt)return;
+    var want=!coverHomeState;
+    post("/v1/cover/home",{enabled:want},rt).then(function(res){
+      if(!res.ok){coverHomeMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      renderCoverHome(want);
+      coverHomeMsg.textContent=res.j.note||"";
+    }).catch(function(e){coverHomeMsg.textContent="Error: "+e.message;});
+  });
   renderAdmin();
+
+  // First-run prompt: the ring's "Set a data limit" button just jumps to the
+  // Settings tab where the Data limit card lives.
+  document.getElementById("quotaSetBtn").addEventListener("click",function(){
+    document.getElementById("tab-settings").click();
+  });
+
+  // Weekly always resets Monday (reset_day is monthly-only) and manual never
+  // resets on a schedule (reset_time is meaningless there) — grey out the
+  // field that doesn't apply to the picked period.
+  function qSyncDisabled(){
+    var p=document.getElementById("qPeriod").value;
+    document.getElementById("qDay").disabled=p!=="monthly";
+    document.getElementById("qTime").disabled=p==="manual";
+  }
+  document.getElementById("qPeriod").addEventListener("change",qSyncDisabled);
+
+  var qMsg=document.getElementById("qMsg");
+  document.getElementById("qBtn").addEventListener("click",function(){
+    var rt=rtok(qMsg); if(!rt)return;
+    var gb=parseFloat(document.getElementById("qLimit").value);
+    var body={
+      limit_bytes: isNaN(gb)||gb<=0 ? 0 : Math.round(gb*GB),
+      period: document.getElementById("qPeriod").value,
+      reset_time: document.getElementById("qTime").value||"00:00",
+      reset_day: parseInt(document.getElementById("qDay").value,10)||1
+    };
+    qMsg.textContent="saving…";
+    post("/v1/usage/quota",body,rt).then(function(res){
+      if(!res.ok){qMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      quotaSeeded=false; // re-seed the form from the (possibly clamped) saved values
+      renderUsage(res.j);
+    }).catch(function(e){qMsg.textContent="Error: "+e.message;});
+  });
 
   document.getElementById("setBtn").addEventListener("click",function(){
     var rt=rtok(setMsg); if(!rt)return;
@@ -1469,6 +1949,35 @@ const dashboardHTML = `<!DOCTYPE html>
     }).catch(function(e){nearbyMsg.textContent="Error: "+e.message;});
   }
 
+  // Timed force-on override: pins the hotspot on for the chosen window
+  // regardless of whitelist matches (persists across a daemon restart).
+  var hsOvMsg=document.getElementById("hsOvMsg"), hsOvBtnList=document.querySelectorAll("#hsOvBtns .minibtn");
+  hsOvBtnList.forEach(function(b){
+    b.addEventListener("click",function(){
+      var rt=rtok(hsOvMsg); if(!rt)return;
+      var hours=+b.getAttribute("data-hours");
+      hsOvMsg.textContent="forcing on for "+hours+"h…";
+      hsOvBtnList.forEach(function(x){x.disabled=true;});
+      post("/v1/hotspot/override",{hours:hours},rt).then(function(res){
+        hsOvBtnList.forEach(function(x){x.disabled=false;});
+        if(!res.ok){hsOvMsg.textContent="Error: "+(res.j.error||"failed");return;}
+        hsOvMsg.textContent="Forced on for "+hours+"h.";
+        renderHotspot(res.j);
+      }).catch(function(e){hsOvBtnList.forEach(function(x){x.disabled=false;});hsOvMsg.textContent="Error: "+e.message;});
+    });
+  });
+  document.getElementById("hsOvCancel").addEventListener("click",function(){
+    var rt=rtok(hsOvMsg); if(!rt)return;
+    var cb=document.getElementById("hsOvCancel"); cb.disabled=true;
+    hsOvMsg.textContent="cancelling…";
+    post("/v1/hotspot/override",{hours:0},rt).then(function(res){
+      cb.disabled=false;
+      if(!res.ok){hsOvMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      hsOvMsg.textContent="Forced-on cancelled.";
+      renderHotspot(res.j);
+    }).catch(function(e){cb.disabled=false;hsOvMsg.textContent="Error: "+e.message;});
+  });
+
   // Airplane trigger + IP rotate. The cycle blocks ~15-30s (radio drop + PDP
   // re-attach + hotspot restart); disable all three buttons while it runs.
   var apMsg=document.getElementById("apMsg");
@@ -1481,7 +1990,7 @@ const dashboardHTML = `<!DOCTYPE html>
       apBusy(false);
       if(!res.ok){apMsg.textContent="Error: "+(res.j.error||"failed");return;}
       apMsg.textContent=done(res.j);
-      tick(); // refresh header IP + airplane state now
+      tick(true); // refresh header IP + airplane state now, ignoring cadence
     }).catch(function(e){apBusy(false);apMsg.textContent="Error: "+e.message;});
   }
   document.getElementById("rotateBtn").addEventListener("click",function(){
@@ -1530,8 +2039,15 @@ const dashboardHTML = `<!DOCTYPE html>
       apBtns.forEach(function(b){b.disabled=false;}); hb.disabled=false;
       if(!res.ok){apMsg.textContent="Error: "+(res.j.error||"failed");return;}
       hsActive=!!res.j.active; renderHotspotBtn();
-      apMsg.innerHTML=res.j.active?(ICN_WIFI+"hotspot on"):(stopping?"hotspot off":(ICN_WARN+"hotspot did not come up — retry"));
-      tick();
+      var msg=res.j.active?(ICN_WIFI+"hotspot on"):(stopping?"hotspot off":(ICN_WARN+"hotspot did not come up — retry"));
+      // A manual start is undone by the auto-toggle within one hotspot-on tick
+      // (≤3 min) if a whitelisted network is still in range — say so, and point
+      // at the fix, instead of leaving the owner to rediscover it themselves.
+      if(res.j.active&&!stopping&&lastHs&&lastHs.auto&&lastHs.matched&&lastHs.matched.length){
+        msg+=" · auto-toggle will turn it off again within 3 min (whitelisted network in range) — use Force on to keep it";
+      }
+      apMsg.innerHTML=msg;
+      tick(true);
     }).catch(function(e){apBtns.forEach(function(b){b.disabled=false;});hb.disabled=false;apMsg.textContent="Error: "+e.message;});
   });
 
@@ -1566,7 +2082,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var on=!!hp.auto_switch;
     document.getElementById("paState").textContent=on?"on":"off";
     document.getElementById("paDot").className="dot "+(on?"green":"off");
-    document.getElementById("paAccent").style.background=on?"var(--brand-end)":"var(--text-3)";
+    document.getElementById("paAccent").style.background=on?"var(--green)":"var(--ink-3)";
     document.getElementById("pCount").textContent=presetList.length?(presetList.length+"/12"):"";
     var box=document.getElementById("pList");
     var html;
@@ -1660,7 +2176,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if(!res.ok){msgEl.textContent="Error: "+(res.j.error||(res.j.code===409?"an apply is already running":"failed"));return;}
       renderPresets(res.j.hotspot_presets);
       msgEl.textContent="Now on “"+p.name+"” ("+esc(res.j.ssid||p.ssid)+").";
-      tick();
+      tick(true);
     }).catch(function(e){document.querySelectorAll(sel).forEach(function(b){b.disabled=false;});msgEl.textContent="Error: "+e.message;});
   }
   function deletePreset(p){
@@ -1708,42 +2224,100 @@ const dashboardHTML = `<!DOCTYPE html>
     });});
   }
 
-  // Per-tab polling: status+signal always (header indicator), plus only what
-  // the visible tab shows. Small screen, small request budget (~36-48/min,
-  // limit 120). allSettled so one failure renders what it can.
-  var extras={
-    home:[["/v1/usage",renderUsage]],
-    net:[["/v1/bands",renderBands],["/v1/hotspot",renderHotspot],["/v1/usbtether",renderUsbTether]],
-    clientsScr:[["/v1/clients",renderClients]],
-    system:[["/v1/cpu",renderCPU]],
-    settings:[["/v1/hotspot",renderHotspot]]
+  // Per-endpoint refresh cadence, not one fixed poll-everything tick: rows
+  // that change on their own (status/signal/usage/hotspot/clients) stay LIVE
+  // (5s); rows a background loop nudges every 30s+ (cpu) go MID (15s); rows
+  // that never change on their own and are expensive on the phone (bands and
+  // usbtether each cost a fresh dumpsys/ART-VM boot; history is a ~26KB read)
+  // go SLOW (60s). "*" rows run on every tab (the header + Home cards).
+  var LIVE=5000, MID=15000, SLOW=60000;
+  var polls={
+    "*":       [["/v1/status",renderStatus,LIVE],["/v1/signal",renderSignal,LIVE]],
+    home:      [["/v1/usage",renderUsage,LIVE]],
+    net:       [["/v1/hotspot",renderHotspot,LIVE],["/v1/bands",renderBands,SLOW],["/v1/usbtether",renderUsbTether,SLOW]],
+    clientsScr:[["/v1/clients",renderClients,LIVE]],
+    system:    [["/v1/cpu",renderCPU,MID],["/v1/thermal/history",function(d){thData=d;renderTempHist();},SLOW]],
+    settings:  [["/v1/hotspot",renderHotspot,LIVE],["/v1/usage",renderUsage,MID]]
   };
-  var inFlight=false, seq=0, gateSeeded=false;
-  function tick(){
+  var inFlight=false, seq=0, gateSeeded=false, lastAt={}, holdUntil=0;
+  function tick(force){
+    // A backgrounded/minimized tab polls for nothing; visibilitychange below
+    // fires a tick the instant it's shown again.
+    if(document.hidden)return Promise.resolve();
+    // A burst of 429s (shared bucket across dashboards + the kiosk) backs off
+    // for 20s; the FAB (force=true) still gets through.
+    if(!force&&Date.now()<holdUntil)return Promise.resolve();
     // No early return without a token: try anyway. If "open reads" is on, the
     // daemon serves reads tokenless; only a real 401 means we need the token.
-    if(inFlight)return; // don't stack overlapping ticks on a slow daemon
+    if(inFlight)return Promise.resolve(); // don't stack overlapping ticks on a slow daemon
     inFlight=true;
-    var mine=++seq, activeAtStart=active;
-    var ex=extras[activeAtStart]||[];
-    var reqs=[get("/v1/status"),get("/v1/signal")].concat(ex.map(function(e){return get(e[0]);}));
-    Promise.allSettled(reqs).then(function(rs){
+    var mine=++seq, activeAtStart=active, now=Date.now();
+    function due(row){return force||!lastAt[row[0]]||now-lastAt[row[0]]>=row[2]-250;}
+    var star=polls["*"].filter(due), tab=(polls[activeAtStart]||[]).filter(due);
+    var rows=star.concat(tab);
+    if(!rows.length){inFlight=false;return Promise.resolve();}
+    return Promise.allSettled(rows.map(function(row){return get(row[0]);})).then(function(rs){
       inFlight=false;
       if(mine!==seq)return; // a newer tick finished first; don't overwrite it
-      function val(i){return rs[i]&&rs[i].status==="fulfilled"?rs[i].value:null;}
-      var st=val(0),sg=val(1);
-      if(st)renderStatus(st); if(sg)renderSignal(sg);
-      if(activeAtStart===active)ex.forEach(function(e,i){var v=val(2+i);if(v)e[1](v);});
-      if(st){clearErr();}
-      else{var e=rs[0].reason,m=e&&e.message||"";
-        if(/ 401/.test(m))showErr("Needs a token. Scan the “Add a device” QR in Settings, open with ?token=…, or turn on Open reads.");
-        else showErr("Live data unavailable — "+(m||"status failed"));}
+      var stOk=false, rateLimited=false;
+      rs.forEach(function(r,i){
+        var row=rows[i], isStar=i<star.length;
+        if(r.status==="fulfilled"){
+          // Mark handled (and render) only when this row's owner tab is still
+          // showing — if the tab changed mid-flight, leave it unmarked so
+          // reopening that tab refetches instead of showing a stale card.
+          // "*" rows (header/Home cards) always render/mark.
+          if(isStar||activeAtStart===active){row[1](r.value);lastAt[row[0]]=now;}
+          if(row[0]==="/v1/status")stOk=true;
+        }else{
+          lastAt[row[0]]=now; // handled (failed); retry follows its normal cadence
+          var m=r.reason&&r.reason.message||"";
+          if(/ 429/.test(m))rateLimited=true;
+          if(row[0]==="/v1/status"){
+            if(/ 401/.test(m))showErr("Needs a token. Scan the “Add a device” QR in Settings, open with ?token=…, or turn on Open reads.");
+            else showErr("Live data unavailable — "+(m||"status failed"));
+          }
+        }
+      });
+      if(stOk)clearErr();
+      if(rateLimited){holdUntil=Date.now()+20000;showErr("Rate limited — retrying in 20 s.");}
       // Seed the adjust inputs once from live limits; don't clobber a field the
       // owner is editing on later ticks.
-      if(!gateSeeded&&st){document.getElementById("setGate").value=GATE_C;document.getElementById("setWarn").value=WARN_C;gateSeeded=true;}
+      if(!gateSeeded&&stOk){document.getElementById("setGate").value=GATE_C;document.getElementById("setWarn").value=WARN_C;gateSeeded=true;}
     }).catch(function(){inFlight=false;});
   }
-  tick();setInterval(tick,5000);
+  tick();setInterval(tick,LIVE);
+  document.addEventListener("visibilitychange",function(){if(!document.hidden)tick();});
+
+  // Deep link: /dashboard#system (etc.) opens that page directly. Runs after
+  // everything above is wired (selectScreen kicks a tick, which reads the
+  // cadence table), and selectScreen keeps the hash in sync afterwards — so a
+  // refresh, or pasting the URL into another browser on the tailnet, lands on
+  // the page that was meant.
+  (function(){
+    var h=location.hash.replace("#","");
+    if(!h||h===active)return;
+    var el=document.getElementById(h);
+    if(!el)return;
+    var i=screens.indexOf(el);
+    if(i<0)return;
+    deck.scrollLeft=i*deck.clientWidth;
+    selectScreen(h,true);
+  })();
+
+  // Refresh now. Usage rides along even off the Home tab (its elements are in
+  // the DOM either way), so one press lands live usage, battery and IP. Forces
+  // every row of the open tab regardless of cadence (on Net that's bands +
+  // usbtether too) and bypasses the 429 hold.
+  var fab=document.getElementById("refreshFab");
+  fab.addEventListener("click",function(){
+    var t0=new Date().getTime();
+    fab.disabled=true;fab.classList.add("spin");
+    Promise.allSettled([tick(true),get("/v1/usage").then(renderUsage)]).then(function(){
+      // Hold the spinner long enough to read as an action even on a fast reply.
+      setTimeout(function(){fab.disabled=false;fab.classList.remove("spin");},Math.max(0,450-(new Date().getTime()-t0)));
+    });
+  });
 
   // No service worker: for a single-file loopback/tailnet app it only risked
   // serving a stale cached page (it survives Cache-Control: no-store). Actively

@@ -5,7 +5,7 @@ A rooted Samsung Galaxy Z Flip 5 (SM-F731B) turned into a dedicated 5G/LTE modem
 A small local-only root service (Go) reports network, tethering, thermal, battery, and recent SMS state, can auto-switch hotspot presets by which Wi-Fi network is in range, and can safely prefer/recover 5G — all **without** ever bypassing thermal protection.
 
 <p align="center">
-  <img src="docs/assets/dashboard-home.png" alt="Home tab: data usage ring at 47% of 512 GB, battery and temperature cards, hotspot preset switcher" width="260">
+  <img src="docs/assets/dashboard-home.png" alt="Home tab: data usage ring against a configurable limit, battery and temperature cards, hotspot preset switcher" width="260">
   <img src="docs/assets/dashboard-network.png" alt="Network tab: LTE-CA signal detail with RSRP, RSRQ, SINR and band, hotspot state, USB tethering toggle" width="260">
   <img src="docs/assets/dashboard-system.png" alt="System tab: per-core CPU bars, memory use, thermal policy HOT and CPU mode eco (auto)" width="260">
 </p>
@@ -30,13 +30,13 @@ Old phones make great dedicated modems — always-on cellular radio, its own bat
 
 ## The dashboard
 
-One self-contained page: no build step, no CDN, no framework, no external asset beyond two webfonts. Six tabs — Home, Network, Clients, System, Presets, Settings — served straight off the phone's loopback.
+One self-contained page: no build step, no CDN, no framework, and no external assets at all — even the webfonts are gone, so nothing is fetched before first paint. Six tabs — Home, Network, Clients, System, Presets, Settings — plus the Inbox, served straight off the phone's loopback.
 
-It follows a measured dark design system: every raised surface is a vertical gradient over a single flat `#1e1e1e` page, depth comes from lighting (shadows and inset bevels) rather than texture, and each tab binds one of seven named accent gradients — so the whole screen recolours per section from two CSS variables.
+It follows a "midnight glass" design system: frosted translucent cards with hairline borders and soft depth over a near-black aurora ground, one teal→emerald gradient accent with glow, and status colour (green/amber/red) reserved for live state. The cover-screen kiosk shares the exact same design tokens — a compiled-in test asserts the two pages cannot drift — while running on a true-black OLED ground with no blur, since the Flex Window is lit whenever the phone is closed.
 
 Accessibility is checked rather than assumed: every text node clears WCAG AA contrast, controls are 44px touch targets, tabs are real `tablist`/`tabpanel` semantics with focus moved into the panel on switch, and the meters animate with `transform` rather than layout properties so the poll loop doesn't reflow the page.
 
-Typography is **Be Vietnam Pro** + **Inter**, chosen because both ship a `vietnamese` subset — a face without one drops diacritics to a system fallback and breaks mid-word.
+Typography is the system UI stack (a modern sans on every Android/WebView that serves this page) with tabular figures everywhere numbers change, so digits don't jitter as values tick. The Vietnamese lunar date on the Home tab is computed in JS, so no font subset is needed to keep diacritics intact.
 
 ## Recommended: put it behind Tailscale
 

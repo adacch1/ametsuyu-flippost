@@ -31,7 +31,7 @@ if (!TELEGRAM_TOKEN || !DAEMON_BASE_URL || !READ_STATUS) {
 }
 
 const owners = new Set(OWNER_CHAT_IDS.split(',').map((s) => s.trim()).filter(Boolean));
-const CAP_BYTES = Number(DATA_CAP_GB) * 1024 ** 3;
+const CAP_BYTES = Number(DATA_CAP_GB) * 1e9; // decimal GB, matching the daemon's *_human formatting
 const API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
 
 // ---- daemon calls -----------------------------------------------------------
@@ -111,7 +111,11 @@ const fmt = {
   statusFull(j, u, s, cl, hs) {
     const t = j.thermal || {}, b = j.battery || {}, n = j.network || {}, ip = j.wan_ip || {}, h = j.health || {};
     const battPct = Math.round(b.level ?? 0);
-    const capPct = u.month_bytes && CAP_BYTES ? Math.min(100, Math.round((100 * u.month_bytes) / CAP_BYTES)) : 0;
+    // Prefer the daemon's own configured cap/period meter; fall back to
+    // DATA_CAP_GB against month-to-date only when no limit is set yet.
+    const cap = u.limit_bytes > 0 ? u.limit_bytes : CAP_BYTES;
+    const used = u.limit_bytes > 0 ? u.period_bytes : u.month_bytes;
+    const capPct = used && cap ? Math.min(100, Math.round((100 * used) / cap)) : 0;
     const L = [];
     L.push('📊 <b>Z Flip 5 — status</b>');
     L.push(`📶 <b>${esc(n.display || n.type || '—')}</b>${n.operator ? ' · ' + esc(n.operator) : ''}${j.airplane ? ' ✈️ airplane' : ''}`);
@@ -289,8 +293,13 @@ async function pollAlerts() {
 
     const ru = await callDaemon(CMDS.usage, {});
     const us = ru.status === 200 ? ru.json : {};
-    const near = us.month_bytes > 0.9 * CAP_BYTES;
-    if (near && !lastCapNear) broadcast(`📊 Data cap near: ${esc(us.month_human)} of ${DATA_CAP_GB} GB used.`);
+    // Same cap/used choice as statusFull above: the daemon's own limit_bytes/
+    // period_bytes when configured, DATA_CAP_GB/month_bytes otherwise.
+    const cap = us.limit_bytes > 0 ? us.limit_bytes : CAP_BYTES;
+    const used = us.limit_bytes > 0 ? us.period_bytes : us.month_bytes;
+    const usedHuman = us.limit_bytes > 0 ? us.period_human : us.month_human;
+    const near = cap > 0 && used > 0.9 * cap;
+    if (near && !lastCapNear) broadcast(`📊 Data cap near: ${esc(usedHuman)} of ${Math.round(cap / 1e9)} GB used.`);
     lastCapNear = near;
   } catch (e) {
     unreachableStreak++;

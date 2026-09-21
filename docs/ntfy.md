@@ -16,7 +16,7 @@ extra fan-out to phones/watches/desktops that have the ntfy app.
 - **Private by default:** `ntfy/server.yml` sets `auth-default-access: deny-all`
   — nobody can publish or subscribe without a token grant. Not an open relay.
 - **Not exposed publicly:** the port is bound to `127.0.0.1:8080` on the host;
-  reach it over the tailnet with `tailscale serve`, never on `0.0.0.0`.
+  reach it over the tailnet with `tailscale serve`, never on a public/all-interfaces bind.
 - **Retention:** `cache-duration: 168h` (7 days of message history in the topic).
 
 ## First-run: create a token

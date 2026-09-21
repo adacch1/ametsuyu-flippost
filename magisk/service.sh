@@ -81,6 +81,14 @@ EOF
       "http://127.0.0.1:${PORT:-18080}" >> "$LOG" 2>&1
   fi
 
+  # The SSID auto-toggle scans for whitelisted networks, and the scan-only
+  # interface only exists when this flag is on. Keep it separate from wifi_on,
+  # which stays 0 deliberately: a STA associated on 5GHz forces the SoftAP down
+  # to 2.4GHz (DBS) and costs the hotspot its 802.11ax/80MHz link. Scanning
+  # ALSO needs location services on, but that is the owner's switch to throw —
+  # the daemon reports paused:location_off rather than turning it on for them.
+  settings put global wifi_scan_always_enabled 1
+
   # Hotspot on boot (owner request): enable the data-sharing Wi-Fi hotspot using
   # the phone's SAVED SoftAP config (SSID/passphrase already set in Settings).
   # The root tether helper runs through app_process and calls the framework
@@ -104,6 +112,20 @@ EOF
 
   # The zip does not preserve the exec bit; ensure the binary is runnable.
   [ -f "$BIN" ] && chmod 0755 "$BIN"
+
+  # Always-on cover display, half of it: never sleep while on a charger (7 =
+  # AC|USB|wireless), so the kiosk stays readable on a phone that lives on a
+  # cable. The other half is FLAG_KEEP_SCREEN_ON in the kiosk activity, which
+  # covers the unplugged case. Recorded first so uninstall.sh can put the
+  # owner's value back rather than guessing a default.
+  if [ ! -f "$DATADIR/stay-on.prev" ]; then
+    settings get global stay_on_while_plugged_in > "$DATADIR/stay-on.prev" 2>/dev/null
+  fi
+  settings put global stay_on_while_plugged_in 7
+
+  # Cover-screen home: keep the kiosk on the Flex Window. See coverwatch.sh for
+  # why this is a watcher rather than a home-activity declaration.
+  sh "$MODDIR/coverwatch.sh" &
 
   # Watchdog: restart the daemon if it dies. Backoff avoids a tight crash loop.
   # ZF5_MODDIR lets the daemon find the helper jar (tether/wifi-scan).

@@ -7,8 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,6 +35,10 @@ type Thermal struct {
 	GateC    float64 `json:"gate_c"`
 	Safe     bool    `json:"safe"`
 	Source   string  `json:"source"`
+	// MaxRawC is set only on the display copy handleStatus serves (see
+	// thermalSmoother): the instantaneous value MaxC was smoothed from.
+	// omitempty keeps /v1/thermal and every existing test byte-identical.
+	MaxRawC float64 `json:"temp_max_raw_c,omitempty"`
 }
 
 type Battery struct {
@@ -269,4 +275,52 @@ func runCmd(name string, args ...string) string {
 		return ""
 	}
 	return string(out)
+}
+
+// thermalSmoother keeps the last thermalSmoothN raw hottest-zone samples and
+// serves their median for DISPLAY ONLY. The gate (Thermal) keeps reading raw:
+// the median lags a ramp by ~6 s, so it must never feed a safety decision.
+// Measured 2026-09-18 at idle: max-of-zones swung 40.8->47.1 C within 12 s
+// because a different big-core TSENS spikes each second; battery moved 0.1 C.
+type thermalSmoother struct {
+	mu   sync.Mutex
+	ring []float64 // oldest first, len <= thermalSmoothN
+}
+
+const (
+	thermalSmoothN     = 7               // 7 x 2 s = 14 s window; tolerates 3 spikes
+	thermalSmoothEvery = 2 * time.Second // ponytail: fixed cadence, expose in config only if lag matters
+)
+
+func (t *thermalSmoother) push(maxC float64) {
+	if maxC <= 0 { // degraded/unreadable sweep: keep the window honest
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.ring = append(t.ring, maxC)
+	if len(t.ring) > thermalSmoothN {
+		t.ring = t.ring[1:]
+	}
+}
+
+// median returns (value, ok); ok is false until the first good sample.
+func (t *thermalSmoother) median() (float64, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.ring) == 0 {
+		return 0, false
+	}
+	s := append([]float64(nil), t.ring...)
+	sort.Float64s(s)
+	return s[len(s)/2], true // upper median on even counts: biased warm, never below the base
+}
+
+func (t *thermalSmoother) run() {
+	tick := time.NewTicker(thermalSmoothEvery)
+	defer tick.Stop()
+	for range tick.C {
+		_, max, _ := readThermalZones()
+		t.push(max)
+	}
 }

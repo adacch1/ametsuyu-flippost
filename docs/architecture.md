@@ -35,8 +35,8 @@ Confirmed on-device by Todo 1: SELinux + dm-verity enforcing, Knox tripped
 
 See `schemas/api.openapi.json`. Read endpoints require the `read-status` scope;
 `/v1/sms/recent` and `/v1/notifications/recent` require `sms`; writes
-(`/v1/tether`, `/v1/prefer5g`, `/v1/cooldown`, `/v1/service/restart`) require
-`radio-control`.
+(`/v1/tether`, `/v1/prefer5g`, `/v1/cooldown`, `/v1/service/restart`,
+`/v1/usage/quota`, `/v1/usage/reset`) require `radio-control`.
 
 Both `sms`-scope reads are pull-only and neither is ever reachable from the
 Discord relay. Body redaction is compiled off on this donor phone
@@ -48,7 +48,13 @@ turning it off closes them again.
 `/v1/health` and the device-host block of `/v1/status` report CPU load (1/5/15m),
 core count, RAM used %, battery temp, and the hottest thermal zone — sourced from
 `/proc/loadavg`, `/proc/meminfo`, and `/sys/class/thermal` (reference collector:
-`tools/collect-metrics.sh`).
+`tools/collect-metrics.sh`). The `/v1/status` view smooths `temp_max_c` to a
+14-second median so a single-sample TSENS spike doesn't flicker the display;
+the gate stays instantaneous, so `safe` and `policy_state` never lag. The
+daemon also records that same median once a minute into hour and day
+averages served by `GET /v1/thermal/history` (see [Temperature
+history](dashboard.md#temperature-history)); the gate never reads this
+history either.
 
 ## Safety semantics
 

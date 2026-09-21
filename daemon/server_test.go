@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -134,6 +137,76 @@ func TestRateLimit429(t *testing.T) {
 	}
 }
 
+// TestHotspotOverrideEndpoint exercises the timed force-on override end to
+// end: auth, hours validation, the immediate start on arm, and that
+// cancelling (hours:0) clears both the response fields and the persisted
+// file. hotspotOverridePath is redirected to a temp file BEFORE NewServer,
+// since NewHotspotController loads it at construction.
+func TestHotspotOverrideEndpoint(t *testing.T) {
+	oldPath := hotspotOverridePath
+	hotspotOverridePath = filepath.Join(t.TempDir(), "hotspot_override.json")
+	t.Cleanup(func() { hotspotOverridePath = oldPath })
+
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	startCalls := 0
+	s.hs.apUp = func() bool { return false } // AP stays down so every arm tries to start it
+	s.hs.start = func() bool { startCalls++; return true }
+
+	rc := strings.Repeat("c", 64)
+	post := func(body, token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/v1/hotspot/override", strings.NewReader(body))
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := post(`{"hours":4}`, ""); w.Code != 401 {
+		t.Fatalf("no token: want 401, got %d", w.Code)
+	}
+	if w := post(`{"hours":25}`, rc); w.Code != 400 {
+		t.Fatalf("hours=25: want 400, got %d", w.Code)
+	}
+	if w := post(`{"hours":-1}`, rc); w.Code != 400 {
+		t.Fatalf("hours=-1: want 400, got %d", w.Code)
+	}
+
+	w := post(`{"hours":4}`, rc)
+	if w.Code != 200 {
+		t.Fatalf("hours=4: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var st HotspotStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.OverrideUntil == "" || st.OverrideLeftS <= 0 {
+		t.Fatalf("expected override fields in the response, got %+v", st)
+	}
+	if startCalls != 1 {
+		t.Fatalf("start calls = %d, want 1", startCalls)
+	}
+	if _, err := os.Stat(hotspotOverridePath); err != nil {
+		t.Fatalf("override file not written: %v", err)
+	}
+
+	w = post(`{"hours":0}`, rc)
+	if w.Code != 200 {
+		t.Fatalf("hours=0: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var st2 HotspotStatus // fresh struct: json.Unmarshal wouldn't clear st's omitempty fields
+	if err := json.Unmarshal(w.Body.Bytes(), &st2); err != nil {
+		t.Fatal(err)
+	}
+	if st2.OverrideUntil != "" || st2.OverrideLeftS != 0 {
+		t.Fatalf("override fields should be cleared after cancel: %+v", st2)
+	}
+	if _, err := os.Stat(hotspotOverridePath); !os.IsNotExist(err) {
+		t.Fatalf("override file should be removed after cancel, stat err=%v", err)
+	}
+}
+
 func TestConfigRejectsPublicBind(t *testing.T) {
 	c := testCfg()
 	c.BindHost = "0.0.0.0"
@@ -158,6 +231,85 @@ func TestConfigThermalFailClosedRequired(t *testing.T) {
 	}
 }
 
+func TestStatusThermalDisplaySmoothed(t *testing.T) {
+	// Proves smoothing is display-only: /v1/status shows the median while
+	// safe/policy_state stay derived from the raw (unsmoothed) value, and
+	// /v1/thermal never sees the median at all.
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	s.smooth.push(45)
+	s.smooth.push(52)
+	s.smooth.push(45)
+
+	w := do(s, "GET", "/v1/status", strings.Repeat("a", 64))
+	if w.Code != 200 {
+		t.Fatalf("status: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{`"temp_max_c":45`, `"temp_max_raw_c":40`, `"safe":true`, `"policy_state":"SAFE"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("status body missing %q: %s", want, body)
+		}
+	}
+
+	w = do(s, "GET", "/v1/thermal", strings.Repeat("a", 64))
+	if w.Code != 200 {
+		t.Fatalf("thermal: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body = w.Body.String()
+	if !strings.Contains(body, `"temp_max_c":40`) {
+		t.Fatalf("thermal body: want raw temp_max_c:40, got %s", body)
+	}
+	if strings.Contains(body, "temp_max_raw_c") {
+		t.Fatalf("thermal body must stay raw-only, got %s", body)
+	}
+}
+
+// TestThermalHistoryEndpoint proves /v1/thermal/history is read-status
+// guarded, empty-but-non-null before any sample, wired to the smoother (not
+// the raw collector), and that /v1/thermal stays exactly as before -- no
+// history/minutes leak into the gate's own endpoint.
+func TestThermalHistoryEndpoint(t *testing.T) {
+	old := tempsPath
+	tempsPath = filepath.Join(t.TempDir(), "temps.json")
+	t.Cleanup(func() { tempsPath = old })
+
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	rs := strings.Repeat("a", 64)
+
+	if w := do(s, "GET", "/v1/thermal/history", ""); w.Code != 401 {
+		t.Fatalf("no token: want 401, got %d", w.Code)
+	}
+	if w := do(s, "POST", "/v1/thermal/history", rs); w.Code != 405 {
+		t.Fatalf("POST: want 405, got %d", w.Code)
+	}
+
+	w := do(s, "GET", "/v1/thermal/history", rs)
+	if w.Code != 200 {
+		t.Fatalf("GET: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{`"method"`, `"minutes":[]`, `"hours":[]`, `"days":[]`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("empty history missing %q: %s", want, body)
+		}
+	}
+
+	// fakeCollector's raw Thermal() always reports MaxC 40; pushing 45 into
+	// the smoother and sampling must show 45, proving temps.go reads the
+	// display path (s.smooth) and never col.Thermal.
+	s.smooth.push(45)
+	s.temps.Sample()
+	body = do(s, "GET", "/v1/thermal/history", rs).Body.String()
+	if !strings.Contains(body, ",45]") {
+		t.Fatalf("history body missing the smoother-fed sample: %s", body)
+	}
+
+	thermalBody := do(s, "GET", "/v1/thermal", rs).Body.String()
+	if thermalBody != `{"battery_c":30,"temp_max_c":40,"warn_c":44,"gate_c":46,"safe":true,"source":"sysfs+battery"}`+"\n" {
+		t.Fatalf("/v1/thermal changed shape: %s", thermalBody)
+	}
+}
+
 func TestSetCPUModeEndpoint(t *testing.T) {
 	s := NewServer(testCfg(), fakeCollector{safe: true})
 	req := httptest.NewRequest("POST", "/v1/cpu/mode", strings.NewReader(`{"mode":"performance"}`))
@@ -176,5 +328,151 @@ func TestSetCPUModeEndpoint(t *testing.T) {
 	s.ServeHTTP(w, req)
 	if w.Code != 400 {
 		t.Fatalf("invalid cpu mode: want 400, got %d", w.Code)
+	}
+}
+
+// TestUsageQuotaEndpoint exercises the admin-gated quota write end to end:
+// scope enforcement, validation, and that a saved quota round-trips through
+// GET /v1/usage. usagePath is redirected to a temp file so the tracker's
+// background state doesn't leak between tests.
+func TestUsageQuotaEndpoint(t *testing.T) {
+	old := usagePath
+	usagePath = filepath.Join(t.TempDir(), "usage.json")
+	t.Cleanup(func() { usagePath = old })
+
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	rc, rs := strings.Repeat("c", 64), strings.Repeat("a", 64)
+
+	if w := postJSON(s, "/v1/usage/quota", rs, `{"limit_bytes":1}`); w.Code != 403 {
+		t.Fatalf("read-status token: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	for _, bad := range []string{
+		`{"period":"yearly"}`,
+		`{"reset_time":"25:00"}`,
+		`{"limit_bytes":-1}`,
+	} {
+		if w := postJSON(s, "/v1/usage/quota", rc, bad); w.Code != 400 {
+			t.Errorf("body %s: want 400, got %d: %s", bad, w.Code, w.Body.String())
+		}
+	}
+
+	// 6 GiB = 6442450944 bytes.
+	w := postJSON(s, "/v1/usage/quota", rc, `{"limit_bytes":6442450944,"period":"monthly","reset_time":"00:00","reset_day":1}`)
+	if w.Code != 200 {
+		t.Fatalf("valid quota: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if s.cfg.Quota.LimitBytes != 6442450944 || s.cfg.Quota.Period != "monthly" {
+		t.Fatalf("cfg.Quota not updated: %+v", s.cfg.Quota)
+	}
+
+	got := do(s, "GET", "/v1/usage", rs).Body.String()
+	for _, want := range []string{`"limit_bytes":6442450944`, `"period":"monthly"`, `"reset_time":"00:00"`, `"reset_day":1`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("GET /v1/usage missing %q: %s", want, got)
+		}
+	}
+}
+
+// TestUsageResetEndpoint proves the manual reset is scope-gated, zeroes only
+// period_bytes, and leaves month_bytes (day buckets) untouched.
+func TestUsageResetEndpoint(t *testing.T) {
+	old := usagePath
+	usagePath = filepath.Join(t.TempDir(), "usage.json")
+	t.Cleanup(func() { usagePath = old })
+
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	rc, rs := strings.Repeat("c", 64), strings.Repeat("a", 64)
+
+	if w := postJSON(s, "/v1/usage/reset", rs, `{}`); w.Code != 403 {
+		t.Fatalf("read-status token: want 403, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Give the tracker some month-to-date bytes to prove the reset doesn't
+	// touch them.
+	s.usage.st.Days = map[string]uint64{time.Now().Format(dayLayout): 1234}
+
+	w := postJSON(s, "/v1/usage/reset", rc, `{}`)
+	if w.Code != 200 {
+		t.Fatalf("reset: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `"period_bytes":0`) {
+		t.Errorf("reset response missing period_bytes:0: %s", body)
+	}
+	if !strings.Contains(body, `"month_bytes":1234`) {
+		t.Errorf("reset response: month_bytes changed, want unchanged 1234: %s", body)
+	}
+}
+
+// TestUsageQuotaPersistsToConfig proves persistQuota's raw-map rewrite
+// round-trips through a real config.json on disk: a reload (LoadConfig, as a
+// restart would do) sees the new quota, a sibling key the Config struct
+// doesn't model survives the rewrite untouched, and the endpoint still gates
+// on the token even with a real cfgPath wired up (open_control is off in
+// testCfg). TestUsageQuotaEndpoint above covers the same handler with
+// s.cfgPath empty (no persist attempted); this test is the persist path.
+func TestUsageQuotaPersistsToConfig(t *testing.T) {
+	old := usagePath
+	usagePath = filepath.Join(t.TempDir(), "usage.json")
+	t.Cleanup(func() { usagePath = old })
+
+	// testCfg() through a raw map plus one key the Config struct doesn't
+	// model (hotspot.enable_on_boot), so a struct-marshal rewrite (which
+	// would silently drop it) is distinguishable from persistQuota's actual
+	// raw-map rewrite.
+	cfgBytes, err := json.Marshal(testCfg())
+	if err != nil {
+		t.Fatalf("marshal testCfg: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(cfgBytes, &m); err != nil {
+		t.Fatalf("unmarshal testCfg: %v", err)
+	}
+	hs, _ := m["hotspot"].(map[string]any)
+	if hs == nil {
+		hs = map[string]any{}
+		m["hotspot"] = hs
+	}
+	hs["enable_on_boot"] = true
+	rawCfg, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(cfgPath, rawCfg, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	s.cfgPath = cfgPath // main.go sets this after NewServer too; mirror that here
+	rc := strings.Repeat("c", 64)
+	body := `{"limit_bytes":6000000000,"period":"weekly","reset_time":"07:30"}`
+
+	if w := postJSON(s, "/v1/usage/quota", "", body); w.Code != 401 {
+		t.Fatalf("no token: want 401, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if w := postJSON(s, "/v1/usage/quota", rc, body); w.Code != 200 {
+		t.Fatalf("quota post: want 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// (a) a restart reloads the persisted quota.
+	reloaded, err := LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	want := Quota{LimitBytes: 6000000000, Period: "weekly", ResetTime: "07:30", ResetDay: 1}
+	if reloaded.Quota != want {
+		t.Fatalf("reloaded quota = %+v, want %+v", reloaded.Quota, want)
+	}
+
+	// (b) the sibling key survives the raw-map rewrite.
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if !strings.Contains(string(raw), `"enable_on_boot": true`) {
+		t.Fatalf("sibling key enable_on_boot lost by persistQuota rewrite: %s", raw)
 	}
 }

@@ -31,6 +31,16 @@ type Server struct {
 	hs      *HotspotController
 	presets *PresetManager
 	bench   *BenchThermalController
+	// smooth serves a median-of-N display value for handleStatus only; the
+	// gate (col.Thermal) never reads it. Zero value is usable (empty ring ->
+	// median() reports !ok -> handleStatus falls back to raw), so NewServer
+	// needs no change and the test suite never spawns a sysfs sampler.
+	smooth thermalSmoother
+	// temps records s.smooth.median (display path) once a minute into
+	// persisted hour/day averages for the dashboard's history chart. It
+	// reads ONLY the smoother — never col.Thermal / readThermalZones (the
+	// gate path), which this task must not touch.
+	temps *TempHistory
 	// Adjustable thermal limits (atomic float bits) so the owner can retune the
 	// gate at runtime; seeded from config, clamped to a safe range on write.
 	warnBits atomic.Uint64
@@ -47,6 +57,10 @@ type Server struct {
 	openControl atomic.Bool
 	// speedtestBusy: only one speedtest at a time (each is heavy on data + heat).
 	speedtestBusy atomic.Bool
+	// coverAccent: the cover screen's accent name, seeded from config and set
+	// from the control panel. atomic.Value because the kiosk reads it on every
+	// page load while a POST can rewrite it.
+	coverAccent atomic.Value
 	// cfgMu serializes the two config-mutating handlers (thermal limits, hotspot
 	// whitelist): they read-modify-write both s.cfg fields and config.json, so
 	// concurrent POSTs would otherwise race and lose updates.
@@ -90,8 +104,20 @@ func NewServer(cfg *Config, col Collector) *Server {
 	s := &Server{cfg: cfg, col: col, mux: http.NewServeMux(), rl: newRateLimiter(),
 		pol: NewPolicyEngine(warn, gate), usage: NewUsageTracker(usagePath),
 		cpu: NewCPUController(), hs: NewHotspotController(cfg.Hotspot.SSIDWhitelist)}
+	// s.smooth is addressable (s is a pointer), so this method value binds to
+	// &s.smooth: temps.go's only reader, forever the display path.
+	s.temps = NewTempHistory(tempsPath, s.smooth.median)
+	// Quota: clamp at load exactly like the thermal gate above — a bad
+	// hand-edited value must never fail Validate (headless device).
+	q, err := normalizeQuota(cfg.Quota)
+	if err != nil {
+		log.Printf("quota: %v (clamped)", err)
+	}
+	cfg.Quota = q
+	s.usage.SetQuota(q)
 	s.warnBits.Store(math.Float64bits(warn))
 	s.gateBits.Store(math.Float64bits(gate))
+	s.coverAccent.Store(normalizeCoverAccent(cfg.Cover.Accent))
 	s.openReads.Store(cfg.Dashboard.OpenReads)
 	s.openControl.Store(cfg.Dashboard.OpenControl)
 	// cfgPath is set on s AFTER NewServer (see main), so resolve it lazily.
@@ -189,11 +215,17 @@ func (s *Server) runHotspotAuto() {
 			}
 			s.presets.MaybeAutoSwitch(s.hs.LastSeenSSIDs())
 		}
+		d := hotspotScanIdle
 		if hotspotActive() {
-			time.Sleep(hotspotScanActive)
-		} else {
-			time.Sleep(hotspotScanIdle)
+			d = hotspotScanActive
 		}
+		// Wake early at an override's deadline so "exactly that long" holds: the
+		// tick right after expiry runs normal whitelist logic (stop, if a
+		// whitelisted SSID is in range) instead of waiting out the full cadence.
+		if left := s.hs.OverrideLeft(); left > 0 && left < d {
+			d = left
+		}
+		time.Sleep(d)
 	}
 }
 
@@ -201,9 +233,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/status", s.guard("read-status", s.handleStatus))
 	s.mux.HandleFunc("/v1/health", s.guard("read-status", s.handleHealth))
 	s.mux.HandleFunc("/v1/thermal", s.guard("read-status", s.handleThermal))
+	// Minute/hour/day temperature history, sourced from s.smooth (display
+	// path) only — see TempHistory's doc comment. Never gates anything.
+	s.mux.HandleFunc("/v1/thermal/history", s.guard("read-status", s.handleThermalHistory))
 	s.mux.HandleFunc("/v1/network", s.guard("read-status", s.handleNetwork))
 	s.mux.HandleFunc("/v1/battery", s.guard("read-status", s.handleBattery))
 	s.mux.HandleFunc("/v1/usage", s.guard("read-status", s.handleUsage))
+	// Quota config + manual reset: config/meter writes, not radio actions, so no
+	// thermal gate — but still radio-control, and rate-limited like every other
+	// write (radio_per_min).
+	s.mux.HandleFunc("/v1/usage/quota", s.guardAuth("radio-control", http.MethodPost, s.handleUsageQuota))
+	s.mux.HandleFunc("/v1/usage/reset", s.guardAuth("radio-control", http.MethodPost, s.handleUsageReset))
 	s.mux.HandleFunc("/v1/signal", s.guard("read-status", s.handleSignal))
 	s.mux.HandleFunc("/v1/clients", s.guard("read-status", s.handleClients))
 	s.mux.HandleFunc("/v1/bands", s.guard("read-status", s.handleBands))
@@ -219,6 +259,11 @@ func (s *Server) routes() {
 	// On-demand scan-only refresh of the nearby-networks list (radio-control:
 	// it drives the radio off-channel briefly and is rate-limited like a write).
 	s.mux.HandleFunc("/v1/hotspot/scan", s.guardAuth("radio-control", http.MethodPost, s.handleHotspotScan))
+	// Timed force-on override: a policy write like the whitelist above — not
+	// thermal-gated. The start it can trigger is the auto loop's existing
+	// ungated startHotspot() path (same one /v1/tether uses), so this adds no
+	// new bypass, only a bounded (<=24h) window where the whitelist is ignored.
+	s.mux.HandleFunc("/v1/hotspot/override", s.guardAuth("radio-control", http.MethodPost, s.handleHotspotOverride))
 	// Hotspot presets: GET lists (read-status, passphrases redacted), POST upserts
 	// (radio-control). Method-dispatched so the two scopes coexist on one path.
 	s.mux.HandleFunc("/v1/presets", s.handlePresets)
@@ -240,14 +285,17 @@ func (s *Server) routes() {
 	// enables/disables the battery-less-donor bypass. Never thermally gated —
 	// enabling it while hot is the point.
 	s.mux.HandleFunc("/v1/thermal/bench", s.dispatchThermalBench)
-	// Dashboard HTML (no data without a token; the page fetches /v1/* itself).
-	s.mux.HandleFunc("/", s.handleDashboard)
+	// HTML (no data without a token; the pages fetch /v1/* themselves). The
+	// kiosk WebView loads "/" with no path of its own, so the cover screen owns
+	// the root and the full control panel moved one path down. handleCover is
+	// also the 404 catch-all for every unmatched path.
+	s.mux.HandleFunc("/", s.handleCover)
 	s.mux.HandleFunc("/dashboard", s.handleDashboard)
 	// PWA: manifest + service worker so the dashboard installs to the home screen.
 	// Static, no token (they carry no device data).
 	s.mux.HandleFunc("/manifest.webmanifest", s.handleManifest)
 	s.mux.HandleFunc("/sw.js", s.handleServiceWorker)
-	s.mux.HandleFunc("/icon.svg", s.handleIcon)
+	s.mux.HandleFunc("/logo.png", s.handleIcon)
 	// QR of "<this dashboard's origin>/?token=<read-status>" so a new device
 	// scans instead of typing the token. read-status guarded (you must already
 	// be able to read to share access).
@@ -277,6 +325,12 @@ func (s *Server) routes() {
 	// Full DEVICE reboot (not just the daemon). radio-control; the module's
 	// service.sh brings the daemon + hotspot back on boot.
 	s.mux.HandleFunc("/v1/device/reboot", s.guardAuth("radio-control", http.MethodPost, s.handleDeviceReboot))
+	// Cover home: kiosk on the Flex Window, or hand it back to the stock clock.
+	s.mux.HandleFunc("/v1/cover/home", s.guardAuth("radio-control", http.MethodPost, s.handleCoverHome))
+	// Cover accent: repaints the kiosk's buttons. A config write, not a radio
+	// action, so it carries no thermal gate — but it is still radio-control,
+	// because anything that rewrites config.json is an owner action.
+	s.mux.HandleFunc("/v1/cover/accent", s.guardAuth("radio-control", http.MethodPost, s.handleCoverAccent))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
@@ -413,20 +467,35 @@ func (s *Server) handleThermal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed))
 }
 
+func (s *Server) handleThermalHistory(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.temps.Report())
+}
+
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	th := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
 	worst := th.BatteryC
 	if th.MaxC > worst {
 		worst = th.MaxC
 	}
+	// disp is a display-only copy: the safety-relevant fields (safe, source,
+	// policy_state below) stay computed from the raw th so a smoothed number
+	// can never make an UNSAFE gate look SAFE (or vice versa). Only the
+	// headline number is swapped for the 14 s median.
+	disp := th
+	if m, ok := s.smooth.median(); ok {
+		disp.MaxRawC = th.MaxC
+		disp.MaxC = m
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"health":          s.col.Health(),
-		"thermal":         th,
+		"thermal":         disp,
 		"policy_state":    string(classify(worst, s.effectiveWarnC(), s.effectiveGateC())),
 		"network":         s.col.Network(),
 		"battery":         s.col.Battery(),
 		"wan_ip":          deviceWanIP(),
 		"airplane":        airplaneOn(),
+		"cover_home":      coverHomeOn(),
+		"cover_accent":    s.coverAccent.Load(),
 		"open_reads":      s.openReads.Load(),
 		"open_control":    s.openControl.Load(),
 		"bench":           s.bench.Status(),
@@ -630,6 +699,7 @@ func (s *Server) handleAirplane(w http.ResponseWriter, r *http.Request) {
 	safe := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed).Safe
 	switch body.Mode {
 	case "on":
+		s.usage.Sample() // the toggle can recreate rmnet_data*; fold the unsampled tail into today first
 		airplaneSet(true)
 		writeJSON(w, http.StatusOK, map[string]any{"airplane": true, "hotspot_active": hotspotActive(), "wan_ip": deviceWanIP()})
 	case "off":
@@ -640,6 +710,7 @@ func (s *Server) handleAirplane(w http.ResponseWriter, r *http.Request) {
 		res := map[string]any{"airplane": false, "hotspot_active": restartHotspotRetry(), "wan_ip": deviceWanIP()}
 		writeJSON(w, http.StatusOK, res)
 	case "cycle":
+		s.usage.Sample() // same as "on": the cycle also recreates rmnet_data*
 		writeJSON(w, http.StatusOK, airplaneCycle(safe))
 	default:
 		writeErr(w, http.StatusBadRequest, "mode must be on, off, or cycle")
@@ -667,6 +738,24 @@ func (s *Server) handleHotspotScan(w http.ResponseWriter, r *http.Request) {
 	// enable-location-then-Scan flow doesn't show "paused" next to fresh results.
 	st.Paused = paused
 	writeJSON(w, http.StatusOK, st)
+}
+
+// handleHotspotOverride forces the hotspot on for exactly N hours regardless
+// of whitelist matches, then reverts to normal auto-toggle logic. Body:
+// {"hours":N}, 0 cancels an active override.
+func (s *Server) handleHotspotOverride(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Hours int `json:"hours"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	if body.Hours < 0 || body.Hours > hotspotOverrideMaxH {
+		writeErr(w, http.StatusBadRequest, "hours must be 0..24")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.hs.SetOverride(time.Duration(body.Hours)*time.Hour))
 }
 
 // handlePresets dispatches by method: GET lists presets (read-status), POST
@@ -913,6 +1002,55 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
+// handleCoverHome puts the kiosk on the cover screen, or hands the panel back to
+// the stock Samsung clock. Same scope as the other device controls.
+func (s *Server) handleCoverHome(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil || body.Enabled == nil {
+		writeErr(w, http.StatusBadRequest, "enabled must be true or false")
+		return
+	}
+	if err := setCoverHome(*body.Enabled, s.cfg.CoverDim()); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	note := "cover screen handed back to the Samsung clock"
+	if *body.Enabled {
+		note = "kiosk returns to the cover screen in a few seconds"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cover_home": *body.Enabled, "note": note})
+}
+
+// handleCoverAccent repaints the cover screen. Body: {"accent":"coral"}.
+// Rejects anything outside the seven named accents: the value is substituted
+// into the served HTML, so an unvalidated string would be an injection point.
+func (s *Server) handleCoverAccent(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Accent string `json:"accent"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	if !validCoverAccent(body.Accent) {
+		writeErr(w, http.StatusBadRequest, "accent must be one of "+strings.Join(coverAccents, ", "))
+		return
+	}
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	if s.cfgPath != "" {
+		if err := persistCoverAccent(s.cfgPath, body.Accent); err != nil {
+			writeErr(w, http.StatusInternalServerError, "persist failed: "+err.Error())
+			return
+		}
+	}
+	s.cfg.Cover.Accent = body.Accent
+	s.coverAccent.Store(body.Accent)
+	writeJSON(w, http.StatusOK, map[string]any{"cover_accent": body.Accent})
+}
+
 // handleDeviceReboot reboots the whole phone after replying. The module's
 // late-start service restores the daemon + hotspot on boot (verified). Used by
 // the Telegram /reboot command and scheduled auto-reboot.
@@ -921,6 +1059,8 @@ func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(2 * time.Second) // let the response flush before the radio drops
 		log.Printf("device reboot requested via API")
+		s.usage.Flush() // persist the current sample; the reboot resets the counter to 0
+		s.temps.Flush()
 		runCmd("reboot")
 	}()
 }
@@ -962,10 +1102,12 @@ func (rl *rateLimiter) allow(key string, perMin int) bool {
 }
 
 func (s *Server) ListenAndServe() error {
-	// Background data-usage sampler so day/week/month accrue even without hits.
+	// Background data-usage sampler so day/week/month accrue even without
+	// hits. 15 s cadence (nextUsageWake), shortened so one sample lands just
+	// after local midnight instead of up to one interval late.
 	go func() {
 		for {
-			time.Sleep(60 * time.Second)
+			time.Sleep(s.usage.NextWake(time.Now()))
 			s.usage.Sample()
 		}
 	}()
@@ -975,6 +1117,12 @@ func (s *Server) ListenAndServe() error {
 	go s.runHotspotAuto()
 	// Bench thermal watcher: re-asserts the bypass and arms the 95C critical trip.
 	go s.bench.Watch()
+	// Display-only thermal median sampler (see thermalSmoother); the gate
+	// path never reads it.
+	go s.smooth.run()
+	// Minute-by-minute temperature history, sampled from the display path
+	// above (s.smooth), never the gate.
+	go s.temps.run()
 	addr := s.cfg.BindHost + ":" + itoa(s.cfg.BindPort)
 	log.Printf("zflip5-modemd listening on %s (loopback)", addr)
 	srv := &http.Server{Addr: addr, Handler: s, ReadHeaderTimeout: 5 * time.Second}

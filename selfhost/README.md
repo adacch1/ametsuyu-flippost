@@ -97,9 +97,11 @@ The bot polls the daemon every 60s and publishes to ntfy **only on state change*
 |---|---|---|
 | Thermal leaves SAFE (policy HOT/COOLDOWN, or `thermal.safe=false`) | 🔥 Modem thermal | high |
 | Thermal returns to safe | ✅ Modem cooled | default |
-| Monthly data > 90% of `DATA_CAP_GB` (512) | 📊 Data cap near | high |
+| Usage > 90% of the configured cap | 📊 Data cap near | high |
 
-Tune the cap with `DATA_CAP_GB` in `.env` (matches the dashboard's 512 GB ring).
+The bots prefer the daemon's own `limit_bytes`/`period_bytes` (the same cap
+and meter the dashboard's ring shows). `DATA_CAP_GB` in `.env` (decimal GB)
+is the fallback, checked against `month_bytes`, for when no limit is set yet.
 
 ## Security notes
 

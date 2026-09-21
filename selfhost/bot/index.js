@@ -26,7 +26,7 @@ const {
 } = process.env;
 
 const owners = new Set(OWNER_USER_IDS.split(',').map((s) => s.trim()).filter(Boolean));
-const CAP_BYTES = Number(DATA_CAP_GB) * 1024 ** 3;
+const CAP_BYTES = Number(DATA_CAP_GB) * 1e9; // decimal GB, matching the daemon's *_human formatting
 
 // Route table mirrors the daemon's read/write scopes. sms is intentionally absent.
 const ROUTES = {
@@ -116,9 +116,14 @@ async function pollAlerts() {
     lastThermalSafe = safe;
 
     const us = JSON.parse((await callDaemon(ROUTES.usage)).text);
-    const near = us.month_bytes > 0.9 * CAP_BYTES;
+    // Prefer the daemon's own configured cap/period meter; fall back to
+    // DATA_CAP_GB against month-to-date only when no limit is set yet.
+    const cap = us.limit_bytes > 0 ? us.limit_bytes : CAP_BYTES;
+    const used = us.limit_bytes > 0 ? us.period_bytes : us.month_bytes;
+    const usedHuman = us.limit_bytes > 0 ? us.period_human : us.month_human;
+    const near = cap > 0 && used > 0.9 * cap;
     if (near && !lastCapNear) {
-      publishNtfy('📊 Data cap near', `${us.month_human} of ${DATA_CAP_GB} GB used this month`, { priority: 'high', tags: 'chart_with_upwards_trend' });
+      publishNtfy('📊 Data cap near', `${usedHuman} of ${Math.round(cap / 1e9)} GB used this period`, { priority: 'high', tags: 'chart_with_upwards_trend' });
     }
     lastCapNear = near;
   } catch (e) {

@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["bind_host", "bind_port", "tokens", "ingress", "thermal", "sms", "rate_limits"],
-  "$comment": "cpu and hotspot are written by the first-boot template and persisted by the daemon; they are optional so older configs still validate.",
+  "$comment": "cpu, hotspot, and quota are written by the first-boot template and/or persisted by the daemon; they are optional so older configs still validate.",
   "properties": {
     "bind_host": {
       "type": "string",
@@ -56,7 +56,7 @@
         "warn_c": { "type": "number", "minimum": 30, "default": 44, "description": "Owner-adjustable warn threshold (floor 30C, must stay below gate_c). Clamped by the daemon on load and on every retune." },
         "gate_c": { "type": "number", "minimum": 31, "maximum": 48, "description": "Above this (battery temp or hottest sysfs zone) radio/tether writes are refused. Hard-capped at 48C: the gate can be retuned but never disabled." },
         "fail_closed": { "type": "boolean", "const": true, "description": "If thermal cannot be read, treat as unsafe. PRIMARY source is battery temp + /sys/class/thermal; Android status is advisory." },
-        "bench": { "type": "boolean", "default": false, "description": "Explicit opt-in for battery-less donor hardware on a bench supply: disables OS thermal mitigation (thermal zones + HAL + Samsung kernel cpufreq_limit) and lifts the app gate to 70C. A critical trip at 70C restores mitigation. Off by default." }
+        "bench": { "type": "boolean", "default": false, "description": "Explicit opt-in for battery-less donor hardware on a bench supply: disables thermal zones/cooling and lifts Samsung kernel cpufreq_limit + app gate to 70C. Vendor thermal HALs stay running (system_server needs them); the 5s watchdog wins the tug-of-war. Critical trip at 70C restores mitigation. Off by default." }
       }
     },
     "cpu": {
@@ -67,6 +67,15 @@
         "mode": { "type": "string", "enum": ["auto", "performance", "balanced", "eco", "off"], "default": "auto" }
       }
     },
+    "cover": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Cover-screen (Flex Window) kiosk page. Owner-set from the control panel; the kiosk has no settings screen of its own.",
+      "properties": {
+        "accent": { "type": "string", "enum": ["dawn", "sunflower", "coral", "breeze", "ocean", "wisteria", "slate"], "default": "sunflower", "description": "Which named accent gradient the cover screen paints its buttons with." },
+        "dim": { "type": "integer", "minimum": 0, "maximum": 255, "default": 30, "description": "Cover-panel brightness while the kiosk owns the Flex Window. The panel is always on, so it runs dim to limit burn-in and current draw. 0 leaves the owner's brightness alone; omit the key for the default." }
+      }
+    },
     "hotspot": {
       "type": "object",
       "additionalProperties": false,
@@ -74,6 +83,17 @@
       "properties": {
         "enable_on_boot": { "type": "boolean", "default": true, "description": "Bring the hotspot up at boot from the saved SoftAP config." },
         "ssid_whitelist": { "type": "array", "items": { "type": "string", "maxLength": 32 }, "maxItems": 16, "default": [], "description": "Auto-toggle: hotspot turns OFF when any listed SSID is scanned nearby, back ON when none is seen. Empty disables the feature." }
+      }
+    },
+    "quota": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Data-cap meter: a limit to show progress against, and a reset schedule. Meter only — nothing gates the hotspot, radio, or CPU on it. Absent/zero-value means unconfigured, and the dashboard prompts the owner to pick a plan.",
+      "properties": {
+        "limit_bytes": { "type": "integer", "minimum": 0, "default": 0, "description": "Bytes per period. 0 = no limit configured (panel shows a first-run prompt)." },
+        "period": { "type": "string", "enum": ["daily", "weekly", "monthly", "manual"], "default": "monthly", "description": "Reset cadence. weekly always resets Monday (matches week_bytes); manual never resets on its own." },
+        "reset_time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "default": "00:00", "description": "Device-local time of day the period resets, HH:MM." },
+        "reset_day": { "type": "integer", "minimum": 1, "maximum": 28, "default": 1, "description": "Day of month the period resets (monthly only). Capped at 28 so every month has that day." }
       }
     },
     "sms": {

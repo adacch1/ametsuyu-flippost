@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"log"
 	"os"
 	"os/exec"
 	"sort"
@@ -27,6 +29,16 @@ const (
 	hotspotScanActive = 3 * time.Minute  // hotspot on: gentle on clients
 )
 
+// hotspotOverridePath persists the timed force-on deadline (see SetOverride)
+// across a daemon restart or reboot. Runtime state, not owner config: it
+// lives beside usage.json, never in config.json (which is schema-validated).
+// Tests point it at a t.TempDir() file.
+var hotspotOverridePath = "/data/adb/zflip5-modem/hotspot_override.json"
+
+// hotspotOverrideMaxH bounds SetOverride's hours parameter so a forgotten
+// override can't pin the hotspot up indefinitely.
+const hotspotOverrideMaxH = 24
+
 // moduleDir locates the installed Magisk module (for the helper jar). The
 // watchdog exports ZF5_MODDIR; the fallback is the module's install path.
 func moduleDir() string {
@@ -37,16 +49,22 @@ func moduleDir() string {
 }
 
 type HotspotStatus struct {
-	Active     bool       `json:"active"`
-	Auto       bool       `json:"auto"`             // whitelist non-empty
-	Paused     string     `json:"paused,omitempty"` // location_off | scan_failed
-	Whitelist  []string   `json:"whitelist"`
-	Matched    []string   `json:"matched"`               // whitelisted SSIDs seen in last scan
-	Nearby     []NearbyAP `json:"nearby"`                // last scanned networks, each flagged whitelisted
-	NearbyScan string     `json:"nearby_scan,omitempty"` // RFC3339 of the scan that produced Nearby
-	APCount    int        `json:"ap_count"`
-	LastScan   string     `json:"last_scan,omitempty"` // RFC3339
-	LastAction string     `json:"last_action,omitempty"`
+	Active       bool       `json:"active"`
+	Auto         bool       `json:"auto"`                    // whitelist non-empty
+	Paused       string     `json:"paused,omitempty"`        // location_off | scan_failed
+	PausedDetail string     `json:"paused_detail,omitempty"` // helper's RESULT=FAIL reason (scan_failed only)
+	Whitelist    []string   `json:"whitelist"`
+	Matched      []string   `json:"matched"`               // whitelisted SSIDs seen in last scan
+	Nearby       []NearbyAP `json:"nearby"`                // last scanned networks, each flagged whitelisted
+	NearbyScan   string     `json:"nearby_scan,omitempty"` // RFC3339 of the scan that produced Nearby
+	APCount      int        `json:"ap_count"`
+	LastScan     string     `json:"last_scan,omitempty"` // RFC3339
+	LastAction   string     `json:"last_action,omitempty"`
+	// OverrideUntil/OverrideLeftS are present only while SetOverride's timed
+	// force-on is active (see step()); the whitelist stop decision is
+	// suppressed until this deadline.
+	OverrideUntil string `json:"override_until,omitempty"` // RFC3339
+	OverrideLeftS int    `json:"override_left_s,omitempty"`
 }
 
 // ScanAP is one scanned network (dedup'd by SSID, strongest RSSI kept).
@@ -63,17 +81,118 @@ type NearbyAP struct {
 }
 
 type HotspotController struct {
-	mu         sync.Mutex
-	whitelist  []string
-	misses     int      // consecutive scans with no whitelisted SSID seen
-	gen        uint     // bumped on every SetWhitelist; guards the miss-counter write in step()
-	lastNearby []ScanAP // last scan result (from the auto loop OR a manual Scan)
-	lastScanAt string   // RFC3339 of lastNearby
-	status     HotspotStatus
+	mu            sync.Mutex
+	whitelist     []string
+	misses        int      // consecutive scans with no whitelisted SSID seen
+	gen           uint     // bumped on every SetWhitelist; guards the miss-counter write in step()
+	lastNearby    []ScanAP // last scan result (from the auto loop OR a manual Scan)
+	lastScanAt    string   // RFC3339 of lastNearby
+	status        HotspotStatus
+	overrideUntil time.Time // zero when no forced-on override is active
+
+	// Seams: tests swap these for stubs; NewHotspotController wires the real
+	// probes/actuators (same pattern as UsageTracker.now/readB in usage.go).
+	now   func() time.Time
+	locOn func() bool
+	scan  func() ([]ScanAP, bool, string)
+	apUp  func() bool
+	start func() bool
+	stop  func() bool
 }
 
 func NewHotspotController(whitelist []string) *HotspotController {
-	return &HotspotController{whitelist: whitelist}
+	h := &HotspotController{
+		whitelist: whitelist,
+		now:       time.Now,
+		locOn:     locationEnabled,
+		scan:      scanAPs,
+		apUp:      hotspotActive,
+		start:     startHotspot,
+		stop:      stopHotspot,
+	}
+	h.loadOverride()
+	return h
+}
+
+// loadOverride restores a persisted force-on deadline so it survives a daemon
+// restart or a reboot mid-window. Absent, unparseable, or already-past
+// deadlines leave the override inactive; only a present-but-corrupt file logs
+// (a merely-expired one is the normal end state and not worth a log line).
+func (h *HotspotController) loadOverride() {
+	b, err := os.ReadFile(hotspotOverridePath)
+	if err != nil {
+		return
+	}
+	var v struct {
+		Until time.Time `json:"until"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		log.Printf("hotspot override: bad override file %s, ignoring: %v", hotspotOverridePath, err)
+		return
+	}
+	if v.Until.After(h.now()) {
+		h.overrideUntil = v.Until
+	}
+}
+
+// persistOverride writes the override deadline via the shared atomic
+// tmp+rename writer (config.go's writeConfigAtomic) rather than duplicating it.
+func (h *HotspotController) persistOverride(until time.Time) error {
+	b, err := json.Marshal(struct {
+		Until time.Time `json:"until"`
+	}{until})
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(hotspotOverridePath, b)
+}
+
+// SetOverride forces the hotspot on until now+d (d <= 0 cancels), persists the
+// deadline so it survives a daemon restart or reboot, and — when arming —
+// brings the AP up right away instead of waiting for the next tick.
+func (h *HotspotController) SetOverride(d time.Duration) HotspotStatus {
+	var until time.Time
+	if d > 0 {
+		until = h.now().Add(d)
+	}
+	h.mu.Lock()
+	h.overrideUntil = until
+	h.mu.Unlock()
+
+	if until.IsZero() {
+		if err := os.Remove(hotspotOverridePath); err != nil && !os.IsNotExist(err) {
+			log.Printf("hotspot override: remove failed: %v", err)
+		}
+		log.Printf("hotspot override: cancelled")
+	} else {
+		if err := h.persistOverride(until); err != nil {
+			log.Printf("hotspot override: persist failed: %v", err)
+		}
+		log.Printf("hotspot override: forced on until %s", until.Format(time.RFC3339))
+		if !h.apUp() {
+			action := "start failed (forced on)"
+			if h.start() {
+				action = "started: forced on"
+			}
+			h.mu.Lock()
+			h.status.LastAction = action
+			h.mu.Unlock()
+			log.Printf("hotspot auto: %s", action)
+		}
+	}
+	return h.Status()
+}
+
+// OverrideLeft reports time remaining on a forced-on override, 0 when none is
+// active.
+func (h *HotspotController) OverrideLeft() time.Duration {
+	h.mu.Lock()
+	until := h.overrideUntil
+	h.mu.Unlock()
+	if left := until.Sub(h.now()); left > 0 {
+		return left
+	}
+	return 0
 }
 
 func (h *HotspotController) Whitelist() []string {
@@ -103,14 +222,24 @@ func (h *HotspotController) Status() HotspotStatus {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	st := h.status
-	st.Active = hotspotActive()
+	st.Active = h.apUp()
 	st.Auto = len(h.whitelist) > 0
 	st.Whitelist = append([]string{}, h.whitelist...)
 	if !st.Auto { // feature off: drop stale scan facts, keep only the last action
-		st.Paused, st.Matched, st.APCount, st.LastScan = "", nil, 0, ""
+		st.Paused, st.PausedDetail, st.Matched, st.APCount, st.LastScan = "", "", nil, 0, ""
 	}
 	if st.Matched == nil {
 		st.Matched = []string{}
+	}
+	// Override fields ride independently of Auto: a force-on can run with an
+	// empty whitelist too (see step()).
+	if left := h.overrideUntil.Sub(h.now()); left > 0 {
+		st.OverrideUntil = h.overrideUntil.Format(time.RFC3339)
+		secs := int64(left / time.Second)
+		if left%time.Second != 0 {
+			secs++ // ceil: 1ms left should still read as "1s", not "0s"
+		}
+		st.OverrideLeftS = int(secs)
 	}
 	// Nearby survives the auto-off drop above: it is populated by manual scans
 	// too, so the owner can see what's in range and pick what to whitelist even
@@ -134,7 +263,7 @@ func (h *HotspotController) Scan(now string) string {
 	if !locationEnabled() {
 		return "location_off"
 	}
-	aps, ok := scanAPs()
+	aps, ok, _ := scanAPs()
 	if !ok {
 		return "scan_failed"
 	}
@@ -248,58 +377,177 @@ func runHelper(class string, args ...string) string {
 	return string(out)
 }
 
-func scanAPs() ([]ScanAP, bool) {
-	return parseScanAPs(runHelper("com.zflip5.tether.WifiScan"))
+// scanAPs runs the WifiScan helper. On failure it also self-heals the one
+// scan precondition the daemon owns (see rearmScanning) and reports why
+// (helper's RESULT=FAIL reason, or "no output") so the dashboard can show
+// something more actionable than "paused".
+func scanAPs() ([]ScanAP, bool, string) {
+	out := runHelper("com.zflip5.tether.WifiScan")
+	aps, ok := parseScanAPs(out)
+	if !ok {
+		rearmScanning()
+		return nil, false, scanFailReason(out)
+	}
+	return aps, true, ""
 }
 
+// scanFailReason extracts the text after the helper's "RESULT=FAIL reason="
+// marker, defaulting to "no output" when the helper produced nothing to
+// explain the failure from.
+func scanFailReason(out string) string {
+	const marker = "RESULT=FAIL reason="
+	idx := strings.Index(out, marker)
+	if idx < 0 {
+		return "no output"
+	}
+	rest := out[idx+len(marker):]
+	if nl := strings.IndexAny(rest, "\r\n"); nl >= 0 {
+		rest = rest[:nl]
+	}
+	return strings.TrimSpace(rest)
+}
+
+// rearmScanning re-asserts the ONE scan precondition the daemon owns:
+// Android's wifi_scan_always_enabled setting (service.sh sets it once at
+// boot; nothing re-asserts it after that). A no-op on a healthy device.
+// Deliberately does NOT touch wifi_on or Location: bringing up a 5GHz STA
+// would force the SoftAP off its HE80 band onto 2.4GHz (DBS), and Location is
+// the owner's own switch.
+func rearmScanning() {
+	if strings.TrimSpace(runCmd("settings", "get", "global", "wifi_scan_always_enabled")) == "1" {
+		return
+	}
+	runCmd("settings", "put", "global", "wifi_scan_always_enabled", "1")
+	log.Printf("hotspot auto: wifi_scan_always_enabled was off — re-armed (wifi_on untouched)")
+}
+
+// SoftAP bring-up is asynchronous: the framework answers RESULT=STARTED while
+// swlan0 is still coming up, so a status read taken at that moment reports a
+// hotspot that is on its way as one that failed — the "did not come up, retry"
+// the dashboard showed over a working AP. Both toggles wait for the interface
+// to agree before returning, which fixes every caller at once (the HTTP
+// toggle, the airplane cycle's restore, and the auto-toggle loop) instead of
+// teaching each one to re-poll. service.sh's boot path already assumed this
+// delay with its sleep-10 retries.
+const (
+	hotspotSettle   = 10 * time.Second
+	hotspotPollWait = 400 * time.Millisecond
+)
+
+// waitFor polls until probe reports want or the budget runs out, and returns
+// the LAST observation either way — so callers report what the interface is
+// actually doing, not what it was asked to do.
+func waitFor(want bool, probe func() bool, budget, interval time.Duration) bool {
+	deadline := time.Now().Add(budget)
+	for {
+		got := probe()
+		if got == want || !time.Now().Before(deadline) {
+			return got
+		}
+		time.Sleep(interval)
+	}
+}
+
+// startHotspot reports whether the AP is UP, not merely whether the command was
+// accepted. code=5 is the framework's "already active".
 func startHotspot() bool {
 	out := runHelper("com.zflip5.tether.TetherStart")
-	return strings.Contains(out, "RESULT=STARTED") || strings.Contains(out, "code=5")
+	if !strings.Contains(out, "RESULT=STARTED") && !strings.Contains(out, "code=5") {
+		return false
+	}
+	return waitFor(true, hotspotActive, hotspotSettle, hotspotPollWait)
 }
 
+// stopHotspot reports whether the AP is actually down.
 func stopHotspot() bool {
-	return strings.Contains(runHelper("com.zflip5.tether.TetherStart", "stop"), "RESULT=STOPPED")
+	if !strings.Contains(runHelper("com.zflip5.tether.TetherStart", "stop"), "RESULT=STOPPED") {
+		return false
+	}
+	return !waitFor(false, hotspotActive, hotspotSettle, hotspotPollWait)
 }
 
-// step runs one scan/decide/act cycle.
+// step runs one scan/decide/act cycle. A timed override (SetOverride) forces
+// the hotspot on and suppresses the whitelist stop decision until it expires;
+// scanning still runs during an override so the nearby list and the preset
+// auto-switch keep working, and misses is left untouched so the debounce
+// picks up where it left off once the override ends. Logs only on
+// transitions (pause/resume, each start/stop taken or failed) — a steadily
+// paused or steadily forced-on loop adds zero log lines per tick.
 func (h *HotspotController) step() {
 	h.mu.Lock()
 	wl := append([]string(nil), h.whitelist...)
 	misses := h.misses
 	gen := h.gen
+	until := h.overrideUntil
 	h.mu.Unlock()
-	if len(wl) == 0 {
+	forced := h.now().Before(until)
+	if len(wl) == 0 && !forced {
 		return // feature off; Status() reports auto=false live
 	}
 
-	st := HotspotStatus{LastScan: time.Now().Format(time.RFC3339)}
+	st := HotspotStatus{}
+	acted := ""
 	defer func() {
 		h.mu.Lock()
+		prev := h.status
 		if st.LastAction == "" {
-			st.LastAction = h.status.LastAction // keep last real action visible
+			st.LastAction = prev.LastAction // keep last real action visible
 		}
 		h.status = st
 		h.mu.Unlock()
+		if st.Paused != prev.Paused {
+			switch {
+			case st.Paused == "":
+				log.Printf("hotspot auto: scanning resumed")
+			case st.PausedDetail != "":
+				log.Printf("hotspot auto: scanning paused: %s (%s)", st.Paused, st.PausedDetail)
+			default:
+				log.Printf("hotspot auto: scanning paused: %s", st.Paused)
+			}
+		}
+		if acted != "" {
+			log.Printf("hotspot auto: %s", acted)
+		}
 	}()
 
-	if !locationEnabled() {
+	if forced && !h.apUp() {
+		st.LastAction = "start failed (forced on)"
+		if h.start() {
+			st.LastAction = "started: forced on"
+		}
+		acted = st.LastAction
+	}
+	if len(wl) == 0 {
+		return // forced on, no whitelist configured: nothing to scan for
+	}
+
+	st.LastScan = h.now().Format(time.RFC3339)
+	if !h.locOn() {
 		st.Paused = "location_off"
 		return
 	}
-	aps, ok := scanAPs()
+	aps, ok, reason := h.scan()
 	if !ok {
-		st.Paused = "scan_failed"
+		st.Paused, st.PausedDetail = "scan_failed", reason
 		return
 	}
 	seen := apNames(aps)
 	st.APCount = len(aps)
 	st.Matched = matchWhitelist(seen, wl)
-	active := hotspotActive()
-	action, newMisses := decideHotspot(len(st.Matched), active, misses)
 
 	h.mu.Lock()
 	h.lastNearby = aps // feed the Settings "Nearby networks" list from the auto loop too
 	h.lastScanAt = st.LastScan
+	h.mu.Unlock()
+
+	if forced {
+		return // whitelist decision suppressed; normal logic resumes at the deadline
+	}
+
+	active := h.apUp()
+	action, newMisses := decideHotspot(len(st.Matched), active, misses)
+
+	h.mu.Lock()
 	if h.gen == gen { // don't clobber a SetWhitelist reset that landed mid-scan
 		h.misses = newMisses
 	}
@@ -307,16 +555,26 @@ func (h *HotspotController) step() {
 
 	switch action {
 	case "stop":
-		if stopHotspot() {
+		// Re-check right before acting: an override armed while this scan was
+		// in flight must win, so a start doesn't immediately follow this stop.
+		h.mu.Lock()
+		stillForced := h.now().Before(h.overrideUntil)
+		h.mu.Unlock()
+		if stillForced {
+			return
+		}
+		if h.stop() {
 			st.LastAction = "stopped: saw " + strings.Join(st.Matched, ", ")
 		} else {
 			st.LastAction = "stop failed"
 		}
+		acted = st.LastAction
 	case "start":
-		if startHotspot() {
+		if h.start() {
 			st.LastAction = "started: whitelist not in range"
 		} else {
 			st.LastAction = "start failed"
 		}
+		acted = st.LastAction
 	}
 }

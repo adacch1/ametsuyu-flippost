@@ -67,3 +67,28 @@ func TestParseNetworkNoClaim5G(t *testing.T) {
 		t.Fatalf("should not claim network: %+v", n)
 	}
 }
+
+func TestThermalSmootherMedian(t *testing.T) {
+	var ts thermalSmoother
+	if _, ok := ts.median(); ok {
+		t.Fatal("empty ring should report ok=false")
+	}
+	ts.push(0) // degraded sweep: must be ignored
+	if _, ok := ts.median(); ok {
+		t.Fatal("push(0) should not seed the ring")
+	}
+	// 12 raw max-of-zones samples observed on-device at idle 2026-09-18.
+	samples := []float64{41.2, 42.0, 42.4, 44.0, 44.4, 41.6, 42.4, 41.0, 43.6, 44.8, 40.8, 47.1}
+	for _, s := range samples {
+		ts.push(s)
+	}
+	if len(ts.ring) != thermalSmoothN {
+		t.Fatalf("ring len = %d, want capped at %d", len(ts.ring), thermalSmoothN)
+	}
+	// last 7 pushed = [41.6,42.4,41.0,43.6,44.8,40.8,47.1]; sorted =
+	// [40.8,41.0,41.6,42.4,43.6,44.8,47.1] -> median 42.4.
+	got, ok := ts.median()
+	if !ok || got != 42.4 {
+		t.Fatalf("median = (%v, %v), want (42.4, true)", got, ok)
+	}
+}

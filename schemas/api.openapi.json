@@ -121,6 +121,14 @@
      "gate_c": {
       "type": "number"
      },
+     "temp_max_c": {
+      "type": "number",
+      "description": "In /v1/status, temp_max_c is the median of the last 7 sysfs sweeps (14 s); temp_max_raw_c is the instantaneous value the gate used. /v1/thermal is always raw."
+     },
+     "temp_max_raw_c": {
+      "type": "number",
+      "description": "In /v1/status, temp_max_c is the median of the last 7 sysfs sweeps (14 s); temp_max_raw_c is the instantaneous value the gate used. /v1/thermal is always raw."
+     },
      "safe": {
       "type": "boolean",
       "description": "PRIMARY gate: battery temp + /sys/class/thermal. Fails closed."
@@ -132,6 +140,149 @@
        "android",
        "degraded"
       ]
+     }
+    }
+   },
+   "ThermalHistory": {
+    "type": "object",
+    "description": "Minute/hour/day temperature history, sourced from the same 14 s display median /v1/status serves as temp_max_c -- never the raw safety-gate reading. Every bucket is the sample-weighted mean of the 1-minute samples that fell inside it in device-local time: hour = sum(c)/n over that hour's samples, day = sum(c)/n over that day's samples (never a mean of the hour means, so a partial hour after a restart does not get a full hour's weight). Retention: 24h of minute samples, 7d of hour buckets, 40d of day buckets.",
+    "required": [
+     "method",
+     "minutes",
+     "hours",
+     "days"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "method": {
+      "type": "string",
+      "description": "The aggregation method, in prose (see this schema's description)."
+     },
+     "minutes": {
+      "type": "array",
+      "description": "[unix_seconds, temp_c] pairs, oldest first, one per recorded minute.",
+      "items": {
+       "type": "array",
+       "prefixItems": [
+        { "type": "number", "description": "unix_seconds" },
+        { "type": "number", "description": "temp_c" }
+       ],
+       "minItems": 2,
+       "maxItems": 2
+      }
+     },
+     "hours": {
+      "type": "array",
+      "description": "Hour buckets, ascending by t.",
+      "items": { "$ref": "#/components/schemas/ThermalHistoryPoint" }
+     },
+     "days": {
+      "type": "array",
+      "description": "Day buckets, ascending by t.",
+      "items": { "$ref": "#/components/schemas/ThermalHistoryPoint" }
+     }
+    }
+   },
+   "ThermalHistoryPoint": {
+    "type": "object",
+    "required": ["t", "c", "n"],
+    "additionalProperties": false,
+    "properties": {
+     "t": { "type": "string", "description": "Local hour (\"2006-01-02T15\") or day (\"2006-01-02\") key." },
+     "c": { "type": "number", "description": "Sample-weighted mean temp_c for this bucket." },
+     "n": { "type": "integer", "description": "Number of minute samples folded into this bucket." }
+    }
+   },
+   "UsageReport": {
+    "type": "object",
+    "required": [
+     "today_bytes",
+     "week_bytes",
+     "month_bytes",
+     "today_human",
+     "week_human",
+     "month_human",
+     "source",
+     "period_bytes",
+     "period_human",
+     "limit_bytes",
+     "period",
+     "reset_time",
+     "reset_day",
+     "last_reset",
+     "next_reset"
+    ],
+    "additionalProperties": false,
+    "properties": {
+     "today_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mobile bytes used since local midnight today (device-local calendar date)."
+     },
+     "week_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mobile bytes used since the start of the current ISO week: Monday 00:00, device-local time."
+     },
+     "month_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mobile bytes used since the 1st of the current calendar month, 00:00 device-local time."
+     },
+     "today_human": {
+      "type": "string",
+      "description": "today_bytes, formatted in SI decimal units (for example, \"1.23 GB\"). The *_bytes fields are always exact; *_human fields use 1 GB = 10^9 bytes, matching carrier data meters and Android's own data usage screen."
+     },
+     "week_human": {
+      "type": "string",
+      "description": "week_bytes, formatted the same way as today_human."
+     },
+     "month_human": {
+      "type": "string",
+      "description": "month_bytes, formatted the same way as today_human."
+     },
+     "source": {
+      "type": "string",
+      "const": "rmnet-delta",
+      "description": "Counters are read from rmnet_data* in /proc/net/dev; a counter reset (reboot) is treated as a fresh delta, never negative."
+     },
+     "period_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Mobile bytes used since last_reset (manual or scheduled). A meter only — never used to gate the hotspot, radio, or CPU."
+     },
+     "period_human": {
+      "type": "string",
+      "description": "period_bytes, formatted the same way as today_human."
+     },
+     "limit_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Configured data cap in bytes. 0 = no limit configured."
+     },
+     "period": {
+      "type": "string",
+      "enum": ["daily", "weekly", "monthly", "manual"],
+      "description": "Reset cadence for period_bytes/last_reset."
+     },
+     "reset_time": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+      "description": "Device-local time of day the period resets, HH:MM."
+     },
+     "reset_day": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 28,
+      "description": "Day of month the period resets (monthly only)."
+     },
+     "last_reset": {
+      "type": "string",
+      "description": "RFC3339 instant of the last reset (manual or scheduled), or \"\" if never reset."
+     },
+     "next_reset": {
+      "type": "string",
+      "description": "RFC3339 instant of the next scheduled reset, or \"\" for a manual period."
      }
     }
    },
@@ -322,6 +473,36 @@
      },
      "401": {
       "$ref": "#/components/responses/Unauthorized"
+     }
+    }
+   }
+  },
+  "/v1/thermal/history": {
+   "get": {
+    "summary": "Minute/hour/day temperature history (display-path median, never the raw gate)",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ThermalHistory"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
      }
     }
    }
@@ -545,7 +726,7 @@
   },
   "/v1/usage": {
    "get": {
-    "summary": "Data-usage report (day/week/month vs 512GB cap)",
+    "summary": "Data-usage report: today, ISO week to date, calendar month to date (device-local time)",
     "security": [
      {
       "bearerAuth": [
@@ -559,7 +740,90 @@
       "content": {
        "application/json": {
         "schema": {
-         "type": "object"
+         "$ref": "#/components/schemas/UsageReport"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/usage/quota": {
+   "post": {
+    "summary": "Set the data-cap limit and/or reset schedule (fields omitted from the body keep their current value)",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "requestBody": {
+     "required": false,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+         "limit_bytes": { "type": "integer", "minimum": 0, "description": "Bytes per period. 0 = no limit configured. Omit to keep the current limit; a limit-only edit never touches the period meter." },
+         "period": { "type": "string", "enum": ["daily", "weekly", "monthly", "manual"], "description": "Reset cadence. weekly always resets Monday; manual never resets on its own." },
+         "reset_time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "Device-local time of day the period resets, HH:MM." },
+         "reset_day": { "type": "integer", "minimum": 1, "maximum": 28, "description": "Day of month the period resets (monthly only)." }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "full usage report with the updated quota",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UsageReport"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "bad body, or an invalid period/reset_time/reset_day/limit_bytes value"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "500": {
+      "description": "config.json persist failed; the quota was NOT applied"
+     }
+    }
+   }
+  },
+  "/v1/usage/reset": {
+   "post": {
+    "summary": "Manually reset the data-usage period now (period_bytes -> 0, last_reset -> now); today/week/month are untouched",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "full usage report, freshly reset",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UsageReport"
         }
        }
       }
@@ -695,7 +959,7 @@
   },
   "/v1/hotspot": {
    "get": {
-    "summary": "Hotspot state + SSID-whitelist auto-toggle status",
+    "summary": "Hotspot state + SSID-whitelist auto-toggle status (paused/paused_detail when scanning can't run, override_until/override_left_s while a timed force-on is active)",
     "security": [
      {
       "bearerAuth": [
@@ -752,6 +1016,61 @@
      },
      "400": {
       "description": "invalid ssids"
+     }
+    }
+   }
+  },
+  "/v1/hotspot/override": {
+   "post": {
+    "summary": "Force the hotspot on for N hours regardless of whitelist matches, then revert (0 cancels); a policy write like the whitelist, not thermal-gated",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "hours"
+        ],
+        "additionalProperties": false,
+        "properties": {
+         "hours": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24,
+          "description": "0 cancels an active override"
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "hotspot status, with override_until/override_left_s set while forced on",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "hours outside 0..24"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
      }
     }
    }

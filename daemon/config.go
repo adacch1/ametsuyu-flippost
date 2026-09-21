@@ -41,7 +41,22 @@ type Config struct {
 		SSIDWhitelist []string `json:"ssid_whitelist"` // auto-toggle: off when seen, on when absent
 	} `json:"hotspot"`
 	HotspotPresets HotspotPresets `json:"hotspot_presets"` // named SoftAP configs + Wi-Fi-triggered auto-switch
-	Dashboard      struct {
+	Cover          struct {
+		// Accent: which of the seven named accent gradients the cover screen
+		// paints its buttons with. Owner-picked from the control panel, because
+		// the kiosk itself has no room for a settings screen.
+		Accent string `json:"accent"`
+		// Dim: cover-panel brightness (1..255) while the kiosk owns the Flex
+		// Window. A pointer so "absent" and "0" stay distinct: absent takes the
+		// default, 0 means leave the owner's brightness alone. What reads well
+		// depends on the room and the panel, so it is tunable rather than fixed.
+		Dim *int `json:"dim"`
+	} `json:"cover"`
+	// Quota: optional data-cap meter (limit + reset schedule). Zero value means
+	// "unconfigured" -> the dashboard shows a first-run prompt. See usage.go's
+	// Quota doc comment: meter only, never a gate.
+	Quota     Quota `json:"quota"`
+	Dashboard struct {
 		// OpenReads: serve read-status AND sms GETs WITHOUT a token (tailnet
 		// convenience; sms rides this switch by the owner's call on this donor
 		// phone). Reads only. Off by default.
@@ -50,6 +65,22 @@ type Config struct {
 		// tailnet-only, app-less device). Writes only. Off by default.
 		OpenControl bool `json:"open_control"`
 	} `json:"dashboard"`
+}
+
+// CoverDim returns the cover-panel brightness to run the kiosk at: the default
+// when unset, 0 when the owner turned dimming off, clamped otherwise.
+func (c *Config) CoverDim() int {
+	if c.Cover.Dim == nil {
+		return coverDimDefault
+	}
+	v := *c.Cover.Dim
+	if v <= 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return v
 }
 
 // CPUMode returns the configured CPU policy mode, defaulting to "auto".
@@ -102,6 +133,29 @@ func persistThermalBench(path string, enabled bool) error {
 		m["thermal"] = th
 	}
 	th["bench"] = enabled
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(path, out)
+}
+
+// persistCoverAccent rewrites only cover.accent, preserving every other key.
+func persistCoverAccent(path, accent string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	cv, _ := m["cover"].(map[string]any)
+	if cv == nil {
+		cv = map[string]any{}
+		m["cover"] = cv
+	}
+	cv["accent"] = accent
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -216,6 +270,35 @@ func persistHotspotPresets(path string, hp HotspotPresets) error {
 		return err
 	}
 	m["hotspot_presets"] = hv
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(path, out)
+}
+
+// persistQuota rewrites only the quota key, preserving every other key. The
+// struct is marshaled through JSON to a plain any so it lands in the map
+// without dropping sibling keys the daemon doesn't model (same trick as
+// persistHotspotPresets).
+func persistQuota(path string, q Quota) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	qb, err := json.Marshal(q)
+	if err != nil {
+		return err
+	}
+	var qv any
+	if err := json.Unmarshal(qb, &qv); err != nil {
+		return err
+	}
+	m["quota"] = qv
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err

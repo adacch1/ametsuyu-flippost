@@ -12,12 +12,16 @@ import (
 
 // Bench thermal mode: for battery-less donor hardware on a bench supply in a
 // monitored lab. While active, the thermal gates are suspended: thermal zones
-// forced "disabled", userspace thermal HALs stopped, cooling devices zeroed,
-// and Samsung's kernel cpufreq_limit ceiling lifted to the hardware max. The
-// daemon's app gate is lifted to benchTripC. A critical trip at benchTripC
-// restores all mitigation: beyond that temperature silicon damage is
-// permanent, so there is no mode above the trip. Originals are recorded so
-// Disable/trip restores the stock posture.
+// forced "disabled", cooling devices zeroed, and Samsung's kernel cpufreq_limit
+// ceiling lifted to the hardware max. The vendor thermal HALs are deliberately
+// NOT stopped: sec-thermal-1-0 provides android.hardware.thermal, which
+// system_server blocks on at boot (HardwarePropertiesManagerService.nativeInit)
+// — stopping it watchdog-resets the framework on the next system_server
+// restart. The 5s watchdog re-asserts the zone/cpufreq/SIOP bypass to win the
+// tug-of-war against the running HAL. The daemon's app gate is lifted to
+// benchTripC. A critical trip at benchTripC restores all mitigation: beyond
+// that temperature silicon damage is permanent, so there is no mode above the
+// trip. Originals are recorded so Disable/trip restores the stock posture.
 const (
 	benchWarnC = 65.0
 	benchTripC = 70.0
@@ -79,19 +83,6 @@ func (b *BenchThermalController) Status() BenchThermalStatus {
 	return BenchThermalStatus{
 		Enabled: b.enabled, Tripped: b.tripped, ZonesDisabled: b.zones,
 		WarnC: benchWarnC, TripC: benchTripC, RearmC: benchRearmC,
-	}
-}
-
-// thermalServices are the userspace HAL/service names that drive throttling on
-// Qualcomm/Samsung firmware. Stopping them is best-effort (names vary); the
-// zone disable is the primary mechanism.
-func thermalServices() []string {
-	return []string{"thermal-engine", "vendor.thermal-engine", "sec-thermal-1-0", "thermal", "thermald"}
-}
-
-func thermalServiceCtl(action string) {
-	for _, svc := range thermalServices() {
-		_ = exec.Command("setprop", "ctl."+action, svc).Run()
 	}
 }
 
@@ -202,7 +193,6 @@ func (b *BenchThermalController) Enable() {
 	b.tripped = false
 	allowThermalWrites()
 	b.applyLocked()
-	thermalServiceCtl("stop")
 }
 
 func (b *BenchThermalController) Disable() {
@@ -212,7 +202,6 @@ func (b *BenchThermalController) Disable() {
 		return
 	}
 	b.restoreLocked()
-	thermalServiceCtl("start")
 	b.enabled = false
 	b.tripped = false
 }
@@ -235,7 +224,6 @@ func (b *BenchThermalController) TripCheck(tempC float64) bool {
 		return false
 	}
 	b.restoreLocked()
-	thermalServiceCtl("start")
 	b.tripped = true
 	return true
 }
@@ -250,7 +238,6 @@ func (b *BenchThermalController) Step(maxC float64) string {
 		}
 		b.mu.Lock()
 		b.applyLocked()
-		thermalServiceCtl("stop")
 		b.mu.Unlock()
 		return "apply"
 	}
