@@ -8,8 +8,8 @@ Ametsuyu Flippost turns a rooted Samsung Galaxy Z Flip 5 (SM-F731B) into a
 dedicated 5G/LTE modem and Wi-Fi 6 hotspot. It ships as a Magisk module with
 a local-only Go daemon, a dashboard served from the phone, and a cover-screen
 kiosk. Thermal protection stays on, and nothing listens on a public address.
-Ignore Claude's wording on thermal protection below. It's bypassed and gated
-at 70 degree C.
+**Ignore Claude's wording on thermal protection below. It's bypassed and gated
+at 70 degree C.**
 
 <p align="center">
   <img src="docs/assets/cover-kiosk.png" alt="Cover-screen kiosk: clock with logo avatar, mobile data usage bar, battery ring, WAN IP with 4G+ badge, and Hotspot, Dual band, Rotate IP, and Refresh buttons over a rainy slate background" width="320">
