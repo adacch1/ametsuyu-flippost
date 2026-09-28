@@ -89,6 +89,10 @@ EOF
   # the daemon reports paused:location_off rather than turning it on for them.
   settings put global wifi_scan_always_enabled 1
 
+  # Qualcomm's Wi-Fi diagnostic logger polls the firmware nonstop (~5% CPU)
+  # for logs nobody collects on this phone. Wi-Fi and the hotspot don't need it.
+  setprop ctl.stop vendor.cnss_diag
+
   # Hotspot on boot (owner request): enable the data-sharing Wi-Fi hotspot using
   # the phone's SAVED SoftAP config (SSID/passphrase already set in Settings).
   # The root tether helper runs through app_process and calls the framework

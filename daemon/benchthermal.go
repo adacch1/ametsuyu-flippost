@@ -31,6 +31,16 @@ const (
 	benchRearmC = 55.0
 )
 
+// writeIfChanged skips the write when the file already holds want: this runs
+// for ~160 sysfs nodes every 5 s, and a redundant write still makes the
+// thermal core re-evaluate the zone.
+func writeIfChanged(path, want string) error {
+	if cur, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(cur)) == want {
+		return nil
+	}
+	return os.WriteFile(path, []byte(want), 0o644)
+}
+
 // cpufreqLimitPath is Samsung's kernel-side hard CPU ceiling (the firmware
 // thermal gate). The framework's thermal service writes 1478400 here when hot;
 // bench mode lifts it to the hardware max and restores the original on
@@ -108,7 +118,7 @@ func (b *BenchThermalController) applyLocked() {
 			}
 			b.originals[z] = orig
 		}
-		if os.WriteFile(mode, []byte("disabled"), 0o644) == nil {
+		if writeIfChanged(mode, "disabled") == nil {
 			b.zones++
 		}
 	}
@@ -124,7 +134,7 @@ func (b *BenchThermalController) applyLocked() {
 			}
 			b.cdevOriginals[cd] = orig
 		}
-		_ = os.WriteFile(cur, []byte("0"), 0o644)
+		_ = writeIfChanged(cur, "0")
 	}
 	_ = os.WriteFile("/sys/module/msm_thermal/parameters/enabled", []byte("N"), 0o644)
 	// Samsung kernel cpufreq_limit: the firmware thermal ceiling. Lift it to the

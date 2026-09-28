@@ -217,11 +217,40 @@ func thermalRoot() string {
 	return "/sys/class/thermal"
 }
 
-// readThermalZones returns (batteryC, hottestC, hottestZone) from sysfs milli-C.
+// A full sweep is ~95 zones, several of them modem sensors read over QMI, so
+// it wakes the modem. The smoother, the bench watchdog, and every /v1/status
+// poll share one sweep for zoneCacheTTL instead of each running their own.
+const zoneCacheTTL = 3 * time.Second
+
+var zoneCache struct {
+	sync.Mutex
+	root     string
+	at       time.Time
+	bat, max float64
+	zone     string
+}
+
+// readThermalZones returns (batteryC, hottestC, hottestZone) from sysfs milli-C,
+// at most zoneCacheTTL old.
 func readThermalZones() (float64, float64, string) {
+	root := thermalRoot()
+	zoneCache.Lock()
+	defer zoneCache.Unlock()
+	if zoneCache.root == root && time.Since(zoneCache.at) < zoneCacheTTL {
+		return zoneCache.bat, zoneCache.max, zoneCache.zone
+	}
+	bat, max, zone := sweepThermalZones(root)
+	zoneCache.root, zoneCache.at = root, time.Now()
+	zoneCache.bat, zoneCache.max, zoneCache.zone = bat, max, zone
+	return bat, max, zone
+}
+
+const pmicPlaceholderMilliC = 37000
+
+func sweepThermalZones(root string) (float64, float64, string) {
 	var bat, max float64
 	var zone string
-	zones, _ := filepath.Glob(filepath.Join(thermalRoot(), "thermal_zone*"))
+	zones, _ := filepath.Glob(filepath.Join(root, "thermal_zone*"))
 	for _, z := range zones {
 		tb, err := os.ReadFile(filepath.Join(z, "temp"))
 		if err != nil {
@@ -235,6 +264,13 @@ func readThermalZones() (float64, float64, string) {
 		name := ""
 		if nb, err := os.ReadFile(filepath.Join(z, "type")); err == nil {
 			name = strings.TrimSpace(string(nb))
+		}
+		// qcom-spmi-temp-alarm PMICs with no ADC channel (pmr735d_k_tz here)
+		// report the driver's DEFAULT_TEMP placeholder, a constant 37 C, which
+		// pinned max-of-zones at 37. Real alarm stages report far higher, so
+		// skipping the placeholder never hides heat.
+		if milli == pmicPlaceholderMilliC && strings.HasSuffix(name, "_tz") {
+			continue
 		}
 		if name == "battery" {
 			bat = c
@@ -288,8 +324,8 @@ type thermalSmoother struct {
 }
 
 const (
-	thermalSmoothN     = 7               // 7 x 2 s = 14 s window; tolerates 3 spikes
-	thermalSmoothEvery = 2 * time.Second // ponytail: fixed cadence, expose in config only if lag matters
+	thermalSmoothN     = 5               // 5 x 5 s = 25 s window; tolerates 2 spikes
+	thermalSmoothEvery = 5 * time.Second // > zoneCacheTTL, so every sample is a fresh sweep
 )
 
 func (t *thermalSmoother) push(maxC float64) {

@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strconv"
+	"testing"
+)
 
 func TestParseBattery(t *testing.T) {
 	raw := "Current Battery Service state:\n  AC powered: false\n  USB powered: true\n  level: 100\n  temperature: 337\n"
@@ -85,10 +90,34 @@ func TestThermalSmootherMedian(t *testing.T) {
 	if len(ts.ring) != thermalSmoothN {
 		t.Fatalf("ring len = %d, want capped at %d", len(ts.ring), thermalSmoothN)
 	}
-	// last 7 pushed = [41.6,42.4,41.0,43.6,44.8,40.8,47.1]; sorted =
-	// [40.8,41.0,41.6,42.4,43.6,44.8,47.1] -> median 42.4.
+	// last 5 pushed = [41.0,43.6,44.8,40.8,47.1]; sorted =
+	// [40.8,41.0,43.6,44.8,47.1] -> median 43.6 (the 47.1 spike is dropped).
 	got, ok := ts.median()
-	if !ok || got != 42.4 {
-		t.Fatalf("median = (%v, %v), want (42.4, true)", got, ok)
+	if !ok || got != 43.6 {
+		t.Fatalf("median = (%v, %v), want (43.6, true)", got, ok)
+	}
+}
+
+// A PMIC temp-alarm zone with no ADC reads a constant 37000 placeholder; it
+// must not set the floor of max-of-zones, but a real 37 C elsewhere still counts.
+func TestSweepSkipsPMICPlaceholder(t *testing.T) {
+	dir := t.TempDir()
+	for i, z := range []struct{ name, temp string }{
+		{"pmr735d_k_tz", "37000"}, {"cpu-0-0", "33500"}, {"battery", "29000"},
+	} {
+		d := filepath.Join(dir, "thermal_zone"+strconv.Itoa(i))
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(d, "type"), []byte(z.name+"\n"), 0o644)
+		os.WriteFile(filepath.Join(d, "temp"), []byte(z.temp+"\n"), 0o644)
+	}
+	bat, max, zone := sweepThermalZones(dir)
+	if max != 33.5 || zone != "cpu-0-0" || bat != 29 {
+		t.Fatalf("got bat=%v max=%v zone=%q, want 29 / 33.5 / cpu-0-0", bat, max, zone)
+	}
+	os.WriteFile(filepath.Join(dir, "thermal_zone1", "temp"), []byte("37000"), 0o644)
+	if _, max, _ := sweepThermalZones(dir); max != 37 {
+		t.Fatalf("real 37 C on a non-alarm zone was dropped: max=%v", max)
 	}
 }
