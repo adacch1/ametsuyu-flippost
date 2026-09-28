@@ -1,7 +1,7 @@
 # Ametsuyu Flippost
 
 <p align="center">
-  <img src="docs/assets/flippost-logo.png" alt="Flippost logo: a pale-blue-haired character under a rainy sky, wearing a Wi-Fi hair clip" width="180">
+  <img src="docs/assets/social-card.png" alt="Ametsuyu Flippost card: the Flippost logo beside the title and the tagline A rooted Z Flip 5 as a 5G modem and Wi-Fi 6 hotspot, over a rainy slate sky" width="100%">
 </p>
 
 Ametsuyu Flippost turns a rooted Samsung Galaxy Z Flip 5 (SM-F731B) into a
