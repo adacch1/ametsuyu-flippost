@@ -93,6 +93,23 @@ EOF
   # for logs nobody collects on this phone. Wi-Fi and the hotspot don't need it.
   setprop ctl.stop vendor.cnss_diag
 
+  # Cooler idle: stop charging at Samsung's protect-battery threshold (80%)
+  # instead of holding 100% on USB, and skip window/transition animations.
+  settings put global protect_battery 1
+  settings put global window_animation_scale 0
+  settings put global transition_animation_scale 0
+  settings put global animator_duration_scale 0
+
+  # Static wallpaper (kiosk slate) on the main and cover screens: Samsung's
+  # live wallpaper decodes video under the kiosk nonstop. The helper must run
+  # as uid 1000, which can't read /data/adb, so it runs from a public copy.
+  if [ -f "$MODDIR/tether/tether.jar" ]; then
+    cp "$MODDIR/tether/tether.jar" /data/local/tmp/zf5-tether.jar && chmod 0644 /data/local/tmp/zf5-tether.jar
+    for WHICH in 7 19; do
+      su 1000 -c "CLASSPATH=/data/local/tmp/zf5-tether.jar app_process /system/bin com.zflip5.tether.SetWallpaper set ff1b2436 $WHICH" >/dev/null 2>&1
+    done
+  fi
+
   # Hotspot on boot (owner request): enable the data-sharing Wi-Fi hotspot using
   # the phone's SAVED SoftAP config (SSID/passphrase already set in Settings).
   # The root tether helper runs through app_process and calls the framework
