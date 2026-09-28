@@ -29,6 +29,27 @@ docker exec -it zf5-ntfy ntfy token add zf5                  # prints a token
 Put that token in `selfhost/telegram-bot/.env` as `NTFY_TOKEN`, and in the ntfy
 app on your phones so they can subscribe to the private topic.
 
+## Publish to more than one server
+The Telegram bot sends every alert to each server in `NTFY_URL`, a
+comma-separated list. This install uses two servers:
+
+| Server | Host | Reachability |
+|---|---|---|
+| VPS | `https://ntfy.ametsuyu.net` | Public (US VPS); anonymous access returns `403`. |
+| Homelab | `https://ntfy-home.ametsuyu.net` | Private (`10.73.20.209`); the bot host needs a route to it. |
+
+```sh
+NTFY_URL=https://ntfy.ametsuyu.net,https://ntfy-home.ametsuyu.net
+NTFY_TOPIC=zf5-modem
+NTFY_TOKEN=tk_vps,tk_home   # or a single token that both servers accept
+```
+
+The bot strips the Telegram formatting, so ntfy shows plain text. A failed
+server logs `ntfy <url>: ...` and doesn't block the other server or Telegram.
+
+**Warning:** With [SMS alerts](telegram-bot.md#sms-alerts) on, message bodies
+reach both servers. Keep `auth-default-access: deny-all` on each one.
+
 ## Subscribe from a phone (iOS / Android)
 1. Install the **ntfy** app (App Store / Play Store / F-Droid).
 2. Settings → Default server → your tailnet URL (e.g.
@@ -58,3 +79,44 @@ They overlap on alerts by design:
 Run both, or drop ntfy: the Telegram bot alerts your chat directly even with
 `NTFY_URL` unset. The Discord bot's old ntfy→Discord bridge is gone with the
 switch to Telegram.
+
+## Device-local ntfy-only deployment (2026-09-24)
+
+The connected SM-F731B runs the existing alert rules directly through its installed
+Termux Node runtime. `NTFY_ONLY=true` starts polling without Telegram credentials.
+SMS fetching, Telegram, radio-control commands, and automatic reboot are disabled
+in this mode. The runner reads only the daemon's `read-status` token at startup.
+
+- Runner: `/data/adb/modules/zflip5_modem/ntfy/launch.cjs`.
+- Boot/watchdog: `/data/adb/service.d/60-zf5-ntfy.sh` (source `magisk/ntfy-service.sh`).
+- Private configuration: `/data/adb/zflip5-modem/ntfy.json`, mode0600, containing
+  `servers: [{url, token}, ...]`. Do not put publishing tokens in Git.
+- Log: `/data/adb/zflip5-modem/ntfy.log` (bounded).
+- Both existing servers receive topic `zf5-modem`, with a separate write-only
+  publisher account/token on each. Existing phone logins can read this topic.
+
+Subscribe to **zf5-modem** on both existing server accounts in your ntfy apps.
+The first poll seeds state; subsequent changes generate alerts. Polls never
+run concurrently. Each server publishes independently with a15-second timeout.
+Failed publishes are logged, not durably queued by this runner.
+
+A device-local runner can report a stalled modem daemon while Android/networking
+still work. It cannot report its own complete power or network loss; that needs
+an external check. Existing homelab/backup monitoring remains separate.
+
+To update this integration without rebooting or replacing the modem daemon, push
+`selfhost/telegram-bot/{index.js,alerts.js,package.json}` and
+`magisk/ntfy/launch.cjs` to the runner directory using USB ADB and root; preserve
+the private config. The boot script requires the existing Termux installation.
+Run tests with `node --test selfhost/telegram-bot/*.test.js`.
+
+Deployment verified via USB ADB serial R5CW80J9SVF: live daemon HTTP200;
+on-device test publication accepted by both servers; ntfy-only runner and
+Magisk boot watchdog running. Eleven Node tests pass, including independent
+multi-server delivery when one endpoint fails. No device reboot was performed.
+
+Power and low-battery checks now use a separate three-second loop, so slow
+status/signal requests cannot delay them. Other alerts retain the one-minute
+cadence. Power baselines and transitions are timestamped in ntfy.log. A new
+integration test verifies power-loss delivery with the main status endpoint
+stalled. Physical unplug/replug confirmation is pending.

@@ -12,8 +12,11 @@
 //
 // No SDK: plain Bot API over fetch (Node 18+ global fetch).
 
+import { detect, esc, plain, DEFAULTS } from './alerts.js';
+
 const {
   TELEGRAM_TOKEN,
+  NTFY_ONLY = 'false', // run device-local alerts without Telegram
   OWNER_CHAT_IDS = '',
   DAEMON_BASE_URL,
   READ_STATUS,
@@ -21,12 +24,16 @@ const {
   NTFY_URL,
   NTFY_TOPIC,
   NTFY_TOKEN,
+  SMS_READ,            // optional: daemon sms token; set = SMS alerts WITH sender + body
+  BATTERY_LOW_PCT = '20',
   DATA_CAP_GB = '512',
   AUTOREBOOT_HHMM = '', // e.g. "04:30" local server time; empty = disabled
 } = process.env;
 
-if (!TELEGRAM_TOKEN || !DAEMON_BASE_URL || !READ_STATUS) {
-  console.error('Set TELEGRAM_TOKEN, DAEMON_BASE_URL, READ_STATUS (see .env.example)');
+const ntfyOnly = NTFY_ONLY === 'true';
+if ((!ntfyOnly && !TELEGRAM_TOKEN) || !DAEMON_BASE_URL || !READ_STATUS ||
+    (ntfyOnly && (!NTFY_URL || !NTFY_TOPIC || !NTFY_TOKEN))) {
+  console.error('Set DAEMON_BASE_URL, READ_STATUS and Telegram credentials or NTFY_ONLY with ntfy credentials');
   process.exit(1);
 }
 
@@ -49,13 +56,14 @@ const CMDS = {
   network:  { path: '/v1/network',       method: 'GET',  scope: 'read' },
   cpu:      { path: '/v1/cpu',           method: 'GET',  scope: 'read' },
   hotspot:  { path: '/v1/hotspot',       method: 'GET',  scope: 'read' },
+  smsAlert: { path: '/v1/sms/recent?limit=10', method: 'GET', scope: 'sms' }, // alerts only, never a chat command
   ip:       { path: '/v1/status',        method: 'GET',  scope: 'read' },  // formatted below
   scan:     { path: '/v1/hotspot/scan',  method: 'POST', scope: 'radio' },
   prefer5g: { path: '/v1/prefer5g',      method: 'POST', scope: 'radio' },
   cooldown: { path: '/v1/cooldown',      method: 'POST', scope: 'radio' },
 };
 
-const tokenFor = (scope) => (scope === 'radio' ? RADIO_CONTROL : READ_STATUS);
+const tokenFor = (scope) => ({ radio: RADIO_CONTROL, sms: SMS_READ }[scope] ?? READ_STATUS);
 
 // radio-control write with an explicit path (query strings, POST bodies).
 const CMDS_WRITE = (path) => ({ path, method: 'POST', scope: 'radio' });
@@ -88,7 +96,6 @@ function send(chatId, text, extra = {}) {
   return tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', ...extra });
 }
 
-const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 // Truncate the RAW json first, then escape, so slicing can't cut a mid-entity
 // (e.g. "&am") and 400 the Telegram message.
 const code = (obj) => `<pre>${esc(JSON.stringify(obj, null, 2).slice(0, 3500))}</pre>`;
@@ -268,45 +275,74 @@ async function poll() {
 // ---- edge-triggered alerts + scheduled auto-reboot --------------------------
 
 function broadcast(text) {
-  for (const id of owners) send(id, text).catch(() => {});
+  if (!ntfyOnly) for (const id of owners) send(id, text).catch(() => {});
   publishNtfy(text);
 }
+// NTFY_URL may list several servers (comma-separated); each gets the same
+// message. NTFY_TOKEN is one token for all, or one per URL in the same order.
+const ntfyUrls = (NTFY_URL || '').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean);
+const ntfyTokens = (NTFY_TOKEN || '').split(',').map((s) => s.trim());
 async function publishNtfy(message) {
-  if (!NTFY_URL || !NTFY_TOPIC) return;
-  const headers = {};
-  if (NTFY_TOKEN) headers.Authorization = `Bearer ${NTFY_TOKEN}`;
-  try { await fetch(`${NTFY_URL}/${NTFY_TOPIC}`, { method: 'POST', headers, body: message }); } catch { /* ignore */ }
+  if (!NTFY_TOPIC) return;
+  const body = plain(message);
+  return Promise.all(ntfyUrls.map((url, i) => {
+    const token = ntfyTokens.length > 1 ? ntfyTokens[i] : ntfyTokens[0];
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    // Timeout so a down homelab can't pile up hung sockets.
+    return fetch(`${url}/${NTFY_TOPIC}`, { method: 'POST', headers, body, signal: AbortSignal.timeout(15000) })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); console.log(`ntfy ${url}: accepted`); return true; })
+      .catch((e) => { console.error(`ntfy ${url}:`, e.message); return false; });
+  }));
 }
 
-let lastSafe = true, lastCapNear = false, lastReachable = true, unreachableStreak = 0;
+// Rules live in alerts.js (pure, unit-tested). Each endpoint is fetched
+// independently: one failing leaves that rule's state untouched.
+const alertCfg = { ...DEFAULTS, batteryLow: Number(BATTERY_LOW_PCT), capBytes: CAP_BYTES };
+let alertState = null, lastReachable = true, unreachableStreak = 0;
+const getOk = async (c) => {
+  const r = await callDaemon(c, {});
+  return r.status === 200 ? r.json : undefined;
+};
 async function pollAlerts() {
-  try {
-    const r = await callDaemon(CMDS.status, {});
-    if (r.status !== 200) throw new Error(`status HTTP ${r.status}`); // 401/500 = not healthy
-    const st = r.json;
-    if (!lastReachable) { broadcast('✅ Modem daemon reachable again.'); lastReachable = true; }
-    unreachableStreak = 0;
-    const safe = st.thermal?.safe !== false && st.policy_state !== 'HOT' && st.policy_state !== 'COOLDOWN';
-    if (!safe && lastSafe) broadcast(`🔥 Modem hot: policy ${esc(st.policy_state)}, ${esc(st.thermal?.temp_max_c)}°C`);
-    else if (safe && !lastSafe) broadcast('✅ Modem cooled.');
-    lastSafe = safe;
-
-    const ru = await callDaemon(CMDS.usage, {});
-    const us = ru.status === 200 ? ru.json : {};
-    // Same cap/used choice as statusFull above: the daemon's own limit_bytes/
-    // period_bytes when configured, DATA_CAP_GB/month_bytes otherwise.
-    const cap = us.limit_bytes > 0 ? us.limit_bytes : CAP_BYTES;
-    const used = us.limit_bytes > 0 ? us.period_bytes : us.month_bytes;
-    const usedHuman = us.limit_bytes > 0 ? us.period_human : us.month_human;
-    const near = cap > 0 && used > 0.9 * cap;
-    if (near && !lastCapNear) broadcast(`📊 Data cap near: ${esc(usedHuman)} of ${Math.round(cap / 1e9)} GB used.`);
-    lastCapNear = near;
-  } catch (e) {
+  let status;
+  try { status = await getOk(CMDS.status); } catch { /* counted below */ }
+  if (!status) {
     unreachableStreak++;
     if (unreachableStreak >= 3 && lastReachable) { // ~3 min unreachable
       lastReachable = false;
       broadcast('⚠️ Modem daemon unreachable for ~3 min (device may be wedged).');
     }
+    return;
+  }
+  if (!lastReachable) { broadcast('✅ Modem daemon reachable again.'); lastReachable = true; }
+  unreachableStreak = 0;
+  const [usage, signal, hotspot, sms] = await Promise.all([
+    getOk(CMDS.usage), getOk(CMDS.signal), getOk(CMDS.hotspot),
+    !ntfyOnly && SMS_READ ? getOk(CMDS.smsAlert) : undefined,
+  ].map((p) => Promise.resolve(p).catch(() => undefined)));
+  // Device mode checks battery separately at a faster cadence.
+  if (ntfyOnly) status = { ...status, battery: undefined };
+  const r = detect(alertState, { status, usage, signal, hotspot, sms }, alertCfg);
+  alertState = r.state;
+  r.messages.forEach(broadcast);
+}
+
+// Battery-only polling cannot be delayed by signal/usage endpoints.
+async function pollPowerLoop() {
+  let previous = null;
+  for (;;) {
+    try {
+      const battery = await getOk(CMDS.battery);
+      if (battery?.available) {
+        if (previous?.plugged !== battery.plugged) {
+          console.log(`${new Date().toISOString()} power: ${previous?.plugged ?? 'baseline'} -> ${battery.plugged}`);
+        }
+        const r = detect(previous, { status: { battery } }, alertCfg);
+        previous = r.state;
+        r.messages.forEach(broadcast);
+      }
+    } catch (e) { console.error('power poll:', e.message); }
+    await new Promise(resolve => setTimeout(resolve, 3000));
   }
 }
 
@@ -330,6 +366,19 @@ async function checkAutoReboot() {
 // ---- boot -------------------------------------------------------------------
 
 (async () => {
+  if (ntfyOnly) {
+    if (process.argv.includes('--test-notification')) {
+      const results = await publishNtfy('Z Flip 5 modem: device-local ntfy integration test.');
+      process.exit(results?.every(Boolean) ? 0 : 1);
+    }
+    console.log('ntfy-only alerts ready; power checks every 3s; SMS and radio control disabled');
+    pollPowerLoop();
+    // One poll at a time, even when a daemon endpoint is slow.
+    for (;;) {
+      await pollAlerts().catch((e) => console.error('alert poll:', e.message));
+      await new Promise((r) => setTimeout(r, 60_000));
+    }
+  }
   // Retry boot so a transient network blip at startup doesn't crash the process.
   // drop_pending_updates: don't replay commands (e.g. a queued /reboot) that
   // piled up while the bot was down — a control surface must not act on stale input.
