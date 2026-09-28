@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive icon: the sticker art sits inside the 66% safe zone (16% inset),
+     so One UI's squircle mask crops the padding, not the character. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground>
+        <inset android:drawable="@mipmap/ic_launcher_fg" android:inset="16%" />
+    </foreground>
+</adaptive-icon>
