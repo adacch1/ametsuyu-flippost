@@ -65,31 +65,34 @@ const coverHTML = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Flippost</title>
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#1b2436">
 <link rel="icon" href="/icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&display=swap">
 <style>
   :root{
-    /* surfaces: translucent glass over a near-black aurora ground */
-    --ground:#07090d;
-    --surface:rgba(255,255,255,.045);
-    --surface-inset:rgba(5,8,12,.55);
-    --line:rgba(255,255,255,.09);
-    --line-soft:rgba(255,255,255,.055);
+    /* surfaces: icy-hair glass over the Flippost rain-sky ground */
+    --ground:#1b2436;
+    --surface:rgba(213,231,253,.07);
+    --surface-inset:rgba(14,20,33,.45);
+    --line:rgba(213,231,253,.15);
+    --line-soft:rgba(213,231,253,.08);
 
     /* ink: three levels */
-    --ink:#f2f5f9;
-    --ink-2:#a8b3c2;
-    --ink-3:#8a94a3;
+    --ink:#fef7ee;
+    --ink-2:#c9d7ea;
+    --ink-3:#9eb1cb;
 
-    /* the accent pair + the semantic status set + the CPU lane */
-    --teal:#2dd4bf;
-    --teal-2:#34d399;
-    --green:#4ade80;
-    --amber:#fbbf24;
-    --red:#fb7185;
-    --violet:#8a7dff;
-    --track:rgba(255,255,255,.08); /* unfilled rings and bars */
-    --on-teal:#04211f;             /* label colour on the accent fill */
+    /* the accent pair (hair → clip blue; names kept from the old teal skin) +
+       the pastel status set + the CPU lane + the logo's blush */
+    --teal:#a9cdfb;
+    --teal-2:#6fa4f0;
+    --green:#9ee6c3;
+    --amber:#ffd49a;
+    --red:#ff9aa6;
+    --violet:#c4b5ff;
+    --blush:#fbd3d0;
+    --track:rgba(213,231,253,.12); /* unfilled rings and bars */
+    --on-teal:#1b2436;             /* label colour on the accent fill */
     --accent-grad:linear-gradient(135deg,var(--teal) 0%,var(--teal-2) 100%);
 
     /* the cover screen's seven owner-picked accents (Settings swatches) */
@@ -103,13 +106,13 @@ const coverHTML = `<!DOCTYPE html>
 
     /* metrics: 4/8/12/16/32/64 (the scale skips 24 and 48) */
     --space-xs:4px; --space-sm:8px; --space-md:12px; --space-lg:16px; --space-xl:32px; --space-2xl:64px;
-    --radius-sm:10px; --radius-md:18px; --radius-lg:28px; --radius-pill:999px;
-    --radius-nav:22px; --radius-btn:14px;
+    --radius-sm:12px; --radius-md:22px; --radius-lg:30px; --radius-pill:999px;
+    --radius-nav:26px; --radius-btn:999px;
     --tabbar-h:58px;
 
-    /* one sans doing every job — roles separate by weight and size */
-    --font-display:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    --font-body:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    /* one rounded sans doing every job — roles separate by weight and size */
+    --font-display:"Nunito",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,Roboto,sans-serif;
+    --font-body:"Nunito",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,Roboto,sans-serif;
 
     --smooth:cubic-bezier(0.4,0,0.2,1);
     --pop:cubic-bezier(0.34,1.56,0.64,1);
@@ -139,13 +142,11 @@ const coverHTML = `<!DOCTYPE html>
      without this that shift would raise scrollbars on a screen that has nothing
      to scroll to. */
   html,body{height:100%;overflow:hidden}
-  /* OLED ground: true black — pixels the panel switches off entirely. Glass
-     cards still read through their hairline borders and top highlight; no
-     blur, no washes, no shadows on a ground that would swallow them. */
+  /* Rainy dusk, kept dim for the always-on OLED panel: deep slate with a
+     faint static drizzle (low enough that burn-in has nothing to hold). */
   body{
-    --surface:rgba(255,255,255,.055);
-    --surface-inset:rgba(255,255,255,.04);
-    background:#000; color:var(--ink);
+    background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cg stroke='%23d5e7fd' stroke-opacity='.07' stroke-width='1.3' stroke-linecap='round'%3E%3Cpath d='M13 4l-3 9M42 17l-3 9M27 38l-3 9M56 47l-3 9'/%3E%3C/g%3E%3C/svg%3E"),linear-gradient(180deg,#222d43 0%,#141b29 100%);
+    color:var(--ink);
     font-family:var(--font-body); font-size:13.5px; line-height:1.35; letter-spacing:normal;
     -webkit-font-smoothing:antialiased;
   }
@@ -158,6 +159,7 @@ const coverHTML = `<!DOCTYPE html>
      was. Gradient numerals, same as the dashboard's clock. */
   .hdr{display:flex;align-items:center;gap:var(--space-sm)}
   .hmain{flex:1;min-width:0}
+  .ava{flex:none;width:34px;height:34px;border-radius:50%;object-fit:cover;border:2px solid var(--hair,#d5e7fd);box-shadow:0 0 0 3px color-mix(in srgb,var(--blush) 35%,transparent)}
   .time{font-family:var(--font-display);font-weight:700;font-size:24px;line-height:1;letter-spacing:-.02em;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
   .hsub{margin-top:2px;font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .badge{flex:none;display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:var(--radius-pill);background:var(--surface-inset);border:1px solid var(--line);font-family:var(--font-display);font-size:13px;font-weight:700;color:var(--ink)}
@@ -169,7 +171,7 @@ const coverHTML = `<!DOCTYPE html>
   .iconbtn svg{width:15px;height:15px}
   .iconbtn:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
 
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-xs) var(--space-md);box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-xs) var(--space-md);box-shadow:inset 0 1px 0 rgba(213,231,253,.08)}
   .lbl{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
 
   /* Usage: one bar carrying the period against the cap, with today and the
@@ -180,7 +182,7 @@ const coverHTML = `<!DOCTYPE html>
   .upct{font-size:12px;color:var(--ink-3)}
   .well{height:9px;margin:6px 0;border-radius:var(--radius-pill);background:var(--track);overflow:hidden}
   .well i{position:relative;display:block;height:100%;width:0;border-radius:var(--radius-pill);background:var(--primary-fill);transition:width .4s var(--smooth)}
-  .well i::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(45deg,rgba(0,0,0,.18) 0 4px,transparent 4px 9px)}
+  .well i::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(45deg,rgba(27,36,54,.16) 0 4px,transparent 4px 9px)}
   .ufoot{display:flex;justify-content:space-between;gap:var(--space-sm);font-size:11px;color:var(--ink-3)}
   .ufoot b{font-weight:600;color:var(--ink-2)}
 
@@ -203,7 +205,7 @@ const coverHTML = `<!DOCTYPE html>
   .tech{flex:none;padding:2px 9px;border-radius:var(--radius-pill);background:var(--primary-fill);color:var(--on-primary);font-family:var(--font-display);font-weight:700;font-size:14px;line-height:1.3}
   .iface{min-width:0;font-size:10px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
-  .btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--space-xs);padding:9px 6px;border-radius:var(--radius-btn);font-size:12px;font-weight:700;transition:transform .14s var(--pop),filter .14s var(--smooth)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:3px;padding:10px 4px;border-radius:var(--radius-btn);font-size:11.5px;font-weight:800;white-space:nowrap;letter-spacing:-.01em;transition:transform .14s var(--pop),filter .14s var(--smooth)}
   .btn.pri{background:var(--primary-fill);color:var(--on-primary)}
   .btn.sec{background:var(--surface-inset);border:1px solid var(--line);color:var(--ink)}
   .btn:active{transform:scale(.97);filter:brightness(1.1)}
@@ -212,7 +214,7 @@ const coverHTML = `<!DOCTYPE html>
   .btn svg{width:14px;height:14px}
   .btn.spin svg{animation:acSpin .9s linear infinite}
   @keyframes acSpin{to{transform:rotate(360deg)}}
-  .acts{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-xs)}
+  .acts{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-xs)}
   .msg{min-height:13px;padding:0 2px;font-size:11px;color:var(--ink-3)}
   .msg.err{color:var(--red)}
   @media (prefers-reduced-motion:reduce){
@@ -224,6 +226,7 @@ const coverHTML = `<!DOCTYPE html>
 <!--EMBEDDED_TOKENS-->
 <div class="wrap">
   <header class="hdr">
+    <img class="ava" src="/logo.png" alt="">
     <div class="hmain">
       <div class="time num" id="cTime">--:--</div>
       <div class="hsub" id="cDate">&mdash;</div>
@@ -252,7 +255,7 @@ const coverHTML = `<!DOCTYPE html>
         <svg viewBox="0 0 100 100" aria-hidden="true">
           <defs>
             <linearGradient id="bGrad" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#34d399"/>
+              <stop offset="0" stop-color="#d5e7fd"/><stop offset="1" stop-color="#6fa4f0"/>
             </linearGradient>
           </defs>
           <circle class="tick" cx="50" cy="50" r="45"/>
@@ -272,6 +275,7 @@ const coverHTML = `<!DOCTYPE html>
 
   <div class="acts">
     <button class="btn sec" id="hsBtn" type="button">Hotspot</button>
+    <button class="btn sec" id="dualBtn" type="button">Dual band</button>
     <button class="btn sec" id="rotBtn" type="button">Rotate IP</button>
     <button class="btn sec" id="refBtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16"/><path d="M3 21v-5h5"/></svg>Refresh</button>
   </div>
@@ -413,12 +417,14 @@ const coverHTML = `<!DOCTYPE html>
     $("uToday").textContent=fmtBytes(u.today_bytes);
   }
 
-  var hsOn=false;
+  var hsOn=false, dualOn=false;
   function renderHotspot(h){
     hsOn=!!h.active;
     var b=$("hsBtn");
     b.textContent=hsOn?"Hotspot on":"Hotspot off";
     b.className="btn "+(hsOn?"pri":"sec");
+    dualOn=!!h.dual;
+    $("dualBtn").className="btn "+(dualOn?"pri":"sec");
   }
 
   // 10s, not the panel's 5s: this page is on screen whenever the cover panel is
@@ -441,7 +447,7 @@ const coverHTML = `<!DOCTYPE html>
     }).catch(function(){inFlight=false;});
   }
 
-  var actBtns=[$("rotBtn"),$("hsBtn"),$("refBtn")];
+  var actBtns=[$("rotBtn"),$("hsBtn"),$("dualBtn"),$("refBtn")];
   function busy(on){actBtns.forEach(function(b){b.disabled=on;});}
 
   // The cycle blocks ~15-30s (radio drop + PDP re-attach + hotspot restart).
@@ -469,6 +475,30 @@ const coverHTML = `<!DOCTYPE html>
       renderHotspot(res.j);
       msg(res.j.active?"hotspot on":(stopping?"hotspot off":"hotspot did not come up — retry"));
     }).catch(function(e){busy(false);msg("Error: "+e.message,true);});
+  });
+
+  // Dual band: one SSID on 2.4 + 5GHz. Pauses the whitelist auto-toggle
+  // (the phone can't scan beside two APs); tapping again goes back to 5GHz.
+  $("dualBtn").addEventListener("click",function(){
+    var rt=rtok(); if(!rt)return;
+    var band=dualOn?"5":"dual";
+    busy(true); msg(band==="dual"?"switching to 2.4 + 5 GHz… clients drop briefly":"switching to 5 GHz… clients drop briefly");
+    post("/v1/hotspot/band",{band:band},rt).then(function(res){
+      busy(false);
+      if(!res.ok){msg("Error: "+(res.j.error||"failed"),true);return;}
+      renderHotspot(res.j);
+      msg(!res.j.active?"band saved — applies when the hotspot starts":(res.j.dual?"dual band on":"5 GHz only"));
+    }).catch(function(){
+      // Viewed over the hotspot itself, the restart drops this very request
+      // though the switch lands. Re-read the real state once it's back.
+      msg("reconnecting…");
+      setTimeout(function(){
+        get("/v1/hotspot").then(function(h){
+          busy(false); renderHotspot(h);
+          msg(h.dual===(band==="dual")?(h.dual?"dual band on":"5 GHz only"):"switch failed — retry",h.dual!==(band==="dual"));
+        }).catch(function(e){busy(false);msg("Error: "+e.message,true);});
+      },12000);
+    });
   });
 
   // Refresh now. The poll is fine for watching, but after unlocking the panel

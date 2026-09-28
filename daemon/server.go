@@ -263,6 +263,9 @@ func (s *Server) routes() {
 	// thermal-gated. The start it can trigger is the auto loop's existing
 	// ungated startHotspot() path (same one /v1/tether uses), so this adds no
 	// new bypass, only a bounded (<=24h) window where the whitelist is ignored.
+	// Band switch (single 5GHz <-> bridged dual-band): a hotspot restart like
+	// /v1/tether, same ungated start path, no new bypass.
+	s.mux.HandleFunc("/v1/hotspot/band", s.guardAuth("radio-control", http.MethodPost, s.handleHotspotBand))
 	s.mux.HandleFunc("/v1/hotspot/override", s.guardAuth("radio-control", http.MethodPost, s.handleHotspotOverride))
 	// Hotspot presets: GET lists (read-status, passphrases redacted), POST upserts
 	// (radio-control). Method-dispatched so the two scopes coexist on one path.
@@ -756,6 +759,26 @@ func (s *Server) handleHotspotOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.hs.SetOverride(time.Duration(body.Hours)*time.Hour))
+}
+
+func (s *Server) handleHotspotBand(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Band string `json:"band"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad body")
+		return
+	}
+	if body.Band != "dual" && body.Band != "5" {
+		writeErr(w, http.StatusBadRequest, "band must be dual or 5")
+		return
+	}
+	st, err := s.hs.SetBand(body.Band)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 // handlePresets dispatches by method: GET lists presets (read-status), POST

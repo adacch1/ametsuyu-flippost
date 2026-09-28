@@ -30,7 +30,7 @@ func deviceWanIP() WanIP {
 	if m := wanSrcRe.FindStringSubmatch(out); m != nil {
 		iface := m[1]
 		// A downstream/loopback egress isn't the WAN; only report a real route.
-		if iface == softApIface || iface == "lo" {
+		if iface == softApIface || iface == bridgeIface || iface == "lo" {
 			return WanIP{}
 		}
 		return WanIP{IP: m[2], Iface: iface, Available: true}

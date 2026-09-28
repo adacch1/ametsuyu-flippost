@@ -39,7 +39,7 @@ type Preset struct {
 	SSID       string   `json:"ssid"`
 	Passphrase string   `json:"passphrase"`
 	Security   string   `json:"security"` // open | wpa2 | wpa3
-	Band       string   `json:"band"`     // 2 | 5 | 6
+	Band       string   `json:"band"`     // 2 | 5 | 6 | dual (bridged 2.4+5, one SSID)
 	Triggers   []string `json:"triggers"` // SSIDs whose presence means "apply me"
 }
 
@@ -69,9 +69,9 @@ func validatePreset(p Preset) error {
 		return fmt.Errorf("security must be open, wpa2, or wpa3")
 	}
 	switch p.Band {
-	case "2", "5", "6":
+	case "2", "5", "6", "dual":
 	default:
-		return fmt.Errorf("band must be 2, 5, or 6")
+		return fmt.Errorf("band must be 2, 5, 6, or dual")
 	}
 	if len(p.Triggers) > maxTriggers {
 		return fmt.Errorf("too many triggers (max %d)", maxTriggers)

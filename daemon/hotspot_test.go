@@ -13,6 +13,7 @@ import (
 type hotspotStub struct {
 	now        time.Time
 	locOn      bool
+	dual       bool
 	apUp       bool
 	scanAPs    []ScanAP
 	scanOK     bool
@@ -34,6 +35,7 @@ func newTestHC(t *testing.T, wl []string) (*HotspotController, *hotspotStub) {
 	h := &HotspotController{whitelist: append([]string(nil), wl...)}
 	h.now = func() time.Time { return s.now }
 	h.locOn = func() bool { return s.locOn }
+	h.dual = func() bool { return s.dual }
 	h.scan = func() ([]ScanAP, bool, string) { return s.scanAPs, s.scanOK, s.scanReason }
 	h.apUp = func() bool { return s.apUp }
 	h.start = func() bool {
@@ -330,5 +332,42 @@ func TestOverridePersists(t *testing.T) {
 	}
 	if h4 := NewHotspotController(nil); h4.OverrideLeft() != 0 {
 		t.Fatalf("a past deadline should load as inactive, left=%v", h4.OverrideLeft())
+	}
+}
+
+// Transient scan failures (Wi-Fi aborts scans while serving clients) must not
+// flip Paused within the grace window — each flip was a ntfy alert pair.
+func TestStepScanFailGrace(t *testing.T) {
+	h, s := newTestHC(t, []string{"HomeNet"})
+	h.step() // good scan
+	s.scanOK, s.scanReason = false, "-7 Scan aborted"
+	s.now = s.now.Add(10 * time.Minute)
+	h.step()
+	if got := h.Status().Paused; got != "" {
+		t.Fatalf("Paused = %q inside grace, want empty", got)
+	}
+	if h.misses != 1 {
+		t.Fatalf("misses = %d, failed scan must not count as a miss", h.misses)
+	}
+	s.now = s.now.Add(scanFailGrace)
+	h.step()
+	if got := h.Status().Paused; got != "scan_failed" {
+		t.Fatalf("Paused = %q after grace, want scan_failed", got)
+	}
+}
+
+// Scanning beside a bridged dual-band AP kills its 5GHz instance, so the loop
+// must pause without ever calling scan.
+func TestStepDualBandNoScan(t *testing.T) {
+	h, s := newTestHC(t, []string{"HomeNet"})
+	s.dual = true
+	scanned := false
+	h.scan = func() ([]ScanAP, bool, string) { scanned = true; return nil, true, "" }
+	h.step()
+	if scanned {
+		t.Fatal("scanned while dual-band AP up")
+	}
+	if got := h.Status().Paused; got != "dual_band" {
+		t.Fatalf("Paused = %q, want dual_band", got)
 	}
 }

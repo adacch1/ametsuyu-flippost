@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -29,6 +30,12 @@ const (
 	hotspotScanActive = 3 * time.Minute  // hotspot on: gentle on clients
 )
 
+// scanFailGrace: Wi-Fi routinely aborts or busies a scan while the SoftAP
+// serves clients ("-7 Scan aborted", "-6 ... busy"). A failure within this
+// long of the last good scan keeps the previous status instead of flipping to
+// paused, so each blip no longer fires a paused/resumed alert pair.
+const scanFailGrace = 30 * time.Minute
+
 // hotspotOverridePath persists the timed force-on deadline (see SetOverride)
 // across a daemon restart or reboot. Runtime state, not owner config: it
 // lives beside usage.json, never in config.json (which is schema-validated).
@@ -50,8 +57,9 @@ func moduleDir() string {
 
 type HotspotStatus struct {
 	Active       bool       `json:"active"`
+	Dual         bool       `json:"dual"`                    // bridged 2.4+5GHz AP running
 	Auto         bool       `json:"auto"`                    // whitelist non-empty
-	Paused       string     `json:"paused,omitempty"`        // location_off | scan_failed
+	Paused       string     `json:"paused,omitempty"`        // location_off | scan_failed | dual_band
 	PausedDetail string     `json:"paused_detail,omitempty"` // helper's RESULT=FAIL reason (scan_failed only)
 	Whitelist    []string   `json:"whitelist"`
 	Matched      []string   `json:"matched"`               // whitelisted SSIDs seen in last scan
@@ -89,11 +97,13 @@ type HotspotController struct {
 	lastScanAt    string   // RFC3339 of lastNearby
 	status        HotspotStatus
 	overrideUntil time.Time // zero when no forced-on override is active
+	lastScanOK    time.Time // last successful auto-loop scan; zero = none yet
 
 	// Seams: tests swap these for stubs; NewHotspotController wires the real
 	// probes/actuators (same pattern as UsageTracker.now/readB in usage.go).
 	now   func() time.Time
 	locOn func() bool
+	dual  func() bool
 	scan  func() ([]ScanAP, bool, string)
 	apUp  func() bool
 	start func() bool
@@ -105,6 +115,7 @@ func NewHotspotController(whitelist []string) *HotspotController {
 		whitelist: whitelist,
 		now:       time.Now,
 		locOn:     locationEnabled,
+		dual:      bridgedAPUp,
 		scan:      scanAPs,
 		apUp:      hotspotActive,
 		start:     startHotspot,
@@ -183,6 +194,23 @@ func (h *HotspotController) SetOverride(d time.Duration) HotspotStatus {
 	return h.Status()
 }
 
+// SetBand switches the saved hotspot band ("dual" or "5"), keeping the SSID
+// and passphrase, and bounces a live AP so it takes effect (clients drop a few
+// seconds). Going dual pauses the whitelist loop (see bridgedAPUp).
+func (h *HotspotController) SetBand(band string) (HotspotStatus, error) {
+	out := runHelper("com.zflip5.tether.SetSoftApConfig", "band", band)
+	if !strings.Contains(out, "RESULT=OK") {
+		return h.Status(), fmt.Errorf("set band: %s", helperResultLine(out))
+	}
+	if h.apUp() {
+		h.stop()
+		time.Sleep(1500 * time.Millisecond) // let the teardown land before restart
+		h.start()
+	}
+	log.Printf("hotspot: band set to %s", band)
+	return h.Status(), nil
+}
+
 // OverrideLeft reports time remaining on a forced-on override, 0 when none is
 // active.
 func (h *HotspotController) OverrideLeft() time.Duration {
@@ -223,6 +251,7 @@ func (h *HotspotController) Status() HotspotStatus {
 	defer h.mu.Unlock()
 	st := h.status
 	st.Active = h.apUp()
+	st.Dual = st.Active && h.dual()
 	st.Auto = len(h.whitelist) > 0
 	st.Whitelist = append([]string{}, h.whitelist...)
 	if !st.Auto { // feature off: drop stale scan facts, keep only the last action
@@ -260,6 +289,9 @@ func (h *HotspotController) Status() HotspotStatus {
 // the hotspot — the Settings "Scan now" button. Returns a paused reason
 // ("location_off" / "scan_failed") when it couldn't scan, else "".
 func (h *HotspotController) Scan(now string) string {
+	if bridgedAPUp() {
+		return "dual_band"
+	}
 	if !locationEnabled() {
 		return "location_off"
 	}
@@ -362,6 +394,15 @@ func hotspotActive() bool {
 	return strings.Contains(runCmd("ip", "link", "show", softApIface), "state UP")
 }
 
+// bridgedAPUp reports whether the dual-band (bridged 2.4+5GHz) AP is running.
+// Samsung turns scan mode off when it starts one, and the chip can't run a
+// scan interface beside two AP instances: re-arming scanning (rearmScanning)
+// kills the 5GHz instance within seconds — verified on-device 2026-09-28.
+// So the whitelist loop must not scan at all while this is true.
+func bridgedAPUp() bool {
+	return strings.Contains(runCmd("ip", "link", "show", bridgeIface), "state UP")
+}
+
 func locationEnabled() bool {
 	return strings.TrimSpace(runCmd("settings", "get", "secure", "location_mode")) != "0"
 }
@@ -386,7 +427,11 @@ func scanAPs() ([]ScanAP, bool, string) {
 	aps, ok := parseScanAPs(out)
 	if !ok {
 		rearmScanning()
-		return nil, false, scanFailReason(out)
+		time.Sleep(5 * time.Second) // aborted/busy scans usually pass on a retry
+		out = runHelper("com.zflip5.tether.WifiScan")
+		if aps, ok = parseScanAPs(out); !ok {
+			return nil, false, scanFailReason(out)
+		}
 	}
 	return aps, true, ""
 }
@@ -522,12 +567,25 @@ func (h *HotspotController) step() {
 	}
 
 	st.LastScan = h.now().Format(time.RFC3339)
+	if h.dual() {
+		st.Paused = "dual_band"
+		return
+	}
 	if !h.locOn() {
 		st.Paused = "location_off"
 		return
 	}
 	aps, ok, reason := h.scan()
 	if !ok {
+		h.mu.Lock()
+		prev, last := h.status, h.lastScanOK
+		h.mu.Unlock()
+		if !last.IsZero() && h.now().Sub(last) < scanFailGrace {
+			// Transient: keep the last good picture, take no action.
+			st.Paused, st.PausedDetail, st.APCount, st.Matched = prev.Paused, prev.PausedDetail, prev.APCount, prev.Matched
+			st.LastScan = prev.LastScan
+			return
+		}
 		st.Paused, st.PausedDetail = "scan_failed", reason
 		return
 	}
@@ -536,6 +594,7 @@ func (h *HotspotController) step() {
 	st.Matched = matchWhitelist(seen, wl)
 
 	h.mu.Lock()
+	h.lastScanOK = h.now()
 	h.lastNearby = aps // feed the Settings "Nearby networks" list from the auto loop too
 	h.lastScanAt = st.LastScan
 	h.mu.Unlock()

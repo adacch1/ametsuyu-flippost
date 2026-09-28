@@ -215,8 +215,8 @@ const webManifest = `{
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#07090d",
-  "theme_color": "#07090d",
+  "background_color": "#1b2436",
+  "theme_color": "#1b2436",
   "icons": [
     {"src": "/logo.png", "sizes": "1254x1254", "type": "image/png", "purpose": "any maskable"}
   ]
@@ -253,42 +253,46 @@ const dashboardHTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Ametsuyu Flippost</title>
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#0b0d10">
+<meta name="theme-color" content="#1b2436">
 <link rel="apple-touch-icon" href="/logo.png">
 <link rel="icon" href="/logo.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="ZF5 Modem">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&display=swap">
 <style>
-  /* "Midnight glass" — a modern dark instrument skin. The :root block below is
+  /* "Rainy dusk" — the Flippost logo as a skin: rain-sky slate ground, icy
+     hair-blue glass and accent, cream ink, blush for the cute bits. The :root block below is
      the shared design-token vocabulary — coverHTML carries the same names and
      values, so a token can never mean one thing here and another on the cover
      screen. Depth = layered translucency + blur + soft shadows; one gradient
      accent (teal→emerald) carries interactive state, green/amber/red are
      reserved for live status, violet is the CPU lane. */
   :root{
-    /* surfaces: translucent glass over a near-black aurora ground */
-    --ground:#07090d;
-    --surface:rgba(255,255,255,.045);
-    --surface-inset:rgba(5,8,12,.55);
-    --line:rgba(255,255,255,.09);
-    --line-soft:rgba(255,255,255,.055);
+    /* surfaces: icy-hair glass over the Flippost rain-sky ground */
+    --ground:#1b2436;
+    --surface:rgba(213,231,253,.07);
+    --surface-inset:rgba(14,20,33,.45);
+    --line:rgba(213,231,253,.15);
+    --line-soft:rgba(213,231,253,.08);
 
     /* ink: three levels */
-    --ink:#f2f5f9;
-    --ink-2:#a8b3c2;
-    --ink-3:#8a94a3;
+    --ink:#fef7ee;
+    --ink-2:#c9d7ea;
+    --ink-3:#9eb1cb;
 
-    /* the accent pair + the semantic status set + the CPU lane */
-    --teal:#2dd4bf;
-    --teal-2:#34d399;
-    --green:#4ade80;
-    --amber:#fbbf24;
-    --red:#fb7185;
-    --violet:#8a7dff;
-    --track:rgba(255,255,255,.08); /* unfilled rings and bars */
-    --on-teal:#04211f;             /* label colour on the accent fill */
+    /* the accent pair (hair → clip blue; names kept from the old teal skin) +
+       the pastel status set + the CPU lane + the logo's blush */
+    --teal:#a9cdfb;
+    --teal-2:#6fa4f0;
+    --green:#9ee6c3;
+    --amber:#ffd49a;
+    --red:#ff9aa6;
+    --violet:#c4b5ff;
+    --blush:#fbd3d0;
+    --track:rgba(213,231,253,.12); /* unfilled rings and bars */
+    --on-teal:#1b2436;             /* label colour on the accent fill */
     --accent-grad:linear-gradient(135deg,var(--teal) 0%,var(--teal-2) 100%);
 
     /* the cover screen's seven owner-picked accents (Settings swatches) */
@@ -302,13 +306,13 @@ const dashboardHTML = `<!DOCTYPE html>
 
     /* metrics: 4/8/12/16/32/64 (the scale skips 24 and 48) */
     --space-xs:4px; --space-sm:8px; --space-md:12px; --space-lg:16px; --space-xl:32px; --space-2xl:64px;
-    --radius-sm:10px; --radius-md:18px; --radius-lg:28px; --radius-pill:999px;
-    --radius-nav:22px; --radius-btn:14px;
+    --radius-sm:12px; --radius-md:22px; --radius-lg:30px; --radius-pill:999px;
+    --radius-nav:26px; --radius-btn:999px;
     --tabbar-h:58px;
 
-    /* one sans doing every job — roles separate by weight and size */
-    --font-display:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    --font-body:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    /* one rounded sans doing every job — roles separate by weight and size */
+    --font-display:"Nunito",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,Roboto,sans-serif;
+    --font-body:"Nunito",ui-rounded,"SF Pro Rounded",system-ui,-apple-system,Roboto,sans-serif;
 
     --smooth:cubic-bezier(0.4,0,0.2,1);
     --pop:cubic-bezier(0.34,1.56,0.64,1);
@@ -325,12 +329,15 @@ const dashboardHTML = `<!DOCTYPE html>
     -webkit-font-smoothing:antialiased; line-height:1.4; letter-spacing:normal;
     display:flex; flex-direction:column;
   }
-  /* the aurora: two fixed colour washes the glass cards blur over. Purely
-     ambient — nothing interactive sits on it. */
+  /* the logo's rainy sky: drizzle over two soft clouds, a blush glow at the
+     foot, dusk slate fading down. Purely ambient — nothing interactive sits
+     on it. */
   body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:
-    radial-gradient(60% 46% at 14% -4%,rgba(45,212,191,.11),transparent 62%),
-    radial-gradient(52% 40% at 88% 4%,rgba(138,125,255,.09),transparent 62%),
-    radial-gradient(70% 34% at 50% 108%,rgba(52,211,153,.06),transparent 64%)}
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Cg stroke='%23d5e7fd' stroke-opacity='.13' stroke-width='1.3' stroke-linecap='round'%3E%3Cpath d='M13 4l-3 9M42 17l-3 9M27 38l-3 9M56 47l-3 9'/%3E%3C/g%3E%3C/svg%3E"),
+    radial-gradient(58% 38% at 12% -6%,rgba(115,138,171,.42),transparent 66%),
+    radial-gradient(48% 32% at 92% -2%,rgba(115,138,171,.32),transparent 66%),
+    radial-gradient(70% 30% at 50% 108%,rgba(251,211,208,.08),transparent 66%),
+    linear-gradient(180deg,#2b3850 0%,var(--ground) 62%)}
   /* every column of numbers is tabular, so digits don't jitter as values tick */
   .num{font-variant-numeric:tabular-nums}
   .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -373,7 +380,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
   /* Card: frosted glass — translucent surface, hairline border, a soft drop
      shadow and a 1px top inner highlight so light reads as coming from above. */
-  .card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-lg);box-shadow:0 10px 30px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  .card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);padding:var(--space-lg);box-shadow:0 10px 30px rgba(10,15,28,.35),inset 0 1px 0 rgba(213,231,253,.1);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
   .card+.card,.grid+.card,.card+.grid,.duo+.card,.duo+.grid{margin-top:var(--space-md)}
   .duo>.card{margin-top:0}
   .hero{display:flex;flex-direction:column;align-items:center;padding:var(--space-lg)}
@@ -448,8 +455,8 @@ const dashboardHTML = `<!DOCTYPE html>
   .setbtn{margin-top:var(--space-md);width:100%;background:var(--accent-grad);color:var(--on-teal);border:0;border-radius:var(--radius-btn);padding:13px;font-size:14px;font-weight:700;font-family:var(--font-body);cursor:pointer;min-height:48px;box-shadow:0 6px 20px color-mix(in srgb,var(--teal) 28%,transparent);transition:transform .15s var(--pop),filter .15s var(--smooth),box-shadow .15s var(--smooth)}
   .setbtn:disabled{opacity:.55;cursor:default}
   .setbtn:active:not(:disabled){filter:brightness(1.1);transform:scale(.98)}
-  .setbtn.on{background:linear-gradient(135deg,#34d399,#10b981);color:#032015;box-shadow:0 6px 20px color-mix(in srgb,#34d399 28%,transparent)}
-  .setbtn.danger{background:linear-gradient(135deg,#fb7185,#f43f5e);color:#2b0409;box-shadow:0 6px 20px color-mix(in srgb,#f43f5e 26%,transparent)}
+  .setbtn.on{background:linear-gradient(135deg,#c6f2dc,#8ddbb6);color:#12352a;box-shadow:0 6px 20px color-mix(in srgb,#8ddbb6 28%,transparent)}
+  .setbtn.danger{background:linear-gradient(135deg,#ffc6cd,#ff8e9c);color:#3a1016;box-shadow:0 6px 20px color-mix(in srgb,#ff8e9c 26%,transparent)}
   .setbtn.sec{background:var(--surface-inset);color:var(--teal);border:1px solid var(--line);font-weight:600;box-shadow:none}
   .minibtn{background:var(--surface-inset);color:var(--ink);border:1px solid var(--line);border-radius:var(--radius-sm);padding:var(--space-sm) var(--space-md);font-size:12.5px;font-weight:600;font-family:var(--font-body);cursor:pointer;min-height:44px;transition:border-color .15s var(--smooth),color .15s var(--smooth),transform .15s var(--pop)}
   /* the affirmative half of a paired control carries the accent */
@@ -617,7 +624,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <svg viewBox="0 0 120 120" aria-hidden="true">
           <defs>
             <linearGradient id="ringGrad" x1="0" y1="0" x2="120" y2="120" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stop-color="#2dd4bf"/><stop offset="1" stop-color="#34d399"/>
+              <stop offset="0" stop-color="#d5e7fd"/><stop offset="1" stop-color="#6fa4f0"/>
             </linearGradient>
           </defs>
           <circle cx="60" cy="60" r="52" fill="none" stroke="var(--track)" stroke-width="11"/>
@@ -801,7 +808,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <input id="pPass" type="password" placeholder="8–63 chars" autocomplete="new-password"></div>
       <div class="setgrid">
         <div><label class="f" for="pSec">Security</label><select id="pSec"><option value="wpa2">WPA2</option><option value="wpa3">WPA3</option><option value="open">Open (no password)</option></select></div>
-        <div><label class="f" for="pBand">Band</label><select id="pBand"><option value="5">5 GHz · faster</option><option value="2">2.4 GHz · range</option><option value="6">6 GHz</option></select></div>
+        <div><label class="f" for="pBand">Band</label><select id="pBand"><option value="5">5 GHz · faster</option><option value="2">2.4 GHz · range</option><option value="6">6 GHz</option><option value="dual">2.4 + 5 GHz · dual band</option></select></div>
       </div>
       <div class="settok"><label class="f" for="pTrig">Trigger networks — seeing any one switches to this preset (one per line)</label>
       <textarea id="pTrig" placeholder="CafeWifi&#10;ACME-staff"></textarea></div>
@@ -1430,7 +1437,8 @@ const dashboardHTML = `<!DOCTYPE html>
     var pauseEl=document.getElementById("hsPause");
     if(h.auto&&h.paused){
       pauseEl.style.display="";
-      setListHTML(pauseEl,h.paused==="location_off"
+      setListHTML(pauseEl,h.paused==="dual_band"?(ICN_WARN+"Scanning paused: Dual-band hotspot is on: the phone can't scan while serving both bands. Switch to a single-band preset to resume.")
+        :h.paused==="location_off"
         ?(ICN_WARN+"Scanning paused: turn on Location on the phone. Retries automatically.")
         :(ICN_WARN+"Scanning paused: scan failed ("+esc(h.paused_detail||"unknown")+"). Retrying automatically."));
     }else{
@@ -1928,7 +1936,7 @@ const dashboardHTML = `<!DOCTYPE html>
       scanBtn.disabled=false;
       if(!res.ok){nearbyMsg.textContent="Error: "+(res.j.error||"failed");return;}
       renderHotspot(res.j);
-      nearbyMsg.textContent=res.j.paused==="location_off"?"Turn on location services to scan.":
+      nearbyMsg.textContent=res.j.paused==="dual_band"?"Dual-band hotspot is on: the phone can't scan while serving both bands.":res.j.paused==="location_off"?"Turn on location services to scan.":
         ((res.j.nearby&&res.j.nearby.length||0)+" network"+((res.j.nearby&&res.j.nearby.length)===1?"":"s")+" in range.");
     }).catch(function(e){scanBtn.disabled=false;nearbyMsg.textContent="Error: "+e.message;});
   });
@@ -2071,7 +2079,7 @@ const dashboardHTML = `<!DOCTYPE html>
   var pMsg=document.getElementById("pMsg"), presetList=[], editingId="";
   function presetMeta(p){
     var sec=p.security==="open"?"Open":String(p.security||"").toUpperCase();
-    var band=p.band==="2"?"2.4 GHz":(p.band==="6"?"6 GHz":"5 GHz");
+    var band=p.band==="2"?"2.4 GHz":(p.band==="6"?"6 GHz":(p.band==="dual"?"2.4 + 5 GHz":"5 GHz"));
     var n=(p.triggers&&p.triggers.length)||0;
     return esc(p.ssid)+" · "+band+" · "+sec+(n?(" · "+n+" trigger"+(n===1?"":"s")):"");
   }
@@ -2204,6 +2212,7 @@ const dashboardHTML = `<!DOCTYPE html>
     post("/v1/hotspot/scan",{},rt).then(function(res){
       sb.disabled=false;
       if(!res.ok){pMsg.textContent="Error: "+(res.j.error||"failed");return;}
+      if(res.j.paused==="dual_band"){pMsg.textContent="Dual-band hotspot is on: the phone can't scan while serving both bands.";return;}
       if(res.j.paused==="location_off"){pMsg.textContent="Turn on location services to scan.";return;}
       var names=(res.j.nearby||[]).map(function(a){return a.ssid;});
       renderTriggerChips(names);

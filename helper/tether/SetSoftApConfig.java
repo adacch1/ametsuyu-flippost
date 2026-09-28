@@ -21,7 +21,13 @@ import java.lang.reflect.Method;
 //
 // Usage:
 //   get                                                  -> prints CFG ssid=.. band=.. sec=..
-//   set <ssid> <open|wpa2|wpa3> <pass> <2|5|6> [channel] -> prints RESULT=OK / RESULT=FAILED reason=..
+//   set <ssid> <open|wpa2|wpa3> <pass> <2|5|6|dual> [channel] -> prints RESULT=OK / RESULT=FAILED reason=..
+//
+//   band <2|5|6|dual> [channel]                          -> same, keeping the current SSID/passphrase
+//
+// "dual" is a bridged AP: one SSID served on 2.4GHz (ch 6) and 5GHz (the
+// given channel, default 149) at once, via setChannels. The chip exposes a
+// second AP interface (wlan2) bridged with swlan0 for this.
 public final class SetSoftApConfig {
     // SoftApConfiguration security-type + band constants (stable @SystemApi ints).
     private static final int SEC_OPEN = 0, SEC_WPA2 = 1, SEC_WPA3 = 3;
@@ -52,13 +58,17 @@ public final class SetSoftApConfig {
             System.exit(0);
         }
 
-        // set <ssid> <open|wpa2|wpa3> <pass> <2|5|6>
-        if (args.length < 3) { System.out.println("RESULT=FAILED reason=usage"); System.exit(2); }
-        String ssid = args[1];
-        String secStr = args[2];
-        String pass = args.length > 3 ? args[3] : "";
-        String bandStr = args.length > 4 ? args[4] : "5";
-        int channel = args.length > 5 ? Integer.parseInt(args[5]) : 0;
+        // set <ssid> <open|wpa2|wpa3> <pass> <2|5|6> | band <2|5|6|dual>
+        boolean bandOnly = args[0].equals("band");
+        if (args.length < (bandOnly ? 2 : 3)) { System.out.println("RESULT=FAILED reason=usage"); System.exit(2); }
+        String ssid = bandOnly ? null : args[1];
+        String secStr = bandOnly ? "" : args[2];
+        String pass = !bandOnly && args.length > 3 ? args[3] : "";
+        String bandStr = bandOnly ? args[1] : args.length > 4 ? args[4] : "5";
+        int chArg = bandOnly ? 2 : 5;
+        int channel = args.length > chArg ? Integer.parseInt(args[chArg]) : 0;
+        // Band-only 5GHz pins ch149: ACS drops the AP to 802.11n (see header).
+        if (bandOnly && channel == 0 && bandStr.equals("5")) channel = 149;
 
         int sec = secStr.equals("open") ? SEC_OPEN : secStr.equals("wpa3") ? SEC_WPA3 : SEC_WPA2;
         int band = bandStr.equals("2") ? BAND_2 : bandStr.equals("6") ? BAND_6 : BAND_5;
@@ -72,13 +82,24 @@ public final class SetSoftApConfig {
         Object b = current != null
                 ? bClass.getConstructor(cfgClass).newInstance(current)
                 : bClass.getConstructor().newInstance();
-        bClass.getMethod("setSsid", String.class).invoke(b, ssid);
-        if (sec == SEC_OPEN) {
-            bClass.getMethod("setPassphrase", String.class, int.class).invoke(b, null, SEC_OPEN);
-        } else {
-            bClass.getMethod("setPassphrase", String.class, int.class).invoke(b, pass, sec);
+        if (!bandOnly) {
+            bClass.getMethod("setSsid", String.class).invoke(b, ssid);
+            if (sec == SEC_OPEN) {
+                bClass.getMethod("setPassphrase", String.class, int.class).invoke(b, null, SEC_OPEN);
+            } else {
+                bClass.getMethod("setPassphrase", String.class, int.class).invoke(b, pass, sec);
+            }
         }
-        if (channel > 0) {
+        if (bandStr.equals("dual")) {
+            Class<?> sia = Class.forName("android.util.SparseIntArray");
+            Object chs = sia.getConstructor().newInstance();
+            Method put = sia.getMethod("put", int.class, int.class);
+            put.invoke(chs, BAND_2, 6);
+            put.invoke(chs, BAND_5, channel > 0 ? channel : 149);
+            bClass.getMethod("setChannels", sia).invoke(b, chs);
+            // Keep both instances up; by default the idle one shuts down.
+            bClass.getMethod("setBridgedModeOpportunisticShutdownEnabled", boolean.class).invoke(b, false);
+        } else if (channel > 0) {
             bClass.getMethod("setChannel", int.class, int.class).invoke(b, channel, band);
         } else {
             bClass.getMethod("setBand", int.class).invoke(b, band);

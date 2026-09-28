@@ -1,91 +1,131 @@
-# zflip5-modem-module
-
-A rooted Samsung Galaxy Z Flip 5 (SM-F731B) turned into a dedicated 5G/LTE modem and Wi-Fi hotspot — with a proper admin dashboard, thermal safety you can't accidentally disable, and remote control from an iPhone (Apple Shortcuts) or Discord.
-
-A small local-only root service (Go) reports network, tethering, thermal, battery, and recent SMS state, can auto-switch hotspot presets by which Wi-Fi network is in range, and can safely prefer/recover 5G — all **without** ever bypassing thermal protection.
+# Ametsuyu Flippost
 
 <p align="center">
-  <img src="docs/assets/dashboard-home.png" alt="Home tab: data usage ring against a configurable limit, battery and temperature cards, hotspot preset switcher" width="260">
-  <img src="docs/assets/dashboard-network.png" alt="Network tab: LTE-CA signal detail with RSRP, RSRQ, SINR and band, hotspot state, USB tethering toggle" width="260">
-  <img src="docs/assets/dashboard-system.png" alt="System tab: per-core CPU bars, memory use, thermal policy HOT and CPU mode eco (auto)" width="260">
+  <img src="docs/assets/flippost-logo.png" alt="Flippost logo: a pale-blue-haired character under a rainy sky, wearing a Wi-Fi hair clip" width="180">
 </p>
 
-<p align="center"><em>Live screens from the device. Note the System tab: the phone is genuinely hot, so the CPU policy has dropped to <strong>eco</strong> and parked a core — 7 of 8 online.</em></p>
+Ametsuyu Flippost turns a rooted Samsung Galaxy Z Flip 5 (SM-F731B) into a
+dedicated 5G/LTE modem and Wi-Fi 6 hotspot. It ships as a Magisk module with
+a local-only Go daemon, a dashboard served from the phone, and a cover-screen
+kiosk. Thermal protection stays on, and nothing listens on a public address.
 
-## Why
-
-Old phones make great dedicated modems — always-on cellular radio, its own battery, a screen for status at a glance. This project turns a Z Flip 5 into exactly that: a controllable hotspot with real safety rails (it will not let itself overheat) and a dashboard that's actually pleasant to check.
+<p align="center">
+  <img src="docs/assets/cover-kiosk.png" alt="Cover-screen kiosk: clock with logo avatar, mobile data usage bar, battery ring, WAN IP with 4G+ badge, and Hotspot, Dual band, Rotate IP, and Refresh buttons over a rainy slate background" width="320">
+</p>
 
 ## Features
 
-- **Live dashboard** — data usage ring, signal, battery, per-core CPU, thermal state, connected clients, all served from the phone itself, no cloud dependency.
-- **Hotspot presets** — save named SoftAP configs (SSID/pass/band), auto-switch by which Wi-Fi network is currently in range.
-- **802.11ax hotspot** — full Wi-Fi 6 SoftAP (not the 300 Mbps 802.11n Android normally ships), started the same way Samsung's own Settings toggle does.
-- **USB tethering** — toggle and check status alongside Wi-Fi tethering.
-- **Thermal gate that's actually a gate** — hard-capped at 48°C server-side; the UI can adjust the warn/gate thresholds within that cap, never past it.
-- **CPU policy** — auto/performance/balanced/eco/off, reduces load automatically when the device is running hot.
-- **SMS, pull-only** — redacted by default, owner-only, rate-limited, never auto-forwarded.
-- **Remote control** — Apple Shortcuts and a self-hosted Discord bot, both over Tailscale; no public endpoint.
-- **No token to babysit** — the daemon generates its own scoped tokens on first boot and hands them to the dashboard automatically (open reads + open control on by default), so opening the page — from the phone's own kiosk or a browser on your tailnet — just works. Flip `open_reads`/`open_control` off in Settings if you'd rather require the token explicitly.
+- **Wi-Fi 6 hotspot.** The daemon starts the SoftAP the way Samsung Settings
+  does, so clients get 802.11ax at 80 MHz, up to 1200 Mbps, rather than the
+  802.11n link that stock Android start paths give.
+- **Dual-band hotspot.** One SSID on 2.4 GHz and 5 GHz at once, both Wi-Fi 6.
+  Toggle it from the kiosk's **Dual band** button or pick the **2.4 + 5 GHz**
+  preset band.
+- **Home-network auto-toggle.** The hotspot turns off when a network from
+  `ssid_whitelist` is in range and back on when you leave. A timed override keeps it on for up to 24
+  hours.
+- **Hotspot presets.** Save named SSID, passphrase, security, and band sets.
+  Presets can switch automatically based on nearby networks.
+- **Dashboard.** Data usage against a configurable quota, signal detail,
+  battery, per-core CPU, temperature history, connected clients, and an inbox
+  for SMS and notifications.
+- **Cover-screen kiosk.** Clock, data usage, battery, WAN IP, and one-tap
+  hotspot, dual-band, and IP-rotation controls on the 352-pixel Flex Window.
+- **Thermal gate.** The daemon enforces a hard 48 °C ceiling. The dashboard
+  adjusts thresholds only within that ceiling.
+- **CPU policy.** Auto, performance, balanced, eco, and off modes. Policy only
+  reduces load when the phone runs hot.
+- **Alerts.** A self-hosted Telegram bot and a device-local ntfy runner report
+  temperature, battery, power, data cap, signal, and hotspot changes.
+- **Remote control.** Reach the dashboard, Telegram bot, Discord relay, and
+  Apple Shortcuts over your own Tailscale tailnet.
 
-## The dashboard
+## Design
 
-One self-contained page: no build step, no CDN, no framework, and no external assets at all — even the webfonts are gone, so nothing is fetched before first paint. Six tabs — Home, Network, Clients, System, Presets, Settings — plus the Inbox, served straight off the phone's loopback.
+The dashboard and kiosk share one token set drawn from the logo: a rain-sky
+slate ground with faint drizzle, icy blue glass cards, cream text, and a blush
+pink accent. Buttons are pills, and the type is the rounded Nunito face, with
+system fonts as the fallback. A compiled-in test asserts that both pages use
+identical token values. [`DESIGN.md`](DESIGN.md) lists every token.
 
-It follows a "midnight glass" design system: frosted translucent cards with hairline borders and soft depth over a near-black aurora ground, one teal→emerald gradient accent with glow, and status colour (green/amber/red) reserved for live state. The cover-screen kiosk shares the exact same design tokens — a compiled-in test asserts the two pages cannot drift — while running on a true-black OLED ground with no blur, since the Flex Window is lit whenever the phone is closed.
+The kiosk runs a dimmer version of the background because the Flex Window
+stays lit whenever the phone is closed. The whole layout also shifts a few
+pixels each minute to prevent OLED burn-in.
 
-Accessibility is checked rather than assumed: every text node clears WCAG AA contrast, controls are 44px touch targets, tabs are real `tablist`/`tabpanel` semantics with focus moved into the panel on switch, and the meters animate with `transform` rather than layout properties so the poll loop doesn't reflow the page.
+## Safety
 
-Typography is the system UI stack (a modern sans on every Android/WebView that serves this page) with tabular figures everywhere numbers change, so digits don't jitter as values tick. The Vietnamese lunar date on the Home tab is computed in JS, so no font subset is needed to keep diacritics intact.
+- **Thermal protection stays on.** 44 °C is a warning and 48 °C is a hard cap,
+  enforced by the daemon. The only exception is `thermal.bench=true`, an
+  explicit opt-in for battery-less donor hardware on a bench supply. It trips
+  at 70 °C and re-arms at 55 °C or lower.
+- **Loopback only.** The daemon binds `127.0.0.1` and refuses any other bind
+  address. Remote access goes through Tailscale, never a port forward.
+- **SMS stays pull-only.** The daemon redacts, rate-limits, and never forwards
+  messages. The Telegram bot can pull full SMS text only when you set
+  `SMS_READ` in its `.env` file.
+- **No modem identity changes.** Nothing writes to the IMEI, baseband, SIM, or
+  eSIM, and nothing bypasses carrier provisioning.
 
-## Recommended: put it behind Tailscale
+Warning: Your carrier can route a public IPv6 prefix to the phone. Any service
+bound to `0.0.0.0` or `::` is then reachable from the internet, including ADB
+over TCP. Keep the IPv6 firewall in place and add every new port to it. For
+details, see [Threat model](docs/threat-model.md).
 
-The phone sits behind carrier CGNAT, so there's no public inbound path anyway — remote access is a private mesh VPN, never a port-forward. The daemon binds `127.0.0.1` only; the module can run **userspace** `tailscaled` (no TUN, no root network changes) and expose just that loopback port to your tailnet with `tailscale serve`. That's how the iPhone Shortcuts and Discord relay reach it, and it's the intended way to open the dashboard from a desktop browser instead of USB `adb forward`. See [`docs/tailscale.md`](docs/tailscale.md) for the one-time setup (auth key, `ingress.mode`).
+## Repository layout
 
-> **Check what else is listening.** The carrier may route a public IPv6 prefix to the phone, in which case anything bound to `0.0.0.0`/`::` is reachable from the open internet even though IPv4 is CGNAT'd. The daemon itself is loopback-only and unaffected, but adb-over-TCP and any side service you add are not. `tools/security-check.sh --device` asserts the daemon's bind; verify the rest yourself before leaving them up.
-
-## Safety guarantees (non-negotiable)
-
-- No disabling or bypassing Samsung/Android thermal mitigation in normal mode. 44°C is a warning threshold and 48°C is a hard cap enforced server-side. The only exception is `thermal.bench=true`: an explicit opt-in for **battery-less donor hardware** on a bench supply, which suspends OS thermal mitigation (zones, HALs, Samsung kernel cpufreq_limit) and lifts the gate to 70°C with a hard 70°C trip that restores protection, then auto re-arms at ≤55°C — fully hands-off. Bench mode also applies reversible throughput tuning (cubic TCP, MTU probing, TCP Fast Open, bigger buffers, fq_codel on SoftAP + WWAN) for multi-device load. It stays off unless you enable it.
-- No public API. The daemon binds `127.0.0.1` only; remote access is exclusively through your own private Tailscale tunnel, never a port-forward. Reads/writes default to tokenless *within that private tunnel* for convenience — real bearer tokens still exist underneath and can be required again any time from Settings.
-- SMS is pull-only, redacted by default, owner-only, and rate-limited. Never auto-forwarded.
-- No IMEI / baseband / SIM / eSIM modification and no carrier-provisioning bypass.
-
-## Status
-
-Implemented and running on-device. The Go daemon (`daemon/`), Magisk module (`magisk/`), WebView cover-screen kiosk (`helper/`), and self-hosted ntfy + Discord bot (`selfhost/`) are all built and deployed.
-
-## Layout
-
-| Path | Purpose |
+| Path | Contents |
 | --- | --- |
-| `daemon/` | Go root daemon: loopback API, thermal/CPU policy, served dashboard |
-| `magisk/` | Magisk module: `service.sh`, `action.sh`, packaged daemon + `tether.jar` |
-| `helper/` | WebView cover-screen kiosk APK + root tether/wifi-scan/USB-tether helpers |
-| `selfhost/` | Self-hosted ntfy + Discord Gateway bot (docker-compose) |
+| `daemon/` | Go root daemon: loopback API, thermal and CPU policy, dashboard, kiosk |
+| `magisk/` | Magisk module: `service.sh`, `action.sh`, ntfy runner, packaged daemon and `tether.jar` |
+| `helper/` | Cover-screen kiosk APK and root helpers for tethering, Wi-Fi scans, and USB tethering |
+| `selfhost/` | Telegram bot, ntfy server, and Discord relay (Docker Compose) |
 | `tools/` | Build, packaging, and verification scripts |
-| `docs/` | Architecture, threat model, install, safety, troubleshooting |
-| `schemas/` | API (OpenAPI) and config JSON schemas |
+| `docs/` | Install, dashboard, alerts, Tailscale, and threat-model guides |
+| `schemas/` | OpenAPI and config JSON schemas |
 
-## Getting started
+## Get started
 
-You'll need a rooted Z Flip 5 (SM-F731B) with Magisk, and a host with `adb` + Go. Full build/install/update steps are in [`docs/install.md`](docs/install.md); once installed, open the dashboard — over Tailscale (recommended, see above) or loopback via `adb forward` for local testing — see [`docs/dashboard.md`](docs/dashboard.md).
+You need a rooted Z Flip 5 (SM-F731B) with Magisk, and a computer with `adb`,
+Go, and a JDK with the Android build tools.
 
-Updating just the daemon does not need a reboot. The module's `service.sh` runs a watchdog, so replacing the binary and killing the process is enough — note that a *running* executable can't be overwritten in place (`ETXTBSY`), so rename it first:
+1. Clone the repository:
+
+   ```sh
+   git clone https://github.com/adacch1/ametsuyu-flippost.git
+   cd ametsuyu-flippost
+   ```
+
+1. Build and install the module by following [Install](docs/install.md).
+1. Set up remote access by following [Tailscale](docs/tailscale.md).
+1. Open the dashboard as described in [Dashboard](docs/dashboard.md).
+
+For alerts, see [Telegram bot](docs/telegram-bot.md) and [ntfy](docs/ntfy.md).
+For the home-network auto-toggle, see [Hotspot auto-toggle](docs/hotspot-auto.md).
+
+### Update the daemon
+
+The module runs a watchdog that restarts the daemon, so a daemon update needs
+no reboot. The kernel refuses to overwrite a running binary, so rename it
+first:
 
 ```sh
-bash tools/build-daemon.sh                       # -> dist/zflip5-modemd (static arm64)
+bash tools/build-daemon.sh
 adb push dist/zflip5-modemd /data/local/tmp/modemd.new
-adb shell su -c 'BIN=/data/adb/modules/zflip5_modem/daemon/zflip5-modemd; \
-  mv "$BIN" "$BIN.old" && cp /data/local/tmp/modemd.new "$BIN" && chmod 0755 "$BIN" && \
-  kill $(ps -A -o PID,ARGS | grep "[z]flip5-modemd --config" | awk "{print \$1}" | tail -1)'
-# watchdog respawns within ~10s
+printf '%s\n' \
+  'BIN=/data/adb/modules/zflip5_modem/daemon/zflip5-modemd' \
+  'mv "$BIN" "$BIN.old"; cp /data/local/tmp/modemd.new "$BIN"' \
+  'chmod 0755 "$BIN"; rm "$BIN.old"; pkill -x zflip5-modemd' \
+  | adb shell su
 ```
+
+The watchdog starts the updated daemon within about 10 seconds.
 
 ## Disclaimer
 
-This is a personal hardware project built for one specific device and one owner's workflow, published for reference. Rooting trips Knox (Samsung Pay / Secure Folder stop working) and voids your warranty. Use at your own risk; nothing here is a general-purpose product.
+Ametsuyu Flippost targets one device and one owner's workflow, and it's
+published for reference. Rooting trips Knox, which disables Samsung Pay and
+Secure Folder, and voids the warranty. Use it at your own risk.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).

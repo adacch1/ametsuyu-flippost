@@ -107,9 +107,18 @@ func indexOf(ss []string, want string) int {
 }
 
 // softApIface is the Samsung SoftAP tether interface on the Z Flip 5.
-const softApIface = "swlan0"
+// bridgeIface replaces it as the tethered (IP-bearing) interface while the
+// dual-band bridged AP runs: swlan0 (2.4GHz) + wlan2 (5GHz) are its members.
+const (
+	softApIface = "swlan0"
+	bridgeIface = "ap_br_swlan0"
+)
 
 // deviceClients reads the live hotspot client list on-device.
 func deviceClients() ClientsReport {
-	return parseClients(runCmd("ip", "neigh", "show", "dev", softApIface), softApIface)
+	iface := softApIface
+	if bridgedAPUp() {
+		iface = bridgeIface
+	}
+	return parseClients(runCmd("ip", "neigh", "show", "dev", iface), iface)
 }
