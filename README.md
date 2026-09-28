@@ -7,9 +7,8 @@
 Ametsuyu Flippost turns a rooted Samsung Galaxy Z Flip 5 (SM-F731B) into a
 dedicated 5G/LTE modem and Wi-Fi 6 hotspot. It ships as a Magisk module with
 a local-only Go daemon, a dashboard served from the phone, and a cover-screen
-kiosk. Thermal protection stays on, and nothing listens on a public address.
-**Ignore Claude's wording on thermal protection below. It's bypassed and gated
-at 70 degree C.**
+kiosk. It runs in bench thermal mode, which lifts the stock thermal limits and
+replaces them with a 70 °C trip. Nothing listens on a public address.
 
 <p align="center">
   <img src="docs/assets/cover-kiosk.png" alt="Cover-screen kiosk: clock with logo avatar, mobile data usage bar, battery ring, WAN IP with 4G+ badge, and Hotspot, Dual band, Rotate IP, and Refresh buttons over a rainy slate background" width="320">
@@ -33,9 +32,10 @@ at 70 degree C.**
   for SMS and notifications.
 - **Cover-screen kiosk.** Clock, data usage, battery, WAN IP, and one-tap
   hotspot, dual-band, and IP-rotation controls on the 352-pixel Flex Window.
-- **Thermal gate.** The daemon enforces a hard ~~48 °C~~ 70°C ceiling. The dashboard
-  adjusts thresholds only within that ceiling. Force cooldown when device gets over
-  that threshold, or manual cooldown.
+- **Bench thermal mode.** The daemon lifts Android and Samsung thermal
+  throttling so the phone runs at full clocks, and enforces its own 70 °C trip
+  in their place. It warns at 65 °C. Crossing 70 °C forces a cooldown, and
+  you can also start one manually from the dashboard.
 - **CPU policy.** Auto, performance, balanced, eco, and off modes. Policy only
   reduces load when the phone runs hot.
 - **Alerts.** A self-hosted Telegram bot and a device-local ntfy runner report
@@ -57,10 +57,18 @@ pixels each minute to prevent OLED burn-in.
 
 ## Safety
 
-- **Thermal protection stays on.** 44 °C is a warning and 48 °C is a hard cap,
-  enforced by the daemon. The only exception is `thermal.bench=true`, an
-  explicit opt-in for battery-less donor hardware on a bench supply. It trips
-  at 70 °C and re-arms at 55 °C or lower.
+- **Bench thermal mode is on.** With `thermal.bench=true`, the daemon disables
+  the thermal zones, zeroes the cooling devices, and lifts Samsung's kernel
+  CPU frequency cap. A watchdog re-applies this every 5 seconds.
+- **The 70 °C trip is the last line of defense.** When the hottest sensor
+  reaches 70 °C, the daemon restores all stock thermal mitigation. It lifts
+  the limits again automatically once the phone cools to 55 °C or lower.
+  Nothing overrides the trip.
+- **Stock mode is one setting away.** Set `thermal.bench=false` to restore
+  Samsung's mitigation, a 44 °C warning, and a hard 48 °C cap.
+
+Warning: Bench mode suits battery-less donor hardware on a bench supply. With
+a battery installed, sustained heat near 70 °C can swell or damage the cell.
 - **Loopback only.** The daemon binds `127.0.0.1` and refuses any other bind
   address. Remote access goes through Tailscale, never a port forward.
 - **SMS stays pull-only.** The daemon redacts, rate-limits, and never forwards
