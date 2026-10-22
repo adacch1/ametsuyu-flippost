@@ -63,16 +63,6 @@ EOF
   settings put global transition_animation_scale 0
   settings put global animator_duration_scale 0
 
-  # Static wallpaper (kiosk slate) on the main and cover screens: Samsung's
-  # live wallpaper decodes video under the kiosk nonstop. The helper must run
-  # as uid 1000, which can't read /data/adb, so it runs from a public copy.
-  if [ -f "$MODDIR/tether/tether.jar" ]; then
-    cp "$MODDIR/tether/tether.jar" /data/local/tmp/zf5-tether.jar && chmod 0644 /data/local/tmp/zf5-tether.jar
-    for WHICH in 7 19; do
-      su 1000 -c "CLASSPATH=/data/local/tmp/zf5-tether.jar app_process /system/bin com.zflip5.tether.SetWallpaper set ff1b2436 $WHICH" >/dev/null 2>&1
-    done
-  fi
-
   # Wi-Fi 6 gate (One UI 7): without it the Sem start runs 11axmode=0 (ac only).
   # A wipe resets it, so set it on every boot, before the first start.
   settings put secure wifi_ap_11ax_mode_checked 1
