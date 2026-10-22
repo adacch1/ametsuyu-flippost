@@ -1,48 +1,34 @@
 #!/bin/bash
-# build-apk.sh — build the WebView cover-screen kiosk APK WITHOUT Gradle, using
-# the SDK build-tools directly (aapt2 link -> javac -> d8 -> zipalign ->
-# apksigner). Produces dist/zflip5-kiosk.apk signed with a local debug key.
+# Builds the native cover-screen app with Gradle, verifies its signature, and
+# bundles it into the module. Output: dist/zflip5-kiosk.apk, magisk/app/.
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 : "${ANDROID_HOME:=/opt/homebrew/share/android-commandlinetools}"
 : "${JAVA_HOME:=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home}"
+export ANDROID_HOME JAVA_HOME
+CERT=47965ec3ab41b576b2cf0ab7f414c3127f0e95dbd58ecd57d21651ecdacca75a
 BT="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)"
-PLAT="$ANDROID_HOME/platforms/android-34/android.jar"
-JC="$JAVA_HOME/bin/javac"
 OUT="$ROOT/dist/zflip5-kiosk.apk"
-W="$(mktemp -d)"
 
-# 1. compile resources (network security config) then link + manifest -> base APK
-"$BT/aapt2" compile --dir "$HERE/res" -o "$W/res.zip"
-"$BT/aapt2" link -I "$PLAT" --manifest "$HERE/AndroidManifest.xml" \
-  --min-sdk-version 33 --target-sdk-version 34 -o "$W/base.apk" "$W/res.zip"
-
-# 2. compile Java -> 3. dex. Arrays (not unquoted $(find)) so a repo path with
-# spaces doesn't word-split filenames into broken javac/d8 args.
-mkdir -p "$W/classes"
-SRCS=(); while IFS= read -r f; do SRCS+=("$f"); done < <(find "$HERE/src" -name '*.java')
-"$JC" --release 17 -classpath "$PLAT" -d "$W/classes" "${SRCS[@]}"
-CLS=(); while IFS= read -r f; do CLS+=("$f"); done < <(find "$W/classes" -name '*.class')
-"$BT/d8" --min-api 33 --output "$W" "${CLS[@]}"
-
-# 4. add classes.dex into the apk
-( cd "$W" && "$BT/aapt2" version >/dev/null; zip -qj base.apk classes.dex )
-
-# 5. align + 6. sign with a local debug keystore (generated once).
-# mkdir the output dir BEFORE keytool writes the keystore into it, or the first
-# clean build fails silently (keytool can't create the file in a missing dir).
-mkdir -p "$ROOT/dist"
-KS="$ROOT/dist/debug.keystore"
-if [ ! -f "$KS" ]; then
-  "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KS" -storepass android \
-    -keypass android -alias zf5 -keyalg RSA -keysize 2048 -validity 10000 \
-    -dname "CN=zflip5" >/dev/null 2>&1
+if [ ! -f "$ROOT/dist/debug.keystore" ]; then
+  echo "error: dist/debug.keystore missing; restore it from backup (a new key cannot update the installed app)" >&2
+  exit 1
 fi
-"$BT/zipalign" -f 4 "$W/base.apk" "$W/aligned.apk"
-"$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
-  --out "$OUT" "$W/aligned.apk"
-rm -rf "$W"
-echo "built $OUT"
-"$BT/apksigner" verify "$OUT" && echo "APK_SIGNED_OK"
+
+(cd "$HERE/cover-app" && ./gradlew --no-daemon -q assembleRelease)
+mkdir -p "$ROOT/dist" "$ROOT/magisk/app"
+cp "$HERE/cover-app/app/build/outputs/apk/release/app-release.apk" "$OUT"
+
+"$BT/apksigner" verify --print-certs "$OUT" | grep -q "$CERT" \
+  || { echo "error: APK is not signed with the expected certificate" >&2; exit 1; }
+SIZE=$(wc -c < "$OUT")
+[ "$SIZE" -lt 3000000 ] || { echo "error: APK is $SIZE bytes; the limit is 3000000" >&2; exit 1; }
+VC=$("$BT/aapt2" dump badging "$OUT" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -n1)
+[ "${VC:-0}" -ge 2 ] || { echo "error: versionCode ${VC:-unknown} is below 2" >&2; exit 1; }
+
+cp "$OUT" "$ROOT/magisk/app/zflip5-kiosk.apk"
+echo "$VC" > "$ROOT/magisk/app/versionCode"
+echo "built $OUT versionCode=$VC"
+echo "APK_SIGNED_OK"

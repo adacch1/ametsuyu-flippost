@@ -17,6 +17,7 @@ build/
 
 # Android / Gradle
 .gradle/
+.kotlin/
 local.properties
 
 # Evidence can contain SMS metadata, IMEI/IMSI/ICCID/MSISDN, and tokens.
@@ -44,3 +45,6 @@ selfhost/**/node_modules/
 
 # Superpowers brainstorm companion (local mockups and session state)
 .superpowers/
+
+# built app bundled into the module (build via helper/build-apk.sh)
+magisk/app/

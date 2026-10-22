@@ -73,6 +73,19 @@ failures=0
     echo "SKIP go test daemon (go toolchain absent)"
   fi
 
+  echo "=== ANDROID APP (Gradle) ==="
+  APP_SDK="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
+  if [ -x "$ROOT/helper/cover-app/gradlew" ] && [ -d "$APP_SDK" ]; then
+    if ( export ANDROID_HOME="$APP_SDK" JAVA_HOME="${JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home}"
+         cd "$ROOT/helper/cover-app" && ./gradlew --no-daemon -q test ) >/dev/null 2>&1; then
+      echo "PASS gradle test cover-app"; passes=$((passes + 1))
+    else
+      echo "FAIL gradle test cover-app"; failures=$((failures + 1))
+    fi
+  else
+    echo "SKIP gradle test cover-app (gradlew or Android SDK absent)"
+  fi
+
   echo "=== DISCORD RELAY ==="
   if command -v node >/dev/null 2>&1 && [ -f "$ROOT/relay/relay.test.js" ]; then
     if bash "$ROOT/tools/test-discord-relay.sh" >/dev/null 2>&1; then
