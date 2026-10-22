@@ -41,3 +41,6 @@ magisk/tether/tether.jar
 selfhost/bot/.env
 selfhost/telegram-bot/.env
 selfhost/**/node_modules/
+
+# Superpowers brainstorm companion (local mockups and session state)
+.superpowers/
