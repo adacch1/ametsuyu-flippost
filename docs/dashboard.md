@@ -16,7 +16,7 @@ battery, temperature, per-device speed, and the hotspot switch. Tap
 | **Devices** | Connected clients and their speeds. |
 | **Hotspot** | Band, presets, and the home-network SSID list. |
 | **Data** | Usage today, this week, and this month, plus the data cap. |
-| **System** | CPU, memory, thermal state, and temperature history. |
+| **System** | Status, thermal limits and bench mode, CPU mode, and Airplane mode with IP rotation. |
 | **Tailscale** | Read-only state, DNS name, and serve status. |
 | **Alerts** | A reminder that you set alerts on the phone. |
 | **Advanced** | Read-only switch state and daemon details. |
@@ -157,7 +157,7 @@ on their own.
 ## Temperature history
 
 `GET /v1/thermal/history` (`read-status` scope) reports minute, hour, and
-day temperature buckets for the **System** screen. The daemon
+day temperature buckets. The web dashboard doesn't display them. The daemon
 samples the same 25-second display median that `/v1/status` reports as
 `temp_max_c`, once a minute, and stores the buckets in
 `/data/adb/zflip5-modem/temps.json` (mode 0600). The thermal gate never
@@ -178,10 +178,4 @@ history, and the daemon prunes older buckets on every write. At full
 retention, `temps.json` holds around 26 KB. The daemon writes the file
 every 5 minutes, and immediately before an API-triggered device reboot, so
 a crash between writes loses at most 5 minutes of samples.
-
-The **System** screen's **Temperature · history** card fetches
-`/v1/thermal/history` once a minute, and only while that screen stays open, to
-bound mobile data and rate-limit use for a remote Tailscale viewer. Its four
-range buttons — **1h**, **24h**, **7d**, and **40d** — switch between the
-minute, hour, and day series already in memory, with no new fetch.
 
