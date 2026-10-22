@@ -15,5 +15,5 @@ class StaleLabelTest {
     @Test fun staleShowsAge() = assertEquals("Updated 7 s ago", staleText(SummaryState(s, 1_000, null, false), 8_000))
     @Test fun downShowsNotRunning() = assertEquals("Service not running", staleText(SummaryState(s, 1_000, null, true), 8_000))
     @Test fun noSummaryConnecting() = assertEquals("Connecting…", staleText(SummaryState(null, 0, null, false), 8_000))
-    @Test fun freshIsLive() = assertEquals("Live", staleText(SummaryState(s, 1_000, null, false), 3_000))
+    @Test fun freshIsLive() = assertEquals("LIVE", staleText(SummaryState(s, 1_000, null, false), 3_000))
 }

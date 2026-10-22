@@ -68,7 +68,7 @@ class HomeScreenTest {
     @Test fun rendersOptionCContent() {
         show()
         for (t in listOf("Hotspot · Flippost", "Wi-Fi 6 · 5 GHz · 1 device", "5G", "41.2°", "100.64.12.34", "Tailscale",
-            "↓20.0 ↑2.4 Mb/s", "12 GB / 100 GB", "Today 1.2 GB", "88 GB left", "Live")) rule.onNodeWithText(t).assertExists()
+            "↓20.0 ↑2.4 Mb/s", "12 GB / 100 GB", "Today 1.2 GB", "88 GB left", "LIVE")) rule.onNodeWithText(t).assertExists()
         rule.onNode(hasContentDescription("Signal 3 of 4 bars"), useUnmergedTree = true).assertExists()
     }
 
@@ -155,6 +155,9 @@ class HomeScreenTest {
             val results = mutableListOf<TextLayoutResult>()
             n.config.getOrNull(SemanticsActions.GetTextLayoutResult)!!.action!!(results)
             assertEquals(1, results.single().lineCount)
+            // didOverflowWidth is always true with softWrap = false, so compare the intrinsic text width with the space the pill leaves.
+            val r = results.single()
+            assertTrue("text needs ${r.multiParagraph.maxIntrinsicWidth} px of ${r.layoutInput.constraints.maxWidth} px", r.multiParagraph.maxIntrinsicWidth <= r.layoutInput.constraints.maxWidth)
         }
         val d = rotate.layoutInfo.density.density
         assertEquals(rotate.boundsInRoot.width, more.boundsInRoot.width, d)

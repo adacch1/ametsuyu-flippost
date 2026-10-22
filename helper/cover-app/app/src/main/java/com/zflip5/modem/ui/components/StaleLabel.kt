@@ -12,7 +12,7 @@ fun staleText(state: SummaryState, nowMs: Long): String = when {
     state.down -> "Service not running"
     state.summary == null -> "Connecting…"
     state.stale(nowMs) -> "Updated ${(nowMs - state.lastOkAtMs) / 1000} s ago"
-    else -> "Live"
+    else -> "LIVE"
 }
 
 @Composable
