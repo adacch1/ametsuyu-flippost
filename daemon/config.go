@@ -20,15 +20,13 @@ type Config struct {
 		FailClosed bool    `json:"fail_closed"`
 		Bench      bool    `json:"bench"` // explicit opt-in: battery-less donor hardware
 	} `json:"thermal"`
-	RateLimits struct {
-		DefaultPerMin int `json:"default_per_min"`
-		RadioPerMin   int `json:"radio_per_min"`
-	} `json:"rate_limits"`
-	CPU struct {
+	RateLimits RateLimits `json:"rate_limits"`
+	CPU        struct {
 		Mode string `json:"mode"` // auto | performance | balanced | eco | off
 	} `json:"cpu"`
 	Hotspot struct {
 		SSIDWhitelist []string `json:"ssid_whitelist"` // auto-toggle: off when seen, on when absent
+		DualBand      bool     `json:"dual_band"`      // bridged 2.4 GHz + 5 GHz AP
 	} `json:"hotspot"`
 	HotspotPresets HotspotPresets `json:"hotspot_presets"` // named SoftAP configs + Wi-Fi-triggered auto-switch
 	Cover          struct {
@@ -49,6 +47,24 @@ type Config struct {
 		// tailnet-only, app-less device). Writes only. Off by default.
 		OpenControl bool `json:"open_control"`
 	} `json:"dashboard"`
+}
+
+// RateLimits are the per-minute request caps for the default and radio-control routes.
+type RateLimits struct {
+	DefaultPerMin int `json:"default_per_min"`
+	RadioPerMin   int `json:"radio_per_min"`
+}
+
+// normalizeRateLimits replaces unset values and the old defaults (120 and 6)
+// with the current defaults (600 and 60).
+func normalizeRateLimits(r RateLimits) RateLimits {
+	if r.DefaultPerMin == 0 || r.DefaultPerMin == 120 {
+		r.DefaultPerMin = 600
+	}
+	if r.RadioPerMin == 0 || r.RadioPerMin == 6 {
+		r.RadioPerMin = 60
+	}
+	return r
 }
 
 // CPUMode returns the configured CPU policy mode, defaulting to "auto".
@@ -210,6 +226,29 @@ func persistHotspotWhitelist(path string, ssids []string) error {
 		m["hotspot"] = hs
 	}
 	hs["ssid_whitelist"] = ssids
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeConfigAtomic(path, out)
+}
+
+// persistHotspotDualBand rewrites only hotspot.dual_band, preserving every other key.
+func persistHotspotDualBand(path string, on bool) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return err
+	}
+	hs, _ := m["hotspot"].(map[string]any)
+	if hs == nil {
+		hs = map[string]any{}
+		m["hotspot"] = hs
+	}
+	hs["dual_band"] = on
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err

@@ -97,6 +97,7 @@ func NewServer(cfg *Config, col Collector) *Server {
 	// runtime retune path.
 	warn, gate := clampThermal(cfg.Thermal.WarnC, cfg.Thermal.GateC)
 	cfg.Thermal.WarnC, cfg.Thermal.GateC = warn, gate
+	cfg.RateLimits = normalizeRateLimits(cfg.RateLimits)
 	s := &Server{cfg: cfg, col: col, mux: http.NewServeMux(), rl: newRateLimiter(),
 		pol: NewPolicyEngine(warn, gate), usage: NewUsageTracker(usagePath),
 		cpu: NewCPUController(), hs: NewHotspotController(cfg.Hotspot.SSIDWhitelist)}

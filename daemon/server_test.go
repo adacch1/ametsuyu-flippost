@@ -509,3 +509,56 @@ func TestStatusDropsCoverHome(t *testing.T) {
 		t.Fatalf("status still has cover_home: %s", b)
 	}
 }
+
+func TestWriteErrReason(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeErrReason(w, 409, "clear the allowlist first", "whitelist")
+	if w.Code != 409 || w.Body.String() != `{"code":409,"error":"clear the allowlist first","reason":"whitelist"}`+"\n" {
+		t.Fatalf("got %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestNormalizeRateLimits(t *testing.T) {
+	for _, tc := range []struct{ in, want RateLimits }{
+		{RateLimits{120, 6}, RateLimits{600, 60}}, {RateLimits{0, 0}, RateLimits{600, 60}},
+		{RateLimits{30, 2}, RateLimits{30, 2}}, {RateLimits{300, 50}, RateLimits{300, 50}},
+	} {
+		if got := normalizeRateLimits(tc.in); got != tc.want {
+			t.Errorf("%+v: want %+v, got %+v", tc.in, tc.want, got)
+		}
+	}
+}
+
+func TestPersistHotspotDualBandPreservesKeys(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(p, []byte(`{"hotspot":{"enable_on_boot":false,"ssid_whitelist":["x"]},"cpu":{"mode":"eco"}}`), 0o600)
+	if err := persistHotspotDualBand(p, true); err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]map[string]any
+	b, _ := os.ReadFile(p)
+	json.Unmarshal(b, &m)
+	if m["hotspot"]["dual_band"] != true || m["hotspot"]["enable_on_boot"] != false || m["cpu"]["mode"] != "eco" {
+		t.Fatalf("keys lost: %s", b)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", fi.Mode().Perm())
+	}
+}
+
+// Review Focus 1: the live on-device config still carries removed keys and legacy limits.
+func TestLoadConfigLegacyKeys(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(p, []byte(`{"bind_host":"127.0.0.1","bind_port":18080,
+	 "tokens":{"read-status":"`+strings.Repeat("a", 64)+`","radio-control":"`+strings.Repeat("c", 64)+`","sms":"`+strings.Repeat("d", 64)+`"},
+	 "ingress":{"mode":"off"},"sms":{"enabled":false,"path":"/x"},"cover":{"dim":30,"accent":"teal"},
+	 "thermal":{"warn_c":44,"gate_c":46,"fail_closed":true},"dashboard":{"open_reads":true,"open_control":true},
+	 "rate_limits":{"default_per_min":120,"radio_per_min":6,"sms_per_min":6}}`), 0o600)
+	cfg, err := LoadConfig(p)
+	if err != nil {
+		t.Fatalf("legacy config rejected: %v", err)
+	}
+	if s := NewServer(cfg, fakeCollector{safe: true}); s.cfg.RateLimits != (RateLimits{600, 60}) || s.cfg.Hotspot.DualBand {
+		t.Fatalf("%+v", s.cfg.RateLimits)
+	}
+}
