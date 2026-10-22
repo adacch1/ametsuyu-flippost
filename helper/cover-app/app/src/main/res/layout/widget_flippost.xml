@@ -3,6 +3,7 @@
     android:id="@+id/widget_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:clipToOutline="true"
     android:orientation="vertical"
     android:padding="12dp"
     android:background="@drawable/widget_bg">
@@ -29,7 +30,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="@font/nunito_variable"
+                android:fontFamily="@font/nunito_family"
                 android:text="Hotspot"
                 android:textColor="#FEF7EE"
                 android:textSize="15sp"
@@ -38,21 +39,25 @@
                 android:id="@+id/widget_devices"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="@font/nunito_variable"
+                android:fontFamily="@font/nunito_family"
                 android:textColor="#9EB1CB"
-                android:textSize="12sp" />
+                android:textSize="11.5sp" />
         </LinearLayout>
-        <Switch
+        <ImageView
             android:id="@+id/widget_switch"
-            android:layout_width="wrap_content"
-            android:layout_height="48dp" />
+            android:layout_width="52dp"
+            android:layout_height="48dp"
+            android:paddingHorizontal="4dp"
+            android:paddingVertical="11dp"
+            android:src="@drawable/widget_switch_off" />
     </LinearLayout>
 
     <LinearLayout
         android:id="@+id/widget_values"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center_vertical"
         android:orientation="vertical">
         <LinearLayout
             android:layout_width="match_parent"
@@ -63,50 +68,60 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:background="@drawable/widget_chip"
-                android:fontFamily="@font/nunito_variable"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="4dp"
-                android:textColor="#FEF7EE"
-                android:textSize="12sp" />
+                android:fontFamily="@font/nunito_family"
+                android:paddingHorizontal="9dp"
+                android:paddingVertical="3dp"
+                android:textSize="11.5sp"
+                android:textStyle="bold"
+                android:textColor="#FEF7EE" />
             <TextView
                 android:id="@+id/widget_temp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="6dp"
                 android:background="@drawable/widget_chip"
-                android:fontFamily="@font/nunito_variable"
-                android:paddingHorizontal="10dp"
-                android:paddingVertical="4dp"
-                android:textColor="#9EE6C3"
-                android:textSize="12sp" />
+                android:fontFamily="@font/nunito_family"
+                android:paddingHorizontal="9dp"
+                android:paddingVertical="3dp"
+                android:textSize="11.5sp"
+                android:textStyle="bold"
+                android:drawablePadding="5dp"
+                android:drawableStart="@drawable/widget_dot_ok"
+                android:textColor="#9EE6C3" />
         </LinearLayout>
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
             android:orientation="horizontal">
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:fontFamily="@font/nunito_variable"
+                android:layout_weight="1"
+                android:fontFamily="@font/nunito_family"
+                android:letterSpacing="0.08"
                 android:text="DATA"
                 android:textColor="#9EB1CB"
-                android:textSize="11sp" />
+                android:textSize="10.5sp"
+                android:textStyle="bold" />
             <TextView
                 android:id="@+id/widget_data"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:fontFamily="@font/nunito_variable"
-                android:textColor="#FEF7EE"
-                android:textSize="12sp" />
+                android:fontFamily="@font/nunito_family"
+                android:gravity="end"
+                android:textColor="#9EB1CB"
+                android:textSize="13sp" />
         </LinearLayout>
         <ProgressBar
             android:id="@+id/widget_bar"
             style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="match_parent"
             android:layout_height="9dp"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="5dp"
+            android:background="@drawable/widget_bar_track"
+            android:clipToOutline="true"
             android:max="100"
             android:progressDrawable="@drawable/widget_bar" />
     </LinearLayout>
@@ -114,23 +129,30 @@
     <TextView
         android:id="@+id/widget_status"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:fontFamily="@font/nunito_variable"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fontFamily="@font/nunito_family"
+        android:gravity="center_vertical"
         android:textColor="#FF9AA6"
         android:textSize="13sp"
         android:visibility="gone" />
 
     <Button
         android:id="@+id/widget_rotate"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:background="@drawable/widget_pill"
-        android:fontFamily="@font/nunito_variable"
-        android:minHeight="48dp"
-        android:paddingHorizontal="18dp"
+        android:fontFamily="@font/nunito_family"
+        android:gravity="center"
+        android:minHeight="0dp"
+        android:minWidth="0dp"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="8dp"
+        android:stateListAnimator="@null"
         android:text="Rotate IP"
+        android:textAllCaps="false"
         android:textColor="#1B2436"
+        android:textFontWeight="800"
         android:textSize="13sp" />
 </LinearLayout>

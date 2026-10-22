@@ -2,7 +2,9 @@ package com.zflip5.modem.widget
 
 import android.content.Context
 import android.view.View
+import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
@@ -17,6 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 
 @RunWith(RobolectricTestRunner::class)
 class WidgetModelTest {
@@ -66,5 +69,31 @@ class WidgetModelTest {
 
     @Test fun nullWanIp() {
         assertEquals("No WAN", WidgetRenderer.model(summary { put("wan_ip", JSONObject.NULL) }, false).wanIp)
+    }
+
+    private fun view(s: com.zflip5.modem.data.Summary?, down: Boolean = false): View {
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
+        return WidgetRenderer.render(ctx, s, down).apply(ctx, FrameLayout(ctx))
+    }
+
+    @Test fun rotateButtonIsSentenceCase() {
+        val b = view(summary()).findViewById<Button>(R.id.widget_rotate)
+        assertEquals("Rotate IP", b.text.toString())
+        assertFalse(b.isAllCaps)
+    }
+
+    @Test fun switchImageFollowsHotspotState() {
+        val on = view(summary()).findViewById<ImageView>(R.id.widget_switch)
+        assertEquals(R.drawable.widget_switch_on, shadowOf(on.drawable).createdFromResId)
+        val off = view(summary { getJSONObject("hotspot").put("active", false) }).findViewById<ImageView>(R.id.widget_switch)
+        assertEquals(R.drawable.widget_switch_off, shadowOf(off.drawable).createdFromResId)
+    }
+
+    @Test fun dataLabelAndLevel() {
+        val v = view(summary { getJSONObject("usage").put("period_bytes", 266_000_000_000L).put("limit_bytes", 512_000_000_000L) })
+        assertTrue(v.findViewById<TextView>(R.id.widget_data).text.startsWith("266"))
+        assertEquals(52, v.findViewById<ProgressBar>(R.id.widget_bar).progress)
+        val row = (v.findViewById<View>(R.id.widget_values) as android.view.ViewGroup).getChildAt(1) as android.view.ViewGroup
+        assertEquals("DATA", (row.getChildAt(0) as TextView).text.toString())
     }
 }
