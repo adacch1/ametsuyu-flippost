@@ -14,24 +14,14 @@ type Config struct {
 	BindHost string            `json:"bind_host"`
 	BindPort int               `json:"bind_port"`
 	Tokens   map[string]string `json:"tokens"`
-	Ingress  struct {
-		Mode string `json:"mode"`
-	} `json:"ingress"`
-	Thermal struct {
+	Thermal  struct {
 		WarnC      float64 `json:"warn_c"`
 		GateC      float64 `json:"gate_c"`
 		FailClosed bool    `json:"fail_closed"`
 		Bench      bool    `json:"bench"` // explicit opt-in: battery-less donor hardware
 	} `json:"thermal"`
-	SMS struct {
-		Enabled       bool   `json:"enabled"`
-		RedactDefault bool   `json:"redact_default"`
-		Forward       bool   `json:"forward"`
-		Path          string `json:"path"`
-	} `json:"sms"`
 	RateLimits struct {
 		DefaultPerMin int `json:"default_per_min"`
-		SMSPerMin     int `json:"sms_per_min"`
 		RadioPerMin   int `json:"radio_per_min"`
 	} `json:"rate_limits"`
 	CPU struct {
@@ -46,41 +36,19 @@ type Config struct {
 		// paints its buttons with. Owner-picked from the control panel, because
 		// the kiosk itself has no room for a settings screen.
 		Accent string `json:"accent"`
-		// Dim: cover-panel brightness (1..255) while the kiosk owns the Flex
-		// Window. A pointer so "absent" and "0" stay distinct: absent takes the
-		// default, 0 means leave the owner's brightness alone. What reads well
-		// depends on the room and the panel, so it is tunable rather than fixed.
-		Dim *int `json:"dim"`
 	} `json:"cover"`
 	// Quota: optional data-cap meter (limit + reset schedule). Zero value means
 	// "unconfigured" -> the dashboard shows a first-run prompt. See usage.go's
 	// Quota doc comment: meter only, never a gate.
 	Quota     Quota `json:"quota"`
 	Dashboard struct {
-		// OpenReads: serve read-status AND sms GETs WITHOUT a token (tailnet
-		// convenience; sms rides this switch by the owner's call on this donor
-		// phone). Reads only. Off by default.
+		// OpenReads: serve read-status GETs WITHOUT a token (tailnet
+		// convenience). Reads only. Off by default.
 		OpenReads bool `json:"open_reads"`
 		// OpenControl: allow radio-control WRITES without a token too (owner's
 		// tailnet-only, app-less device). Writes only. Off by default.
 		OpenControl bool `json:"open_control"`
 	} `json:"dashboard"`
-}
-
-// CoverDim returns the cover-panel brightness to run the kiosk at: the default
-// when unset, 0 when the owner turned dimming off, clamped otherwise.
-func (c *Config) CoverDim() int {
-	if c.Cover.Dim == nil {
-		return coverDimDefault
-	}
-	v := *c.Cover.Dim
-	if v <= 0 {
-		return 0
-	}
-	if v > 255 {
-		return 255
-	}
-	return v
 }
 
 // CPUMode returns the configured CPU policy mode, defaulting to "auto".
@@ -325,14 +293,6 @@ func LoadConfig(path string) (*Config, error) {
 // missing read-status token, or a disabled fail-closed thermal gate is fatal:
 // the daemon refuses to start rather than run in an unsafe posture.
 func (c *Config) Validate() error {
-	if c.Ingress.Mode == "" {
-		c.Ingress.Mode = "loopback"
-	}
-	if c.Ingress.Mode == "loopback" && !loopbackRe.MatchString(c.BindHost) {
-		return fmt.Errorf("refusing non-loopback bind_host %q in loopback mode", c.BindHost)
-	}
-	// Even in tailscale mode the local listener stays on loopback; ingress is a
-	// userspace proxy, never a public bind.
 	if !loopbackRe.MatchString(c.BindHost) {
 		return fmt.Errorf("refusing public bind_host %q", c.BindHost)
 	}
@@ -344,9 +304,6 @@ func (c *Config) Validate() error {
 	}
 	if !c.Thermal.FailClosed {
 		return fmt.Errorf("thermal.fail_closed must be true")
-	}
-	if c.SMS.Forward {
-		return fmt.Errorf("sms.forward must be false (no default forwarding)")
 	}
 	return nil
 }

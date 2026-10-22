@@ -6,7 +6,6 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,11 +35,6 @@ type Server struct {
 	// median() reports !ok -> handleStatus falls back to raw), so NewServer
 	// needs no change and the test suite never spawns a sysfs sampler.
 	smooth thermalSmoother
-	// temps records s.smooth.median (display path) once a minute into
-	// persisted hour/day averages for the dashboard's history chart. It
-	// reads ONLY the smoother — never col.Thermal / readThermalZones (the
-	// gate path), which this task must not touch.
-	temps *TempHistory
 	// Adjustable thermal limits (atomic float bits) so the owner can retune the
 	// gate at runtime; seeded from config, clamped to a safe range on write.
 	warnBits atomic.Uint64
@@ -48,15 +42,13 @@ type Server struct {
 	// airplaneBusy serializes /v1/airplane so overlapping cycles/toggles can't
 	// interleave airplane on/off.
 	airplaneBusy atomic.Bool
-	// openReads: when true, read-status AND sms GETs need no token (tailnet
-	// convenience; the owner opted the inbox in on this donor phone).
-	// Seeded from config, toggled at runtime. Reads only; never radio writes.
+	// openReads: when true, read-status GETs need no token (tailnet
+	// convenience). Seeded from config, toggled at runtime. Reads only; never
+	// radio writes.
 	openReads atomic.Bool
 	// openControl: when true, radio-control WRITES need no token either (owner's
 	// tailnet-only, app-less device). Writes only. Off by default.
 	openControl atomic.Bool
-	// speedtestBusy: only one speedtest at a time (each is heavy on data + heat).
-	speedtestBusy atomic.Bool
 	// coolHoldUntil is the manual-cooldown deadline (unix nanos): while it is in
 	// the future, applyCPUPolicyOnce forces eco instead of the configured mode.
 	// Zero value (no hold) needs no NewServer change.
@@ -108,9 +100,6 @@ func NewServer(cfg *Config, col Collector) *Server {
 	s := &Server{cfg: cfg, col: col, mux: http.NewServeMux(), rl: newRateLimiter(),
 		pol: NewPolicyEngine(warn, gate), usage: NewUsageTracker(usagePath),
 		cpu: NewCPUController(), hs: NewHotspotController(cfg.Hotspot.SSIDWhitelist)}
-	// s.smooth is addressable (s is a pointer), so this method value binds to
-	// &s.smooth: temps.go's only reader, forever the display path.
-	s.temps = NewTempHistory(tempsPath, s.smooth.median)
 	// Quota: clamp at load exactly like the thermal gate above — a bad
 	// hand-edited value must never fail Validate (headless device).
 	q, err := normalizeQuota(cfg.Quota)
@@ -249,12 +238,7 @@ func (s *Server) runHotspotAuto() {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/status", s.guard("read-status", s.handleStatus))
-	s.mux.HandleFunc("/v1/health", s.guard("read-status", s.handleHealth))
 	s.mux.HandleFunc("/v1/thermal", s.guard("read-status", s.handleThermal))
-	// Minute/hour/day temperature history, sourced from s.smooth (display
-	// path) only — see TempHistory's doc comment. Never gates anything.
-	s.mux.HandleFunc("/v1/thermal/history", s.guard("read-status", s.handleThermalHistory))
-	s.mux.HandleFunc("/v1/network", s.guard("read-status", s.handleNetwork))
 	s.mux.HandleFunc("/v1/battery", s.guard("read-status", s.handleBattery))
 	s.mux.HandleFunc("/v1/usage", s.guard("read-status", s.handleUsage))
 	// Quota config + manual reset: config/meter writes, not radio actions, so no
@@ -264,7 +248,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/usage/reset", s.guardAuth("radio-control", http.MethodPost, s.handleUsageReset))
 	s.mux.HandleFunc("/v1/signal", s.guard("read-status", s.handleSignal))
 	s.mux.HandleFunc("/v1/clients", s.guard("read-status", s.handleClients))
-	s.mux.HandleFunc("/v1/bands", s.guard("read-status", s.handleBands))
 	s.mux.HandleFunc("/v1/cpu", s.guard("read-status", s.handleCPU))
 	// CPU policy mode: radio-control write, not thermal-gated (eco/off must
 	// work while hot; performance is only raise-if-cool via decideMode).
@@ -291,9 +274,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/presets/apply", s.guardAuth("radio-control", http.MethodPost, s.handlePresetApply))
 	s.mux.HandleFunc("/v1/presets/delete", s.guardAuth("radio-control", http.MethodPost, s.handlePresetDelete))
 	s.mux.HandleFunc("/v1/presets/auto", s.guardAuth("radio-control", http.MethodPost, s.handlePresetAuto))
-	// Speedtest: in-process Ookla test. radio-control (heavy: data + heat); one
-	// at a time; blocks ~15-40s.
-	s.mux.HandleFunc("/v1/speedtest", s.guardAuth("radio-control", http.MethodPost, s.handleSpeedtest))
 	// Airplane trigger + IP-rotation cycle. Airplane on/off always works (turning
 	// the radio OFF must work while hot); a fresh hotspot start ("off" mode) is
 	// thermal-gated like /v1/tether, while the cycle restores a pre-existing
@@ -326,28 +306,18 @@ func (s *Server) routes() {
 	// Toggle open-control (tokenless radio-control writes). radio-control gated —
 	// to ENABLE it you still need the token once (it starts off).
 	s.mux.HandleFunc("/v1/dashboard/control", s.guardAuth("radio-control", http.MethodPost, s.handleDashboardControl))
-	s.mux.HandleFunc("/v1/sms/recent", s.guard("sms", s.handleSMSRecent))
-	// Active notifications. Same scope, gate and rate limit as SMS: identical
-	// asset class (private content, one-time codes), so it never gets a cheaper
-	// door than the inbox it mirrors.
-	s.mux.HandleFunc("/v1/notifications/recent", s.guard("sms", s.handleNotificationsRecent))
 	// tether/cooldown/restart make their own thermal decision (stopping the
 	// hotspot or cooling down must work WHILE hot), so they take the auth-only
-	// guard instead of guardWrite's blanket "refuse when unsafe" gate.
+	// guard; the handler makes the thermal call itself.
 	s.mux.HandleFunc("/v1/tether", s.guardAuth("radio-control", http.MethodPost, s.handleTether))
 	// Same shape as /v1/tether but for USB tethering: no thermal gate (a USB
 	// cable's data path isn't a heat source), auth-only guard.
 	s.mux.HandleFunc("/v1/usbtether/toggle", s.guardAuth("radio-control", http.MethodPost, s.handleUsbTetherToggle))
-	// prefer5g uses the policy engine (incl. cooldown stickiness), so it takes the
-	// auth-only guard and makes its own thermal decision in the handler.
-	s.mux.HandleFunc("/v1/prefer5g", s.guardAuth("radio-control", http.MethodPost, s.handlePrefer5G))
 	s.mux.HandleFunc("/v1/cooldown", s.guardAuth("radio-control", http.MethodPost, s.handleCooldown))
 	s.mux.HandleFunc("/v1/service/restart", s.guardAuth("radio-control", http.MethodPost, s.handleRestart))
 	// Full DEVICE reboot (not just the daemon). radio-control; the module's
 	// service.sh brings the daemon + hotspot back on boot.
 	s.mux.HandleFunc("/v1/device/reboot", s.guardAuth("radio-control", http.MethodPost, s.handleDeviceReboot))
-	// Cover home: kiosk on the Flex Window, or hand it back to the stock clock.
-	s.mux.HandleFunc("/v1/cover/home", s.guardAuth("radio-control", http.MethodPost, s.handleCoverHome))
 	// Cover accent: repaints the kiosk's buttons. A config write, not a radio
 	// action, so it carries no thermal gate — but it is still radio-control,
 	// because anything that rewrites config.json is an owner action.
@@ -376,11 +346,9 @@ func (s *Server) guard(need string, h http.HandlerFunc) http.HandlerFunc {
 		have := s.cfg.authScope(r)
 		if have == "" {
 			// Open-reads mode: read-status GETs allowed WITHOUT a token (tailnet
-			// convenience). On this donor phone the owner put sms-scope READS on
-			// the same switch, so the Inbox needs no token either. Still reads
-			// only (radio-control writes have their own switch), still redacted,
-			// still pull-only — and turning open reads off closes both again.
-			if (need == "read-status" || need == "sms") && s.openReads.Load() {
+			// convenience). Still reads only (radio-control writes have their own
+			// switch) — and turning open reads off closes it again.
+			if need == "read-status" && s.openReads.Load() {
 				if !s.rl.allow("open-reads", s.cfg.RateLimits.DefaultPerMin) {
 					writeErr(w, http.StatusTooManyRequests, "rate limited")
 					return
@@ -403,36 +371,6 @@ func (s *Server) guard(need string, h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// guardWrite wraps a write handler: POST + auth + scope + rate limit + thermal gate.
-func (s *Server) guardWrite(need string, h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		have := s.cfg.authScope(r)
-		if have == "" {
-			writeErr(w, http.StatusUnauthorized, "missing or invalid token")
-			return
-		}
-		if !scopeAllows(have, need) {
-			writeErr(w, http.StatusForbidden, "token scope lacks "+need)
-			return
-		}
-		if !s.rl.allow(have, s.limitFor(have)) {
-			writeErr(w, http.StatusTooManyRequests, "rate limited")
-			return
-		}
-		// Thermal gate: radio/tether writes refused unless safe. Fails closed.
-		t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
-		if !t.Safe {
-			writeErr(w, http.StatusConflict, "refused: unsafe thermal state")
-			return
-		}
-		h(w, r)
-	}
-}
-
 // guardAuth wraps a handler with method + auth + scope + rate limit, but no
 // thermal gate — the handler makes its own policy decision.
 func (s *Server) guardAuth(need, method string, h http.HandlerFunc) http.HandlerFunc {
@@ -444,8 +382,7 @@ func (s *Server) guardAuth(need, method string, h http.HandlerFunc) http.Handler
 		have := s.cfg.authScope(r)
 		if have == "" {
 			// Open-control mode: radio-control WRITES allowed WITHOUT a token
-			// (owner's tailnet-only, app-less device). NEVER for sms — that
-			// scope always requires its token.
+			// (owner's tailnet-only, app-less device).
 			if need == "radio-control" && s.openControl.Load() {
 				if !s.rl.allow("open-control", s.cfg.RateLimits.RadioPerMin) {
 					writeErr(w, http.StatusTooManyRequests, "rate limited")
@@ -471,8 +408,6 @@ func (s *Server) guardAuth(need, method string, h http.HandlerFunc) http.Handler
 
 func (s *Server) limitFor(scope string) int {
 	switch scope {
-	case "sms":
-		return s.cfg.RateLimits.SMSPerMin
 	case "radio-control":
 		return s.cfg.RateLimits.RadioPerMin
 	default:
@@ -480,16 +415,8 @@ func (s *Server) limitFor(scope string) int {
 	}
 }
 
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.col.Health())
-}
-
 func (s *Server) handleThermal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed))
-}
-
-func (s *Server) handleThermalHistory(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.temps.Report())
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -515,7 +442,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"battery":         s.col.Battery(),
 		"wan_ip":          deviceWanIP(),
 		"airplane":        airplaneOn(),
-		"cover_home":      coverHomeOn(),
 		"cover_accent":    s.coverAccent.Load(),
 		"open_reads":      s.openReads.Load(),
 		"open_control":    s.openControl.Load(),
@@ -525,74 +451,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleNetwork(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.col.Network())
-}
-
 func (s *Server) handleBattery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.col.Battery())
-}
-
-func (s *Server) handleSMSRecent(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.SMS.Enabled {
-		writeErr(w, http.StatusForbidden, "sms disabled")
-		return
-	}
-	limit := 5
-	if q := r.URL.Query().Get("limit"); q != "" {
-		n, err := strconv.Atoi(q)
-		if err != nil || n < 1 || n > smsMaxLimit {
-			writeErr(w, http.StatusBadRequest, "limit out of range (1.."+itoa(smsMaxLimit)+")")
-			return
-		}
-		limit = n
-	}
-	// Audit every read (never logs bodies).
-	log.Printf("audit: sms.recent limit=%d path=%s", limit, s.cfg.SMS.Path)
-	msgs, err := recentSMS(limit)
-	if err != nil {
-		// Fail safe: no permission / no provider -> empty, actionable, no crash.
-		writeJSON(w, http.StatusOK, map[string]any{
-			"messages": []SMSMessage{}, "redacted": true, "available": false,
-			"reason": "sms provider unavailable or READ_SMS not granted", "path": s.cfg.SMS.Path,
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"messages": msgs, "redacted": redactBodies, "available": true, "path": s.cfg.SMS.Path,
-	})
-}
-
-func (s *Server) handleNotificationsRecent(w http.ResponseWriter, r *http.Request) {
-	// sms.enabled is the one switch for private on-device content; turning it
-	// off must silence notifications too.
-	if !s.cfg.SMS.Enabled {
-		writeErr(w, http.StatusForbidden, "sms disabled")
-		return
-	}
-	limit := 8
-	if q := r.URL.Query().Get("limit"); q != "" {
-		n, err := strconv.Atoi(q)
-		if err != nil || n < 1 || n > notifMaxLimit {
-			writeErr(w, http.StatusBadRequest, "limit out of range (1.."+itoa(notifMaxLimit)+")")
-			return
-		}
-		limit = n
-	}
-	// Audit every read (never logs titles or bodies).
-	log.Printf("audit: notifications.recent limit=%d", limit)
-	ns, err := recentNotifications(limit)
-	if err != nil {
-		// Fail safe: no root / no notification service -> empty, actionable.
-		writeJSON(w, http.StatusOK, map[string]any{
-			"notifications": []Notification{}, "redacted": true, "available": false,
-			"reason": "notification service unavailable (dumpsys needs root)",
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"notifications": ns, "redacted": redactBodies, "available": true,
-	})
 }
 
 func (s *Server) handleTether(w http.ResponseWriter, r *http.Request) {
@@ -648,10 +508,6 @@ func (s *Server) handleSignal(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, deviceClients())
 }
-func (s *Server) handleBands(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, deviceBands())
-}
-
 func (s *Server) handleCPU(w http.ResponseWriter, r *http.Request) {
 	requested := s.cfg.CPUMode()
 	t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
@@ -745,17 +601,6 @@ func (s *Server) handleAirplane(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeErr(w, http.StatusBadRequest, "mode must be on, off, or cycle")
 	}
-}
-
-// handleSpeedtest runs one in-process speedtest (nearest server) and returns
-// the result. Serialized; 409 if one is already running.
-func (s *Server) handleSpeedtest(w http.ResponseWriter, r *http.Request) {
-	if !s.speedtestBusy.CompareAndSwap(false, true) {
-		writeErr(w, http.StatusConflict, "a speedtest is already running")
-		return
-	}
-	defer s.speedtestBusy.Store(false)
-	writeJSON(w, http.StatusOK, runSpeedtest())
 }
 
 // handleHotspotScan runs an immediate scan and returns the refreshed status
@@ -1002,41 +847,12 @@ func (s *Server) handleThermalBenchPost(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, s.bench.Status())
 }
 
-func (s *Server) handlePrefer5G(w http.ResponseWriter, r *http.Request) {
-	t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
-	worst := t.BatteryC
-	if t.MaxC > worst {
-		worst = t.MaxC
-	}
-	// Fail closed: unreadable thermal -> treat as gate temperature (HOT).
-	if t.Source == "degraded" {
-		worst = s.effectiveGateC()
-	}
-	state := s.pol.Evaluate(worst)
-	ok, reason := Prefer5GAllowed(state)
-	if !ok {
-		writeJSON(w, http.StatusConflict, map[string]any{"applied": false, "state": string(state), "error": reason})
-		return
-	}
-	// Report the current allowed-network-types. The NR-preference WRITE
-	// (`cmd phone set-allowed-network-types-for-users`) is intentionally not
-	// executed here: it is baseband-adjacent and needs careful on-device
-	// validation before enabling, so this endpoint is honest read-only rather
-	// than claiming a change it does not make.
-	writeJSON(w, http.StatusOK, map[string]any{
-		"applied": false, "state": string(state),
-		"current_allowed_types": readAllowedTypes(),
-		"note":                  "NR-preference write not enabled; reporting current state only.",
-	})
-}
-
 // handleCooldown forces an immediate CPU eco pass (park the prime core, cap the
 // mid cluster) and holds it for cooldownHold, overriding the configured mode.
 // The hold is the point: the policy loop used to re-apply the configured mode on
 // its very next tick, so "Force CPU cooldown" lasted under 30s (and with
 // cpu.mode "off", restoreAll undid it instantly). Reduce-only and reversible.
-// Unlike a radio write it must work while hot, which is why it is not behind
-// guardWrite.
+// Unlike a radio write it must work while hot, so no thermal gate applies.
 const cooldownHold = 5 * time.Minute
 
 func (s *Server) handleCooldown(w http.ResponseWriter, r *http.Request) {
@@ -1056,27 +872,6 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		log.Printf("restart requested via API; exiting for watchdog respawn")
 		os.Exit(0)
 	}()
-}
-
-// handleCoverHome puts the kiosk on the cover screen, or hands the panel back to
-// the stock Samsung clock. Same scope as the other device controls.
-func (s *Server) handleCoverHome(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Enabled *bool `json:"enabled"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil || body.Enabled == nil {
-		writeErr(w, http.StatusBadRequest, "enabled must be true or false")
-		return
-	}
-	if err := setCoverHome(*body.Enabled, s.cfg.CoverDim()); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	note := "cover screen handed back to the Samsung clock"
-	if *body.Enabled {
-		note = "kiosk returns to the cover screen in a few seconds"
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"cover_home": *body.Enabled, "note": note})
 }
 
 // handleCoverAccent repaints the cover screen. Body: {"accent":"coral"}.
@@ -1116,7 +911,6 @@ func (s *Server) handleDeviceReboot(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(2 * time.Second) // let the response flush before the radio drops
 		log.Printf("device reboot requested via API")
 		s.usage.Flush() // persist the current sample; the reboot resets the counter to 0
-		s.temps.Flush()
 		runCmd("reboot")
 	}()
 }
@@ -1176,9 +970,6 @@ func (s *Server) ListenAndServe() error {
 	// Display-only thermal median sampler (see thermalSmoother); the gate
 	// path never reads it.
 	go s.smooth.run()
-	// Minute-by-minute temperature history, sampled from the display path
-	// above (s.smooth), never the gate.
-	go s.temps.run()
 	addr := s.cfg.BindHost + ":" + itoa(s.cfg.BindPort)
 	log.Printf("zflip5-modemd listening on %s (loopback)", addr)
 	srv := &http.Server{Addr: addr, Handler: s, ReadHeaderTimeout: 5 * time.Second}

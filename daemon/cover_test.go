@@ -1,7 +1,6 @@
 package main
 
 import (
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -90,19 +89,6 @@ func TestRefreshControlsPresent(t *testing.T) {
 	}
 }
 
-// postJSON is do() with a body — the accent endpoint is the first cover test
-// that writes.
-func postJSON(s *Server, path, token, body string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest("POST", path, strings.NewReader(body))
-	r.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		r.Header.Set("Authorization", "Bearer "+token)
-	}
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-	return w
-}
-
 // The accent name is substituted straight into the served HTML, so the closed
 // set is a security boundary, not a nicety: anything outside it must be
 // refused before it reaches the page.
@@ -140,23 +126,6 @@ func TestCoverAccentAppliesToPageAndStatus(t *testing.T) {
 	for _, a := range coverAccents {
 		if !strings.Contains(page, `[data-accent="`+a+`"]`) {
 			t.Errorf("cover page has no binding for accent %q", a)
-		}
-	}
-}
-
-// The dim level is the one cover-screen value the owner tunes by hand, so the
-// three cases that are easy to get wrong — absent, off, out of range — each
-// have to land somewhere sane rather than at a black panel.
-func TestCoverDimDefaultsAndClamps(t *testing.T) {
-	c := &Config{}
-	if got := c.CoverDim(); got != coverDimDefault {
-		t.Errorf("absent: want %d, got %d", coverDimDefault, got)
-	}
-	for _, tc := range []struct{ set, want int }{{0, 0}, {-5, 0}, {45, 45}, {999, 255}} {
-		v := tc.set
-		c.Cover.Dim = &v
-		if got := c.CoverDim(); got != tc.want {
-			t.Errorf("dim %d: want %d, got %d", tc.set, tc.want, got)
 		}
 	}
 }

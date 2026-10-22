@@ -1,10 +1,6 @@
 package main
 
-import (
-	"os/exec"
-	"strings"
-	"sync"
-)
+import "sync"
 
 // ThermalState is the 5G policy state machine. Transitions are driven by the
 // hottest observed temperature relative to warn/gate thresholds, with a sticky
@@ -71,26 +67,4 @@ func (p *PolicyEngine) SetLimits(warnC, gateC float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.warnC, p.gateC = warnC, gateC
-}
-
-// Prefer5GAllowed reports whether an NR-preference write may proceed in `st`.
-// Allowed only in SAFE/WARM/RECOVERY; refused in HOT/COOLDOWN.
-func Prefer5GAllowed(st ThermalState) (bool, string) {
-	switch st {
-	case StateSafe, StateWarm, StateRecovery:
-		return true, string(st)
-	default:
-		return false, "refused: thermal safety gate blocked prefer5g (" + string(st) + ")"
-	}
-}
-
-// applyPrefer5G runs the reversible NR-preference verb discovered in Todo 1:
-// `cmd phone set-allowed-network-types-for-users`. Reading the current value
-// first lets the caller restore it. Returns (before, err).
-func readAllowedTypes() string {
-	out, err := exec.Command("cmd", "phone", "get-allowed-network-types-for-users").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }

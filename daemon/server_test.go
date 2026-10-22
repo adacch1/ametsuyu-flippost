@@ -29,12 +29,10 @@ func testCfg() *Config {
 	c := &Config{BindHost: "127.0.0.1", BindPort: 18080}
 	c.Tokens = map[string]string{
 		"read-status":   strings.Repeat("a", 64),
-		"sms":           strings.Repeat("b", 64),
 		"radio-control": strings.Repeat("c", 64),
 	}
 	c.Thermal.WarnC, c.Thermal.GateC, c.Thermal.FailClosed = 44, 46, true
-	c.RateLimits.DefaultPerMin, c.RateLimits.SMSPerMin, c.RateLimits.RadioPerMin = 30, 3, 6
-	c.SMS.Enabled, c.SMS.RedactDefault = true, true
+	c.RateLimits.DefaultPerMin, c.RateLimits.RadioPerMin = 30, 6
 	return c
 }
 
@@ -91,8 +89,8 @@ func TestWrongMethod405(t *testing.T) {
 	if w := do(s, "POST", "/v1/status", strings.Repeat("a", 64)); w.Code != 405 {
 		t.Fatalf("want 405, got %d", w.Code)
 	}
-	// prefer5g is POST-only
-	if w := do(s, "GET", "/v1/prefer5g", strings.Repeat("c", 64)); w.Code != 405 {
+	// cooldown is POST-only
+	if w := do(s, "GET", "/v1/cooldown", strings.Repeat("c", 64)); w.Code != 405 {
 		t.Fatalf("want 405, got %d", w.Code)
 	}
 }
@@ -100,11 +98,10 @@ func TestWrongMethod405(t *testing.T) {
 func TestWrongScope403(t *testing.T) {
 	s := NewServer(testCfg(), fakeCollector{safe: true})
 	// read-status token cannot drive a radio write
-	if w := do(s, "POST", "/v1/prefer5g", strings.Repeat("a", 64)); w.Code != 403 {
+	if w := do(s, "POST", "/v1/tether", strings.Repeat("a", 64)); w.Code != 403 {
 		t.Fatalf("want 403, got %d", w.Code)
 	}
-	// read-status token cannot read sms
-	if w := do(s, "GET", "/v1/sms/recent", strings.Repeat("a", 64)); w.Code != 403 {
+	if w := do(s, "POST", "/v1/cooldown", strings.Repeat("a", 64)); w.Code != 403 {
 		t.Fatalf("want 403, got %d", w.Code)
 	}
 }
@@ -261,52 +258,6 @@ func TestStatusThermalDisplaySmoothed(t *testing.T) {
 	}
 	if strings.Contains(body, "temp_max_raw_c") {
 		t.Fatalf("thermal body must stay raw-only, got %s", body)
-	}
-}
-
-// TestThermalHistoryEndpoint proves /v1/thermal/history is read-status
-// guarded, empty-but-non-null before any sample, wired to the smoother (not
-// the raw collector), and that /v1/thermal stays exactly as before -- no
-// history/minutes leak into the gate's own endpoint.
-func TestThermalHistoryEndpoint(t *testing.T) {
-	old := tempsPath
-	tempsPath = filepath.Join(t.TempDir(), "temps.json")
-	t.Cleanup(func() { tempsPath = old })
-
-	s := NewServer(testCfg(), fakeCollector{safe: true})
-	rs := strings.Repeat("a", 64)
-
-	if w := do(s, "GET", "/v1/thermal/history", ""); w.Code != 401 {
-		t.Fatalf("no token: want 401, got %d", w.Code)
-	}
-	if w := do(s, "POST", "/v1/thermal/history", rs); w.Code != 405 {
-		t.Fatalf("POST: want 405, got %d", w.Code)
-	}
-
-	w := do(s, "GET", "/v1/thermal/history", rs)
-	if w.Code != 200 {
-		t.Fatalf("GET: want 200, got %d: %s", w.Code, w.Body.String())
-	}
-	body := w.Body.String()
-	for _, want := range []string{`"method"`, `"minutes":[]`, `"hours":[]`, `"days":[]`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("empty history missing %q: %s", want, body)
-		}
-	}
-
-	// fakeCollector's raw Thermal() always reports MaxC 40; pushing 45 into
-	// the smoother and sampling must show 45, proving temps.go reads the
-	// display path (s.smooth) and never col.Thermal.
-	s.smooth.push(45)
-	s.temps.Sample()
-	body = do(s, "GET", "/v1/thermal/history", rs).Body.String()
-	if !strings.Contains(body, ",45]") {
-		t.Fatalf("history body missing the smoother-fed sample: %s", body)
-	}
-
-	thermalBody := do(s, "GET", "/v1/thermal", rs).Body.String()
-	if thermalBody != `{"battery_c":30,"temp_max_c":40,"warn_c":44,"gate_c":46,"safe":true,"source":"sysfs+battery"}`+"\n" {
-		t.Fatalf("/v1/thermal changed shape: %s", thermalBody)
 	}
 }
 
@@ -523,5 +474,38 @@ func TestUsageQuotaPersistsToConfig(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"enable_on_boot": true`) {
 		t.Fatalf("sibling key enable_on_boot lost by persistQuota rewrite: %s", raw)
+	}
+}
+
+// postJSON is do() with a body — the accent endpoint is the first cover test
+// that writes.
+func postJSON(s *Server, path, token, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest("POST", path, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		r.Header.Set("Authorization", "Bearer "+token)
+	}
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	return w
+}
+
+func TestRemovedRoutes404(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	for _, rt := range []struct{ method, path, tok string }{
+		{"GET", "/v1/health", "a"}, {"GET", "/v1/network", "a"}, {"GET", "/v1/thermal/history", "a"},
+		{"GET", "/v1/bands", "a"}, {"GET", "/v1/sms/recent", "a"}, {"GET", "/v1/notifications/recent", "a"},
+		{"POST", "/v1/prefer5g", "c"}, {"POST", "/v1/speedtest", "c"}, {"POST", "/v1/cover/home", "c"},
+	} {
+		if w := do(s, rt.method, rt.path, strings.Repeat(rt.tok, 64)); w.Code != 404 {
+			t.Errorf("%s %s: want 404, got %d", rt.method, rt.path, w.Code)
+		}
+	}
+}
+
+func TestStatusDropsCoverHome(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	if b := do(s, "GET", "/v1/status", strings.Repeat("a", 64)).Body.String(); strings.Contains(b, "cover_home") {
+		t.Fatalf("status still has cover_home: %s", b)
 	}
 }
