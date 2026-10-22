@@ -62,7 +62,7 @@ class FlippostWidgetTest {
     @Test fun layoutFitsCompactSize() {
         val d = ctx.resources.displayMetrics.density
         val w = (250 * d).toInt()
-        val h = (110 * d).toInt()
+        val h = (130 * d).toInt()
         val root = LayoutInflater.from(ctx).inflate(R.layout.widget_flippost, FrameLayout(ctx), false)
         root.findViewById<android.widget.TextView>(R.id.widget_data).text = "38 / 120 GB"
         root.findViewById<android.widget.TextView>(R.id.widget_ip).text = "192.168.43.1"
@@ -75,5 +75,34 @@ class FlippostWidgetTest {
         assertTrue("Data row is clipped", root.findViewById<View>(R.id.widget_data).height >= (14 * d).toInt())
         assertEquals(View.VISIBLE, root.findViewById<View>(R.id.widget_switch).visibility)
         assertTrue(root.findViewById<View>(R.id.widget_switch).height >= (48 * d).toInt())
+    }
+
+    @Test fun stackIsTightWithFullWidthBar() {
+        val d = ctx.resources.displayMetrics.density
+        for (hDp in listOf(130, 200)) {
+            val w = (250 * d).toInt()
+            val h = (hDp * d).toInt()
+            val root = LayoutInflater.from(ctx).inflate(R.layout.widget_flippost, FrameLayout(ctx), false)
+            root.findViewById<android.widget.TextView>(R.id.widget_data).text = "267 GB / 512 GB"
+            root.findViewById<android.widget.TextView>(R.id.widget_ip).text = "192.168.43.1"
+            root.findViewById<android.widget.TextView>(R.id.widget_temp).text = "41°C"
+            root.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY))
+            root.layout(0, 0, w, h)
+            // Position of a view in root coordinates (all rows sit in the root or in widget_values).
+            fun top(v: View) = v.top + ((v.parent as View).takeIf { it !== root }?.top ?: 0)
+            fun bottom(v: View) = top(v) + v.height
+            val ip = root.findViewById<View>(R.id.widget_ip).parent as View
+            val row = root.findViewById<View>(R.id.widget_data_row)
+            val bar = root.findViewById<View>(R.id.widget_bar)
+            val rotate = root.findViewById<View>(R.id.widget_rotate)
+            val content = w - (20 * d).toInt()
+            assertTrue("bar width ${bar.width} < 90% of $content at $hDp dp", bar.width >= 0.9 * content)
+            assertTrue("bar top ${top(bar)} not below data row bottom ${bottom(row)} at $hDp dp", top(bar) >= bottom(row))
+            val max = (10 * d).toInt()
+            val rows = listOf(ip, row, bar, rotate)
+            for ((a, b) in rows.zipWithNext())
+                assertTrue("gap ${top(b) - bottom(a)} > 10 dp at $hDp dp", top(b) - bottom(a) in 0..max)
+            assertTrue("Rotate IP outside root at $hDp dp", top(rotate) >= 0 && bottom(rotate) <= h)
+        }
     }
 }
