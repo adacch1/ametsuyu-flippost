@@ -6,7 +6,7 @@ The phone sits behind carrier CGNAT, so it has no public inbound address. The mo
 
 The daemon binds loopback (`127.0.0.1`) only. `tailscale serve` is the sole bridge between your tailnet and the daemon, and your tailnet ACL decides who can reach it.
 
-The daemon talks to `tailscaled` over its LocalAPI socket at `/data/adb/tailscale/tailscaled.sock`. The module needs no auth key, bundles no Tailscale binaries, and has no `ingress.mode` setting.
+The daemon talks to `tailscaled` over its LocalAPI socket at `/data/adb/tailscale/tailscaled.sock`. The module needs no auth key, bundles no Tailscale binaries, and has no ingress setting.
 
 ## Check status
 
