@@ -1,0 +1,16 @@
+{
+  "v": 1, "updated_at": "2026-10-22T10:00:00+07:00", "slow_age_s": 3,
+  "signal": {"display": "5G", "tech": "NR", "operator": "Viettel", "bars": 3},
+  "usage": {"period_bytes": 12345678901, "limit_bytes": 100000000000, "today_bytes": 1234567890,
+            "left_bytes": 87654321099, "period": "monthly", "next_reset": "2026-11-01T00:00:00+07:00"},
+  "speed": {"interval_ms": 1000, "wan_down_bytes_s": 2500000, "wan_up_bytes_s": 300000,
+            "phone_down_bytes_s": 12000, "phone_up_bytes_s": 4000,
+            "per_client": [{"mac": "aa:bb:cc:dd:ee:ff", "ipv4": "192.168.1.23", "down_bytes_s": 2488000, "up_bytes_s": 296000, "signal_dbm": -48}]},
+  "hotspot": {"active": true, "ssid": "Flippost", "band": "5", "wifi6": true, "clients": 1,
+              "dual_band": false, "dual_active": false, "dual_band_block": null},
+  "wan_ip": "100.64.12.34", "wan_iface": "rmnet_data2",
+  "temperature": {"c": 41.2, "raw_c": 41.8, "state": "SAFE", "safe": true, "warn_c": 44, "gate_c": 46, "bench": false},
+  "battery": {"level": 80, "plugged": "ac", "temp_c": 33.1},
+  "tailscale": {"state": "running", "ip": "100.110.36.27"},
+  "airplane": false
+}

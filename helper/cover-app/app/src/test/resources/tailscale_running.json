@@ -1,0 +1,3 @@
+{"state":"running","backend_state":"Running","ip":"100.110.36.27","ips":["100.110.36.27","fd7a:115c:a1e0::1"],
+ "dns_name":"zflip5.tailXXXX.ts.net","hostname":"zflip5","online":true,"key_expiry":"2027-04-01T00:00:00Z","expired":false,
+ "tailnet":"user@example.com","serve_ok":true,"web_url":"https://zflip5.tailXXXX.ts.net/","version":"1.80.0","health":[],"error":null}
