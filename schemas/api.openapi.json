@@ -3,7 +3,7 @@
  "info": {
   "title": "zflip5-modem-module local API",
   "version": "1.0.0",
-  "description": "Local-only, loopback-bound, bearer-authenticated control API for a rooted Z Flip 5 used as a modem. Sensitive replies are owner-only. Radio and tether writes are discovery-gated and thermal-gated: they never bypass thermal mitigation."
+  "description": "Loopback-bound control API for a rooted Z Flip 5 used as a hotspot and modem. Remote browsers reach it only through `tailscale serve`. Writes that start radios are refused in an unsafe thermal state. The phone's own app is trusted by socket UID; Tailscale login and logout are app_only."
  },
  "servers": [
   {
@@ -16,7 +16,7 @@
    "bearerAuth": {
     "type": "http",
     "scheme": "bearer",
-    "description": "Scoped bearer token. Scopes: read-status, radio-control. Tokens are >=256-bit, 0600 under /data/adb, independently revocable."
+    "description": "Scoped bearer token. Scopes: `read-status` and `radio-control`. Tokens are 256-bit or longer, stored 0600 under `/data/adb`, and independently revocable. A caller from the `com.zflip5.modem` UID needs no token."
    }
   },
   "schemas": {
@@ -39,56 +39,7 @@
      },
      "reason": {
       "type": "string",
-      "description": "machine-readable token on every 409 and every app-only 403"
-     }
-    }
-   },
-   "Health": {
-    "type": "object",
-    "description": "Device host resources (CPU/RAM/temp). Keys mirror tools/collect-metrics.sh.",
-    "required": [
-     "cpu_load1",
-     "cpu_cores",
-     "mem_used_pct",
-     "temp_battery_c",
-     "temp_max_c"
-    ],
-    "additionalProperties": false,
-    "properties": {
-     "cpu_load1": {
-      "type": "number"
-     },
-     "cpu_load5": {
-      "type": "number"
-     },
-     "cpu_load15": {
-      "type": "number"
-     },
-     "cpu_cores": {
-      "type": "integer",
-      "minimum": 1
-     },
-     "mem_total_kb": {
-      "type": "integer",
-      "minimum": 0
-     },
-     "mem_available_kb": {
-      "type": "integer",
-      "minimum": 0
-     },
-     "mem_used_pct": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 100
-     },
-     "temp_battery_c": {
-      "type": "number"
-     },
-     "temp_max_c": {
-      "type": "number"
-     },
-     "temp_max_zone": {
-      "type": "string"
+      "description": "Machine-readable token on every 409 and every app_only 403."
      }
     }
    },
@@ -119,8 +70,7 @@
       }
      },
      "warn_c": {
-      "type": "number",
-      "const": 44
+      "type": "number"
      },
      "gate_c": {
       "type": "number"
@@ -247,50 +197,533 @@
    },
    "Status": {
     "type": "object",
-    "required": [
-     "network",
-     "battery",
-     "thermal",
-     "health",
-     "service"
-    ],
+    "description": "Full device status. Prefer /v1/summary for polling.",
+    "additionalProperties": true
+   },
+   "ClientSpeed": {
+    "type": "object",
     "properties": {
-     "network": {
-      "type": "object"
+     "mac": {
+      "type": "string"
      },
-     "battery": {
-      "type": "object"
+     "ipv4": {
+      "type": [
+       "string",
+       "null"
+      ]
      },
-     "thermal": {
-      "$ref": "#/components/schemas/Thermal"
+     "down_bytes_s": {
+      "type": "integer"
+     },
+     "up_bytes_s": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "mac",
+     "ipv4",
+     "down_bytes_s",
+     "up_bytes_s"
+    ]
+   },
+   "SpeedSnap": {
+    "type": "object",
+    "properties": {
+     "interval_ms": {
+      "type": "integer"
+     },
+     "wan_down_bytes_s": {
+      "type": "integer"
+     },
+     "wan_up_bytes_s": {
+      "type": "integer"
+     },
+     "phone_down_bytes_s": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "phone_up_bytes_s": {
+      "type": [
+       "integer",
+       "null"
+      ]
+     },
+     "per_client": {
+      "oneOf": [
+       {
+        "type": "array",
+        "items": {
+         "$ref": "#/components/schemas/ClientSpeed"
+        }
+       },
+       {
+        "const": "unavailable"
+       }
+      ],
+      "description": "Per-station rates, or \"unavailable\" while station counters do not move."
+     }
+    },
+    "required": [
+     "interval_ms",
+     "wan_down_bytes_s",
+     "wan_up_bytes_s",
+     "phone_down_bytes_s",
+     "phone_up_bytes_s",
+     "per_client"
+    ]
+   },
+   "TailscaleBrief": {
+    "type": "object",
+    "properties": {
+     "state": {
+      "type": "string"
+     },
+     "ip": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "state",
+     "ip"
+    ]
+   },
+   "TailscaleStatus": {
+    "type": "object",
+    "properties": {
+     "state": {
+      "type": "string"
+     },
+     "backend_state": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "ip": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "ips": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "dns_name": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "hostname": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "online": {
+      "type": "boolean"
+     },
+     "key_expiry": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "expired": {
+      "type": "boolean"
+     },
+     "tailnet": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "serve_ok": {
+      "type": "boolean"
+     },
+     "web_url": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "version": {
+      "type": [
+       "string",
+       "null"
+      ]
      },
      "health": {
-      "$ref": "#/components/schemas/Health"
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
      },
-     "service": {
+     "error": {
+      "type": [
+       "string",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "state",
+     "online",
+     "serve_ok"
+    ],
+    "description": "Never carries a login URL, keys, or prefs."
+   },
+   "HotspotStatus": {
+    "type": "object",
+    "properties": {
+     "active": {
+      "type": "boolean"
+     },
+     "dual": {
+      "type": "boolean"
+     },
+     "auto": {
+      "type": "boolean"
+     },
+     "paused": {
+      "type": "string",
+      "enum": [
+       "location_off",
+       "scan_failed",
+       "dual_band"
+      ]
+     },
+     "paused_detail": {
+      "type": "string"
+     },
+     "whitelist": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "matched": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "nearby": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "ssid": {
+         "type": "string"
+        },
+        "rssi": {
+         "type": "integer"
+        },
+        "whitelisted": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "ssid",
+        "rssi",
+        "whitelisted"
+       ]
+      }
+     },
+     "nearby_scan": {
+      "type": "string",
+      "description": "RFC3339"
+     },
+     "ap_count": {
+      "type": "integer"
+     },
+     "last_scan": {
+      "type": "string"
+     },
+     "last_action": {
+      "type": "string"
+     },
+     "override_until": {
+      "type": "string"
+     },
+     "override_left_s": {
+      "type": "integer"
+     },
+     "dual_band": {
+      "type": "boolean",
+      "description": "Persisted dual-band setting; `dual` is the live bridged AP."
+     },
+     "wifi6": {
+      "type": [
+       "boolean",
+       "null"
+      ]
+     }
+    },
+    "required": [
+     "active",
+     "dual",
+     "auto",
+     "whitelist",
+     "matched",
+     "nearby",
+     "ap_count",
+     "dual_band",
+     "wifi6"
+    ]
+   },
+   "DualRequest": {
+    "type": "object",
+    "properties": {
+     "enabled": {
+      "type": "boolean"
+     },
+     "apply_now": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "enabled"
+    ],
+    "additionalProperties": false
+   },
+   "DualResult": {
+    "type": "object",
+    "properties": {
+     "dual_band": {
+      "type": "boolean"
+     },
+     "applied": {
+      "type": "string",
+      "enum": [
+       "now",
+       "next_start"
+      ]
+     },
+     "hotspot": {
+      "$ref": "#/components/schemas/HotspotStatus"
+     }
+    },
+    "required": [
+     "dual_band",
+     "applied",
+     "hotspot"
+    ]
+   },
+   "Summary": {
+    "type": "object",
+    "properties": {
+     "v": {
+      "type": "integer"
+     },
+     "updated_at": {
+      "type": "string"
+     },
+     "slow_age_s": {
+      "type": "integer",
+      "description": "Seconds since the slow collector last ran. Clients treat a value above 30 as stale."
+     },
+     "signal": {
+      "oneOf": [
+       {
+        "type": "object",
+        "properties": {
+         "display": {
+          "type": "string"
+         },
+         "tech": {
+          "type": "string"
+         },
+         "operator": {
+          "type": "string"
+         },
+         "bars": {
+          "type": [
+           "integer",
+           "null"
+          ]
+         }
+        },
+        "required": [
+         "display",
+         "tech",
+         "operator",
+         "bars"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "usage": {
       "type": "object",
-      "required": [
-       "daemon",
-       "helper"
-      ],
       "properties": {
-       "daemon": {
+       "period_bytes": {
+        "type": "integer"
+       },
+       "limit_bytes": {
+        "type": "integer"
+       },
+       "today_bytes": {
+        "type": "integer"
+       },
+       "left_bytes": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "period": {
         "type": "string"
        },
-       "helper": {
-        "type": "object",
-        "required": [
-         "available"
-        ],
-        "properties": {
-         "available": {
-          "type": "boolean"
-         }
-        }
+       "next_reset": {
+        "type": [
+         "string",
+         "null"
+        ]
        }
       }
+     },
+     "speed": {
+      "$ref": "#/components/schemas/SpeedSnap"
+     },
+     "hotspot": {
+      "type": "object",
+      "properties": {
+       "active": {
+        "type": "boolean"
+       },
+       "ssid": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "band": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "wifi6": {
+        "type": [
+         "boolean",
+         "null"
+        ]
+       },
+       "clients": {
+        "type": "integer"
+       },
+       "dual_band": {
+        "type": "boolean"
+       },
+       "dual_active": {
+        "type": "boolean"
+       },
+       "dual_band_block": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      }
+     },
+     "wan_ip": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "wan_iface": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "temperature": {
+      "type": "object",
+      "properties": {
+       "c": {
+        "type": [
+         "number",
+         "null"
+        ]
+       },
+       "raw_c": {
+        "type": "number"
+       },
+       "state": {
+        "type": "string"
+       },
+       "safe": {
+        "type": "boolean"
+       },
+       "warn_c": {
+        "type": "number"
+       },
+       "gate_c": {
+        "type": "number"
+       },
+       "bench": {
+        "type": "boolean"
+       }
+      }
+     },
+     "battery": {
+      "oneOf": [
+       {
+        "type": "object",
+        "properties": {
+         "level": {
+          "type": "integer"
+         },
+         "plugged": {
+          "type": "string"
+         },
+         "temp_c": {
+          "type": "number"
+         }
+        }
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "tailscale": {
+      "$ref": "#/components/schemas/TailscaleBrief"
+     },
+     "airplane": {
+      "type": [
+       "boolean",
+       "null"
+      ]
      }
-    }
+    },
+    "required": [
+     "v",
+     "updated_at",
+     "slow_age_s",
+     "signal",
+     "usage",
+     "speed",
+     "hotspot",
+     "wan_ip",
+     "wan_iface",
+     "temperature",
+     "battery",
+     "tailscale",
+     "airplane"
+    ]
    }
   },
   "responses": {
@@ -332,9 +765,1067 @@
   }
  ],
  "paths": {
+  "/v1/airplane": {
+   "post": {
+    "summary": "Airplane mode on, off, or cycle; off restarts the hotspot",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Another airplane operation is running (`busy`). The body carries `reason`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "mode": {
+          "type": "string",
+          "enum": [
+           "on",
+           "off",
+           "cycle"
+          ]
+         }
+        },
+        "required": [
+         "mode"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/clients": {
+   "get": {
+    "summary": "Connected hotspot clients",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/cooldown": {
+   "post": {
+    "summary": "Force a CPU eco pass for 5 minutes (reduce-only, works while hot)",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/cpu": {
+   "get": {
+    "summary": "CPU mode, requested and effective",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/cpu/mode": {
+   "post": {
+    "summary": "Set the CPU mode",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "mode": {
+          "type": "string",
+          "enum": [
+           "auto",
+           "performance",
+           "balanced",
+           "eco",
+           "off"
+          ]
+         }
+        },
+        "required": [
+         "mode"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/dashboard/control": {
+   "post": {
+    "summary": "Allow or block tokenless writes over the tailnet",
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "open_control": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x-app-only": true,
+    "description": "Only the phone's own app (socket UID) may call this. A token or tailnet caller gets 403 with reason `app_only`.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "open": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "open"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/dashboard/open": {
+   "post": {
+    "summary": "Allow or block tokenless reads over the tailnet",
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "open_reads": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x-app-only": true,
+    "description": "Only the phone's own app (socket UID) may call this. A token or tailnet caller gets 403 with reason `app_only`.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "open": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "open"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/device/reboot": {
+   "post": {
+    "summary": "Reboot the phone",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/hotspot": {
+   "get": {
+    "summary": "Hotspot, whitelist and scan state",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HotspotStatus"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/hotspot/band": {
+   "post": {
+    "summary": "Deprecated alias for /v1/hotspot/dual; always applies now",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HotspotStatus"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Same reasons as /v1/hotspot/dual. The body carries `reason`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "band": {
+          "type": "string",
+          "enum": [
+           "dual",
+           "5"
+          ]
+         }
+        },
+        "required": [
+         "band"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/v1/hotspot/dual": {
+   "post": {
+    "summary": "Turn the bridged 2.4 and 5 GHz hotspot on or off",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DualResult"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Busy (`busy`), whitelist scanning on (`whitelist`), or preset auto-switch on (`auto_switch`). The body carries `reason`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/DualRequest"
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/hotspot/override": {
+   "post": {
+    "summary": "Force the hotspot on for 0 to 24 hours (0 cancels)",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HotspotStatus"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "hours": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24
+         }
+        },
+        "required": [
+         "hours"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/hotspot/scan": {
+   "post": {
+    "summary": "Scan for nearby networks now; never toggles the hotspot",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HotspotStatus"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "409": {
+      "description": "Refused while dual band is on (`dual_band`). The body carries `reason`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/hotspot/whitelist": {
+   "post": {
+    "summary": "Replace the SSID whitelist (empty list disables auto-toggle)",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HotspotStatus"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Refused while dual band is on (`dual_band`). The body carries `reason`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "ssids": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+           "type": "string",
+           "minLength": 1,
+           "maxLength": 32
+          }
+         }
+        },
+        "required": [
+         "ssids"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/presets": {
+   "get": {
+    "summary": "Hotspot presets",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   },
+   "post": {
+    "summary": "Create a preset (no id) or edit one (id set); an empty passphrase keeps the stored one",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string"
+         },
+         "name": {
+          "type": "string"
+         },
+         "ssid": {
+          "type": "string"
+         },
+         "passphrase": {
+          "type": "string"
+         },
+         "security": {
+          "enum": [
+           "open",
+           "wpa2",
+           "wpa3"
+          ]
+         },
+         "band": {
+          "enum": [
+           "2",
+           "5",
+           "6"
+          ]
+         },
+         "triggers": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/presets/apply": {
+   "post": {
+    "summary": "Switch the live SoftAP to a preset now",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "Another apply is running (`busy`). The body carries `reason`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "id"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/presets/auto": {
+   "post": {
+    "summary": "Turn preset auto-switch on or off",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "additionalProperties": true
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/presets/delete": {
+   "post": {
+    "summary": "Delete a preset",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "404": {
+      "description": "unknown id",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "id": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "id"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/qr": {
+   "get": {
+    "summary": "QR code PNG for pairing",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "PNG image",
+      "content": {
+       "image/png": {
+        "schema": {
+         "type": "string",
+         "format": "binary"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/service/restart": {
+   "post": {
+    "summary": "Restart the daemon only; the watchdog respawns it",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
   "/v1/status": {
    "get": {
-    "summary": "Full modem + device-host summary",
+    "summary": "Full device status",
     "security": [
      {
       "bearerAuth": [
@@ -362,9 +1853,238 @@
     }
    }
   },
+  "/v1/summary": {
+   "get": {
+    "summary": "One snapshot of everything the app and web UI poll",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Summary"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/tailscale": {
+   "get": {
+    "summary": "Tailscale state (no login URL)",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TailscaleStatus"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/tailscale/login": {
+   "post": {
+    "summary": "Start Tailscale sign-in and return the login URL",
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true
+        }
+       }
+      }
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "409": {
+      "description": "Sign-in already running (`busy`) or the device needs admin approval (`needs_machine_auth`). The body carries `reason`.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "LocalAPI failed (`localapi`)",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "tailscaled not running (`not_running`)",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "504": {
+      "description": "timed out waiting for the URL"
+     }
+    },
+    "x-app-only": true,
+    "description": "Only the phone's own app (socket UID) may call this. A token or tailnet caller gets 403 with reason `app_only`."
+   }
+  },
+  "/v1/tailscale/logout": {
+   "post": {
+    "summary": "Log Tailscale out",
+    "security": [],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true
+        }
+       }
+      }
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "502": {
+      "description": "LocalAPI failed",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "tailscaled not running",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "x-app-only": true,
+    "description": "Only the phone's own app (socket UID) may call this. A token or tailnet caller gets 403 with reason `app_only`."
+   }
+  },
+  "/v1/tether": {
+   "post": {
+    "summary": "Start or stop the hotspot",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "applied": {
+           "type": "boolean"
+          },
+          "action": {
+           "type": "string"
+          },
+          "active": {
+           "type": "boolean"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "parameters": [
+     {
+      "name": "action",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "start",
+        "stop"
+       ],
+       "default": "start"
+      }
+     }
+    ]
+   }
+  },
   "/v1/thermal": {
    "get": {
-    "summary": "Thermal gate state (sysfs+battery primary)",
+    "summary": "Thermal gate state",
     "security": [
      {
       "bearerAuth": [
@@ -385,13 +2105,16 @@
      },
      "401": {
       "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
      }
     }
    }
   },
-  "/v1/battery": {
+  "/v1/thermal/bench": {
    "get": {
-    "summary": "Battery level/temp/plugged/health",
+    "summary": "Bench mode state",
     "security": [
      {
       "bearerAuth": [
@@ -401,17 +2124,26 @@
     ],
     "responses": {
      "200": {
-      "description": "ok"
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true
+        }
+       }
+      }
      },
      "401": {
       "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
      }
     }
-   }
-  },
-  "/v1/tether": {
+   },
    "post": {
-    "summary": "Start/stop the data hotspot via root helper (?action=start|stop; start is thermal-gated)",
+    "summary": "Turn bench mode on or off (trips at 70 C instead of 48 C)",
     "security": [
      {
       "bearerAuth": [
@@ -419,39 +2151,29 @@
       ]
      }
     ],
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "state"
-        ],
-        "additionalProperties": false,
-        "properties": {
-         "state": {
-          "type": "string",
-          "enum": [
-           "on",
-           "off",
-           "status"
-          ]
-         }
+    "responses": {
+     "200": {
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": true
         }
        }
       }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "applied or current state"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
      },
      "403": {
       "$ref": "#/components/responses/Forbidden"
      },
-     "409": {
-      "description": "refused: thermal gate not safe",
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
       "content": {
        "application/json": {
         "schema": {
@@ -460,12 +2182,31 @@
        }
       }
      }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "enabled": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "enabled"
+        ],
+        "additionalProperties": false
+       }
+      }
+     }
     }
    }
   },
-  "/v1/cooldown": {
+  "/v1/thermal/limits": {
    "post": {
-    "summary": "Force an immediate CPU eco pass (reduce-only; works while hot)",
+    "summary": "Retune warn_c and gate_c; the server clamps to the safe range",
     "security": [
      {
       "bearerAuth": [
@@ -475,37 +2216,76 @@
     ],
     "responses": {
      "200": {
-      "description": "cooldown engaged"
+      "description": "ok",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "warn_c": {
+           "type": "number"
+          },
+          "gate_c": {
+           "type": "number"
+          },
+          "clamped": {
+           "type": "boolean"
+          },
+          "gate_ceiling": {
+           "type": "number"
+          },
+          "note": {
+           "type": "string"
+          }
+         }
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
      },
      "403": {
       "$ref": "#/components/responses/Forbidden"
-     }
-    }
-   }
-  },
-  "/v1/service/restart": {
-   "post": {
-    "summary": "Restart module daemon/helper only (never the phone)",
-    "security": [
-     {
-      "bearerAuth": [
-       "radio-control"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "restarting"
      },
-     "403": {
-      "$ref": "#/components/responses/Forbidden"
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "400": {
+      "description": "bad body or value",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "warn_c": {
+          "type": "number"
+         },
+         "gate_c": {
+          "type": "number"
+         }
+        },
+        "additionalProperties": false
+       }
+      }
      }
     }
    }
   },
   "/v1/usage": {
    "get": {
-    "summary": "Data-usage report: today, ISO week to date, calendar month to date (device-local time)",
+    "summary": "Data-usage report",
     "security": [
      {
       "bearerAuth": [
@@ -638,9 +2418,9 @@
     }
    }
   },
-  "/v1/signal": {
+  "/v1/usbtether": {
    "get": {
-    "summary": "Detailed LTE/5G signal snapshot (NSA-aware tech, band, RSRP/RSRQ/SINR)",
+    "summary": "USB tethering state",
     "security": [
      {
       "bearerAuth": [
@@ -654,7 +2434,8 @@
       "content": {
        "application/json": {
         "schema": {
-         "type": "object"
+         "type": "object",
+         "additionalProperties": true
         }
        }
       }
@@ -668,99 +2449,9 @@
     }
    }
   },
-  "/v1/clients": {
-   "get": {
-    "summary": "Connected hotspot clients (IP + reachability state)",
-    "security": [
-     {
-      "bearerAuth": [
-       "read-status"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "ok",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
-  "/v1/cpu": {
-   "get": {
-    "summary": "CPU power/perf policy state + per-core telemetry",
-    "security": [
-     {
-      "bearerAuth": [
-       "read-status"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "ok",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
-  "/v1/hotspot": {
-   "get": {
-    "summary": "Hotspot state + SSID-whitelist auto-toggle status (paused/paused_detail when scanning can't run, override_until/override_left_s while a timed force-on is active)",
-    "security": [
-     {
-      "bearerAuth": [
-       "read-status"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "ok",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
-  "/v1/hotspot/whitelist": {
+  "/v1/usbtether/toggle": {
    "post": {
-    "summary": "Replace the SSID whitelist (empty disables auto-toggle)",
+    "summary": "Turn USB tethering on or off",
     "security": [
      {
       "bearerAuth": [
@@ -770,392 +2461,7 @@
     ],
     "responses": {
      "200": {
-      "description": "updated whitelist + status",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     },
-     "400": {
-      "description": "invalid ssids"
-     },
-     "409": {
-      "description": "reason dual_band: turn off dual band first",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/v1/hotspot/override": {
-   "post": {
-    "summary": "Force the hotspot on for N hours regardless of whitelist matches, then revert (0 cancels); a policy write like the whitelist, not thermal-gated",
-    "security": [
-     {
-      "bearerAuth": [
-       "radio-control"
-      ]
-     }
-    ],
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "hours"
-        ],
-        "additionalProperties": false,
-        "properties": {
-         "hours": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 24,
-          "description": "0 cancels an active override"
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "hotspot status, with override_until/override_left_s set while forced on",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "400": {
-      "description": "hours outside 0..24"
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
-  "/v1/thermal/limits": {
-   "post": {
-    "summary": "Retune warn_c/gate_c (server-clamped; gate ceiling 48C)",
-    "security": [
-     {
-      "bearerAuth": [
-       "radio-control"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "effective (possibly clamped) limits",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     },
-     "400": {
-      "description": "non-finite values"
-     }
-    }
-   }
-  },
-  "/v1/airplane": {
-   "post": {
-    "summary": "Airplane on/off or IP-rotation cycle (body {\"mode\":\"on|off|cycle\"}); serialized, 409 if busy",
-    "security": [
-     {
-      "bearerAuth": [
-       "radio-control"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "airplane state / rotate result",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     },
-     "409": {
-      "description": "reason busy: an airplane operation is already in progress",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/v1/device/reboot": {
-   "post": {
-    "summary": "Reboot the whole phone; module restores daemon+hotspot on boot",
-    "security": [
-     {
-      "bearerAuth": [
-       "radio-control"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "rebooting",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
-  "/v1/summary": {
-   "get": {
-    "summary": "Everything the app home, widget and web main view need in one call, served from memory (slow_age_s above 30 means the collector is stuck)",
-    "security": [
-     {
-      "bearerAuth": [
-       "read-status"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "summary v1",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
-  "/v1/tailscale": {
-   "get": {
-    "summary": "Tailscale status from the LocalAPI (3 s timeout, always 200; never returns keys or a login URL)",
-    "security": [
-     {
-      "bearerAuth": [
-       "read-status"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "state, ips, dns_name, serve_ok, web_url and more",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
-  "/v1/tailscale/login": {
-   "post": {
-    "summary": "Start an interactive Tailscale login (app UID only)",
-    "responses": {
-     "200": {
-      "description": "state plus login_url, or state running with login_url null",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "403": {
-      "description": "app_only",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "409": {
-      "description": "reason needs_machine_auth or busy",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "502": {
-      "description": "reason localapi",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "503": {
-      "description": "reason not_running",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "504": {
-      "description": "reason no_login_url",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/v1/tailscale/logout": {
-   "post": {
-    "summary": "Log Tailscale out after saving prefs (app UID only)",
-    "responses": {
-     "200": {
-      "description": "state needs_login",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "403": {
-      "description": "app_only",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "502": {
-      "description": "reason localapi",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "503": {
-      "description": "reason not_running",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/v1/hotspot/dual": {
-   "post": {
-    "summary": "Turn bridged dual band on or off (body {\"enabled\":bool,\"apply_now\":bool}, apply_now defaults to false)",
-    "security": [
-     {
-      "bearerAuth": [
-       "radio-control"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "dual_band, applied (now or next_start) and hotspot status",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "400": {
-      "description": "bad body"
+      "description": "ok"
      },
      "401": {
       "$ref": "#/components/responses/Unauthorized"
@@ -1163,21 +2469,11 @@
      "403": {
       "$ref": "#/components/responses/Forbidden"
      },
-     "409": {
-      "description": "reason busy, whitelist or auto_switch; disabling is never blocked",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
      "429": {
       "$ref": "#/components/responses/TooManyRequests"
      },
-     "502": {
-      "description": "reason helper",
+     "400": {
+      "description": "bad body or value",
       "content": {
        "application/json": {
         "schema": {
@@ -1193,18 +2489,7 @@
       "application/json": {
        "schema": {
         "type": "object",
-        "properties": {
-         "enabled": {
-          "type": "boolean"
-         },
-         "apply_now": {
-          "type": "boolean",
-          "default": false
-         }
-        },
-        "required": [
-         "enabled"
-        ]
+        "additionalProperties": true
        }
       }
      }
