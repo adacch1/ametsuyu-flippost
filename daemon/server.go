@@ -57,6 +57,10 @@ type Server struct {
 	openControl atomic.Bool
 	// speedtestBusy: only one speedtest at a time (each is heavy on data + heat).
 	speedtestBusy atomic.Bool
+	// coolHoldUntil is the manual-cooldown deadline (unix nanos): while it is in
+	// the future, applyCPUPolicyOnce forces eco instead of the configured mode.
+	// Zero value (no hold) needs no NewServer change.
+	coolHoldUntil atomic.Int64
 	// coverAccent: the cover screen's accent name, seeded from config and set
 	// from the control panel. atomic.Value because the kiosk reads it on every
 	// page load while a POST can rewrite it.
@@ -176,28 +180,42 @@ func (s *Server) setThermalLimits(warn, gate float64) (float64, float64) {
 	return warn, gate
 }
 
-// runCPUPolicy is the background loop that retunes cores every 30s from live
-// state (client count + thermal). Safe: when hot it only ever reduces.
+// runCPUPolicy is the background loop that retunes cores every 5s from live
+// state (client count + thermal). Safe: when hot it only ever reduces. The old
+// 30s cadence left a client that joined an idle hotspot up to 30s at eco —
+// prime parked, mid cluster capped — before performance applied; 5s keeps that
+// hole under the association+DHCP time. Thermal reads hit the shared 3s zone
+// cache, so the extra ticks cost no new sweeps.
 func (s *Server) runCPUPolicy() {
 	for {
 		s.applyCPUPolicyOnce()
-		time.Sleep(30 * time.Second)
+		time.Sleep(5 * time.Second)
 	}
 }
 
 // applyCPUPolicyOnce enforces the configured CPU mode against live thermal
 // state. Shared by the background loop and the /v1/cpu/mode write handler so a
-// manual mode change takes effect immediately.
-func (s *Server) applyCPUPolicyOnce() {
+// manual mode change takes effect immediately. Returns the effective mode and
+// reason — what apply() actually enforced, which is what /v1/cpu/mode reports
+// back to the dashboard.
+func (s *Server) applyCPUPolicyOnce() (string, string) {
+	if now := time.Now().UnixNano(); now < s.coolHoldUntil.Load() {
+		// A manual cooldown outranks the configured mode, "off" included: the
+		// dashboard button's whole job is to shed heat for a bounded window.
+		s.cpu.apply("eco")
+		return "eco", "manual cooldown hold"
+	}
 	requested := s.cfg.CPUMode()
 	if requested == "off" {
 		s.cpu.restoreAll()
-		return
+		return "off", "disabled by config"
 	}
 	t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
+	hotspotOn := hotspotActive()
 	clients := deviceClients().Count
-	mode, _ := decideMode(requested, clients, t.Safe)
+	mode, reason := decideMode(requested, clients, hotspotOn, t.Safe)
 	s.cpu.apply(mode)
+	return mode, reason
 }
 
 // runHotspotAuto is the background SSID-whitelist loop. Not thermal-gated: the
@@ -483,7 +501,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	// disp is a display-only copy: the safety-relevant fields (safe, source,
 	// policy_state below) stay computed from the raw th so a smoothed number
 	// can never make an UNSAFE gate look SAFE (or vice versa). Only the
-	// headline number is swapped for the 14 s median.
+	// headline number is swapped for the 25 s median.
 	disp := th
 	if m, ok := s.smooth.median(); ok {
 		disp.MaxRawC = th.MaxC
@@ -637,8 +655,14 @@ func (s *Server) handleBands(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCPU(w http.ResponseWriter, r *http.Request) {
 	requested := s.cfg.CPUMode()
 	t := s.col.Thermal(s.effectiveWarnC(), s.effectiveGateC(), s.cfg.Thermal.FailClosed)
+	hotspotOn := hotspotActive()
 	clients := deviceClients().Count
-	eff, reason := decideMode(requested, clients, t.Safe)
+	eff, reason := decideMode(requested, clients, hotspotOn, t.Safe)
+	// While a manual cooldown hold is live it outranks the decided mode; report
+	// it, or the System tab would claim "performance" over parked cores.
+	if time.Now().UnixNano() < s.coolHoldUntil.Load() {
+		eff, reason = "eco", "manual cooldown hold"
+	}
 	writeJSON(w, http.StatusOK, s.cpu.report(requested, eff, reason, clients, t.Safe))
 }
 
@@ -660,8 +684,11 @@ func (s *Server) handleCPUMode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.cfgMu.Unlock()
-	s.applyCPUPolicyOnce()
-	writeJSON(w, http.StatusOK, map[string]any{"mode": body.Mode, "applied": true})
+	// Report the effective mode, not just the requested one: when hot, the
+	// thermal gate keeps the enforced mode at eco, and "performance (persisted)"
+	// over eco-running cores is exactly the lie this handler used to tell.
+	eff, reason := s.applyCPUPolicyOnce()
+	writeJSON(w, http.StatusOK, map[string]any{"mode": body.Mode, "applied": true, "effective": eff, "reason": reason})
 }
 
 func validCPUMode(m string) bool {
@@ -1004,13 +1031,19 @@ func (s *Server) handlePrefer5G(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCooldown forces an immediate CPU eco pass (park the prime core, cap the
-// mid cluster). Reduce-only and reversible; the background policy will restore
-// higher modes once cool. Unlike a radio write it must work while hot, which is
-// why it is not behind guardWrite.
+// mid cluster) and holds it for cooldownHold, overriding the configured mode.
+// The hold is the point: the policy loop used to re-apply the configured mode on
+// its very next tick, so "Force CPU cooldown" lasted under 30s (and with
+// cpu.mode "off", restoreAll undid it instantly). Reduce-only and reversible.
+// Unlike a radio write it must work while hot, which is why it is not behind
+// guardWrite.
+const cooldownHold = 5 * time.Minute
+
 func (s *Server) handleCooldown(w http.ResponseWriter, r *http.Request) {
+	s.coolHoldUntil.Store(time.Now().Add(cooldownHold).UnixNano())
 	s.cpu.apply("eco")
 	writeJSON(w, http.StatusOK, map[string]any{"applied": true, "mode": "eco",
-		"note": "CPU forced to eco; auto policy resumes on the next cycle."})
+		"note": "CPU forced to eco for 5 minutes; the auto policy resumes after."})
 }
 
 // handleRestart exits the daemon after replying; the Magisk watchdog respawns it
@@ -1138,7 +1171,7 @@ func (s *Server) ListenAndServe() error {
 	go s.runCPUPolicy()
 	// Background SSID-whitelist hotspot auto-toggle (idle when list is empty).
 	go s.runHotspotAuto()
-	// Bench thermal watcher: re-asserts the bypass and arms the 95C critical trip.
+	// Bench thermal watcher: re-asserts the bypass and arms the 70C critical trip.
 	go s.bench.Watch()
 	// Display-only thermal median sampler (see thermalSmoother); the gate
 	// path never reads it.

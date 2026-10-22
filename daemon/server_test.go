@@ -331,6 +331,55 @@ func TestSetCPUModeEndpoint(t *testing.T) {
 	}
 }
 
+// TestCooldownHold pins the manual-cooldown override: a live hold must outrank
+// the configured mode (even a fixed fast one), POST /v1/cooldown must arm it
+// for about cooldownHold, and an expired hold must hand control back. Before
+// the hold existed the policy loop re-applied the configured mode on its next
+// tick, so "Force CPU cooldown" lasted under 30s.
+func TestCooldownHold(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	s.cfg.CPU.Mode = "performance"
+
+	if mode, reason := s.applyCPUPolicyOnce(); mode != "performance" || reason != "fixed mode" {
+		t.Fatalf("baseline: got %q (%q), want performance (fixed mode)", mode, reason)
+	}
+
+	s.coolHoldUntil.Store(time.Now().Add(time.Minute).UnixNano())
+	if mode, reason := s.applyCPUPolicyOnce(); mode != "eco" || reason != "manual cooldown hold" {
+		t.Fatalf("hold: got %q (%q), want eco (manual cooldown hold)", mode, reason)
+	}
+
+	// The mode write reports the effective mode: under a hold it must say so
+	// instead of echoing the requested mode over eco-running cores.
+	req := httptest.NewRequest("POST", "/v1/cpu/mode", strings.NewReader(`{"mode":"performance"}`))
+	req.Header.Set("Authorization", "Bearer "+strings.Repeat("c", 64))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, req)
+	var resp struct {
+		Mode      string `json:"mode"`
+		Effective string `json:"effective"`
+		Reason    string `json:"reason"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v (%s)", err, w.Body.String())
+	}
+	if resp.Mode != "performance" || resp.Effective != "eco" || resp.Reason != "manual cooldown hold" {
+		t.Fatalf("mode write under hold: got %q/%q/%q", resp.Mode, resp.Effective, resp.Reason)
+	}
+
+	if w := do(s, "POST", "/v1/cooldown", strings.Repeat("c", 64)); w.Code != 200 {
+		t.Fatalf("cooldown: %d %s", w.Code, w.Body.String())
+	}
+	if mode, _ := s.applyCPUPolicyOnce(); mode != "eco" {
+		t.Fatalf("after POST /v1/cooldown: got %q, want eco", mode)
+	}
+
+	s.coolHoldUntil.Store(time.Now().Add(-time.Second).UnixNano())
+	if mode, reason := s.applyCPUPolicyOnce(); mode != "performance" || reason != "fixed mode" {
+		t.Fatalf("expired: got %q (%q), want performance (fixed mode)", mode, reason)
+	}
+}
+
 // TestUsageQuotaEndpoint exercises the admin-gated quota write end to end:
 // scope enforcement, validation, and that a saved quota round-trips through
 // GET /v1/usage. usagePath is redirected to a temp file so the tracker's

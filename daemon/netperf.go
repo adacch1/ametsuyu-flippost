@@ -22,17 +22,28 @@ import (
 //   - bigger tcp_rmem/tcp_wmem + rmem_max/wmem_max: room for high-BDP links.
 //   - fq_codel on swlan0 (the SoftAP interface): per-flow fair queueing +
 //     AQM, so one heavy device can't starve the others (bufferbloat control).
+//   - nf_conntrack_max + shorter TIME_WAIT timeout: the phone is the NAT for
+//     every tethered device; a many-flow pattern (torrent, QUIC-heavy) can
+//     otherwise fill the default table and start dropping new connections.
+//   - netdev_max_backlog/budget/usecs: absorb Wi-Fi softirq bursts on the
+//     swlan0->rmnet forward path instead of dropping frames at 1000-packet
+//     backlog depth.
 var netPerfDefaults = map[string]string{
-	"net/ipv4/tcp_congestion_control":    "cubic",
-	"net/ipv4/tcp_slow_start_after_idle": "0",
-	"net/ipv4/tcp_mtu_probing":           "1",
-	"net/ipv4/tcp_rmem":                  "4096 87380 16777216",
-	"net/ipv4/tcp_wmem":                  "4096 65536 16777216",
-	"net/core/rmem_max":                  "16777216",
-	"net/core/wmem_max":                  "16777216",
-	"net/core/default_qdisc":             "fq_codel",
-	"net/ipv4/tcp_fastopen":              "3",
-	"net/ipv4/tcp_ecn":                   "1",
+	"net/ipv4/tcp_congestion_control":                  "cubic",
+	"net/ipv4/tcp_slow_start_after_idle":               "0",
+	"net/ipv4/tcp_mtu_probing":                         "1",
+	"net/ipv4/tcp_rmem":                                "4096 87380 16777216",
+	"net/ipv4/tcp_wmem":                                "4096 65536 16777216",
+	"net/core/rmem_max":                                "16777216",
+	"net/core/wmem_max":                                "16777216",
+	"net/core/default_qdisc":                           "fq_codel",
+	"net/ipv4/tcp_fastopen":                            "3",
+	"net/ipv4/tcp_ecn":                                 "1",
+	"net/netfilter/nf_conntrack_max":                   "262144",
+	"net/netfilter/nf_conntrack_tcp_timeout_time_wait": "30",
+	"net/core/netdev_max_backlog":                      "16384",
+	"net/core/netdev_budget":                           "600",
+	"net/core/netdev_budget_usecs":                     "8000",
 }
 
 // softApIf is the SoftAP interface (wlan0 is the STA interface on this device);

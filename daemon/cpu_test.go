@@ -6,22 +6,24 @@ func TestDecideMode(t *testing.T) {
 	cases := []struct {
 		req      string
 		clients  int
+		hotspot  bool
 		safe     bool
 		wantMode string
 	}{
-		{"auto", 2, true, "performance"},        // in use + cool -> speed
-		{"auto", 0, true, "eco"},                // idle + cool -> battery
-		{"auto", 5, false, "eco"},               // hot ALWAYS reduces, even with clients
-		{"performance", 0, true, "performance"}, // fixed
-		{"performance", 0, false, "eco"},        // hot overrides a fixed performance request
-		{"eco", 9, true, "eco"},
-		{"off", 3, true, "off"},
-		{"off", 3, false, "off"}, // off stays off (owner opted out entirely)
+		{"auto", 2, false, true, "performance"}, // clients + cool -> speed
+		{"auto", 0, true, true, "performance"},  // hotspot serving, no neigh entry yet -> speed
+		{"auto", 0, false, true, "eco"},         // hotspot down + idle -> battery
+		{"auto", 5, true, false, "eco"},         // hot ALWAYS reduces, even while serving
+		{"performance", 0, false, true, "performance"}, // fixed
+		{"performance", 0, false, false, "eco"},        // hot overrides a fixed performance request
+		{"eco", 9, true, true, "eco"},
+		{"off", 3, true, true, "off"},
+		{"off", 3, false, false, "off"}, // off stays off (owner opted out entirely)
 	}
 	for _, c := range cases {
-		got, _ := decideMode(c.req, c.clients, c.safe)
+		got, _ := decideMode(c.req, c.clients, c.hotspot, c.safe)
 		if got != c.wantMode {
-			t.Errorf("decideMode(%q,%d,%v)=%q want %q", c.req, c.clients, c.safe, got, c.wantMode)
+			t.Errorf("decideMode(%q,%d,%v,%v)=%q want %q", c.req, c.clients, c.hotspot, c.safe, got, c.wantMode)
 		}
 	}
 }

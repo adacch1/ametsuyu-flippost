@@ -49,7 +49,7 @@ turning it off closes them again.
 core count, RAM used %, battery temp, and the hottest thermal zone — sourced from
 `/proc/loadavg`, `/proc/meminfo`, and `/sys/class/thermal` (reference collector:
 `tools/collect-metrics.sh`). The `/v1/status` view smooths `temp_max_c` to a
-14-second median so a single-sample TSENS spike doesn't flicker the display;
+25-second median so a single-sample TSENS spike doesn't flicker the display;
 the gate stays instantaneous, so `safe` and `policy_state` never lag. The
 daemon also records that same median once a minute into hour and day
 averages served by `GET /v1/thermal/history` (see [Temperature
@@ -65,8 +65,11 @@ history either.
 - **Thermal gate is PRIMARY on battery temp + `/sys/class/thermal` and fails
   closed** (Android `getCurrentThermalStatus()` is advisory — often `NONE` on
   Samsung). 44 °C is the warning threshold; writes are refused above `gate_c`.
-  The module never disables, patches, or works around thermal mitigation, and
-  never edits vendor thermal files or thermal daemons.
+  In stock mode the module never disables, patches, or works around thermal
+  mitigation, and never edits vendor thermal files. Bench thermal mode (the
+  running configuration on this battery-less donor) is the documented
+  exception: it suspends the zones/cpufreq caps and replaces them with its own
+  70 °C trip — see the README's [Safety](../README.md#safety) section.
 - **SMS is owner-only, pull-only, redacted by default**, reachable only over the
   iPhone/Tailscale path, and is never routed through the Discord relay. There is
   no default forwarding of messages to any channel.

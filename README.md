@@ -36,8 +36,9 @@ replaces them with a 70 °C trip. Nothing listens on a public address.
   throttling so the phone runs at full clocks, and enforces its own 70 °C trip
   in their place. It warns at 65 °C. Crossing 70 °C forces a cooldown, and
   you can also start one manually from the dashboard.
-- **CPU policy.** Auto, performance, balanced, eco, and off modes. Policy only
-  reduces load when the phone runs hot.
+- **CPU policy.** Auto, performance, balanced, eco, and off modes. Auto holds
+  full clocks the whole time the hotspot is up, so speed never waits on a
+  client-detection cycle; policy only reduces load when the phone runs hot.
 - **Alerts.** A self-hosted Telegram bot and a device-local ntfy runner report
   temperature, battery, power, data cap, signal, and hotspot changes.
 - **Remote control.** Reach the dashboard, Telegram bot, Discord relay, and

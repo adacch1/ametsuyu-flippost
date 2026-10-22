@@ -189,11 +189,12 @@ on their own.
 
 `GET /v1/thermal/history` (`read-status` scope) reports minute, hour, and
 day temperature buckets for the dashboard's **System** tab. The daemon
-samples the same 14-second display median that `/v1/status` reports as
+samples the same 25-second display median that `/v1/status` reports as
 `temp_max_c`, once a minute, and stores the buckets in
 `/data/adb/zflip5-modem/temps.json` (mode 0600). The thermal gate never
-reads this history: `safe` and the 48 °C ceiling stay computed from the
-raw, instantaneous sensor reading.
+reads this history: `safe` and the ceiling (the configured gate, lifted to
+the 70 °C bench trip while bench mode is up) stay computed from the raw,
+instantaneous sensor reading.
 
 Every hour and day bucket is the sample-weighted mean of the minute samples
 that landed inside it — `sum(temp) / count`, in device-local time. A day

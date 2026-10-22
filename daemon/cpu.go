@@ -90,6 +90,16 @@ var (
 	// littleCPUs (0,1,2) are never touched — the safe base.
 )
 
+// Performance-mode frequency floors: schedutil ramps from the current clock,
+// so a NAT burst arriving at 800 MHz forwards its first frames slow. Holding
+// the mid cluster and prime at a mid clock makes the first burst full-speed
+// while idle burn stays a couple of watts on the bench supply — well under the
+// 70 C trip. Little cores keep stock behavior (base system, no forwarding).
+const (
+	perfFloorMidKHz   = 1800000
+	perfFloorPrimeKHz = 2000000
+)
+
 // CPUReport is served at /v1/cpu.
 type CPUReport struct {
 	Mode      string     `json:"mode"`      // effective mode this cycle
@@ -112,10 +122,11 @@ type CoreInfo struct {
 type CPUController struct {
 	mu       sync.Mutex
 	origMax  map[int]int // policy-leader cpu -> original scaling_max_freq (KHz)
+	origMin  map[int]int // policy-leader cpu -> original scaling_min_freq (KHz)
 	lastMode string
 }
 
-func NewCPUController() *CPUController { return &CPUController{origMax: map[int]int{}} }
+func NewCPUController() *CPUController { return &CPUController{origMax: map[int]int{}, origMin: map[int]int{}} }
 
 func cpuPath(cpu int, sub string) string {
 	return filepath.Join(cpuRoot, "cpu"+strconv.Itoa(cpu), sub)
@@ -167,6 +178,35 @@ func (c *CPUController) restoreMax(cpus []int) {
 	}
 }
 
+// setClusterMin raises a cluster's scaling_min_freq (a floor, not a cap) via
+// any of its cpus' cpufreq dir. Callers must raise max before min and clamp to
+// the hardware max so we never over-clock.
+func (c *CPUController) setClusterMin(cpus []int, khz int) {
+	for _, cpu := range cpus {
+		hw := readCPUInt(cpu, "cpufreq/cpuinfo_max_freq")
+		if hw == 0 {
+			continue
+		}
+		if _, ok := c.origMin[cpu]; !ok {
+			c.origMin[cpu] = readCPUInt(cpu, "cpufreq/scaling_min_freq")
+		}
+		if khz > hw {
+			khz = hw
+		}
+		_ = writeCPU(cpuPath(cpu, "cpufreq/scaling_min_freq"), strconv.Itoa(khz))
+	}
+}
+
+// restoreMin puts back the recorded floors; called before any max cap so a
+// floor can never exceed the new cap and get the write rejected.
+func (c *CPUController) restoreMin(cpus []int) {
+	for _, cpu := range cpus {
+		if orig, ok := c.origMin[cpu]; ok && orig > 0 {
+			_ = writeCPU(cpuPath(cpu, "cpufreq/scaling_min_freq"), strconv.Itoa(orig))
+		}
+	}
+}
+
 // apply enforces one of the effective modes. Idempotent-ish; safe to call each cycle.
 func (c *CPUController) apply(mode string) {
 	c.mu.Lock()
@@ -174,15 +214,20 @@ func (c *CPUController) apply(mode string) {
 	all := append(append([]int{}, midCPUs...), primeCPUs...)
 	switch mode {
 	case "performance":
-		// Everything online; unlock every cluster to its hardware max for speed.
+		// Everything online; unlock every cluster to its hardware max for speed,
+		// and hold mid+prime at a floor so a burst never starts from a ramp.
 		for _, cpu := range all {
 			setOnline(cpu, true)
 		}
 		c.setClusterMax(primeCPUs, 0) // 0 => hw max
 		c.setClusterMax(midCPUs, 0)
 		c.setClusterMax([]int{0}, 0) // little cluster leader
+		c.setClusterMin(primeCPUs, perfFloorPrimeKHz)
+		c.setClusterMin(midCPUs, perfFloorMidKHz)
 	case "eco":
 		// Park the prime core, cap the mid cluster low; little cluster carries idle.
+		// Floors come down first so the 1.5 GHz cap can't be rejected as min>max.
+		c.restoreMin(all)
 		c.setClusterMax(midCPUs, 1500000)
 		for _, cpu := range primeCPUs {
 			setOnline(cpu, false)
@@ -194,14 +239,15 @@ func (c *CPUController) apply(mode string) {
 		for _, cpu := range all {
 			setOnline(cpu, true)
 		}
+		c.restoreMin(all)
 		c.restoreMax(all)
 		c.restoreMax([]int{0})
 	}
 	c.lastMode = mode
 }
 
-// restoreAll returns the CPU to stock: all cores online, original caps. Called
-// when the mode is "off" (and should be called on daemon shutdown).
+// restoreAll returns the CPU to stock: all cores online, original caps and
+// floors. Called when the mode is "off" (and should be called on daemon shutdown).
 func (c *CPUController) restoreAll() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -209,15 +255,20 @@ func (c *CPUController) restoreAll() {
 	for _, cpu := range all {
 		setOnline(cpu, true)
 	}
+	c.restoreMin(all)
 	c.restoreMax(all)
 	c.restoreMax([]int{0})
 	c.lastMode = "off"
 }
 
 // decide picks the effective mode from the configured mode + live state. "auto"
-// is the interesting one: performance while clients are actively connected, eco
-// when idle, and always cool (eco) when thermal is unsafe — the safety override.
-func decideMode(requested string, clients int, thermalSafe bool) (string, string) {
+// is the interesting one: performance whenever the hotspot interface is up —
+// the owner asked for full clocks the whole time the modem is serving, and
+// speed must not wait on a neigh-entry poll to unlock (beacons, DHCP, and a
+// new client's first flows all land before the client list knows about it) —
+// eco when the hotspot is down and nothing is flowing, and always cool (eco)
+// when thermal is unsafe: the safety override.
+func decideMode(requested string, clients int, hotspotOn bool, thermalSafe bool) (string, string) {
 	if requested == "off" {
 		return "off", "disabled by config"
 	}
@@ -228,8 +279,8 @@ func decideMode(requested string, clients int, thermalSafe bool) (string, string
 	case "performance", "balanced", "eco":
 		return requested, "fixed mode"
 	default: // auto
-		if clients > 0 {
-			return "performance", "clients connected — maximize throughput"
+		if hotspotOn || clients > 0 {
+			return "performance", "hotspot up — maximize throughput"
 		}
 		return "eco", "idle — save battery"
 	}

@@ -123,11 +123,11 @@
      },
      "temp_max_c": {
       "type": "number",
-      "description": "In /v1/status, temp_max_c is the median of the last 7 sysfs sweeps (14 s); temp_max_raw_c is the instantaneous value the gate used. /v1/thermal is always raw."
+      "description": "In /v1/status, temp_max_c is the median of the last 5 sysfs sweeps (25 s); temp_max_raw_c is the instantaneous value the gate used. /v1/thermal is always raw."
      },
      "temp_max_raw_c": {
       "type": "number",
-      "description": "In /v1/status, temp_max_c is the median of the last 7 sysfs sweeps (14 s); temp_max_raw_c is the instantaneous value the gate used. /v1/thermal is always raw."
+      "description": "In /v1/status, temp_max_c is the median of the last 5 sysfs sweeps (25 s); temp_max_raw_c is the instantaneous value the gate used. /v1/thermal is always raw."
      },
      "safe": {
       "type": "boolean",
@@ -145,7 +145,7 @@
    },
    "ThermalHistory": {
     "type": "object",
-    "description": "Minute/hour/day temperature history, sourced from the same 14 s display median /v1/status serves as temp_max_c -- never the raw safety-gate reading. Every bucket is the sample-weighted mean of the 1-minute samples that fell inside it in device-local time: hour = sum(c)/n over that hour's samples, day = sum(c)/n over that day's samples (never a mean of the hour means, so a partial hour after a restart does not get a full hour's weight). Retention: 24h of minute samples, 7d of hour buckets, 40d of day buckets.",
+    "description": "Minute/hour/day temperature history, sourced from the same 25 s display median /v1/status serves as temp_max_c -- never the raw safety-gate reading. Every bucket is the sample-weighted mean of the 1-minute samples that fell inside it in device-local time: hour = sum(c)/n over that hour's samples, day = sum(c)/n over that day's samples (never a mean of the hour means, so a partial hour after a restart does not get a full hour's weight). Retention: 24h of minute samples, 7d of hour buckets, 40d of day buckets.",
     "required": [
      "method",
      "minutes",

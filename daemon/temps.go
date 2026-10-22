@@ -11,7 +11,7 @@ import (
 )
 
 // Temperature history: minute samples of the DISPLAY-path reader
-// (thermalSmoother.median — the same 14 s median /v1/status serves as
+// (thermalSmoother.median — the same 25 s median /v1/status serves as
 // temp_max_c), folded into hour/day averages for the dashboard's history
 // chart. Mirrors usage.go's persisted-bucket pattern (atomic JSON write,
 // per-period buckets keyed by local time) but for temperature instead of
@@ -25,7 +25,7 @@ import (
 // mean of the 1-minute samples that fell inside it in device-local time:
 // hour = sum(c)/n over that hour's samples, day = sum(c)/n over that day's
 // samples — never a mean of the hour means, so a partial hour after a
-// restart doesn't get a full hour's weight. Each minute sample is the 14 s
+// restart doesn't get a full hour's weight. Each minute sample is the 25 s
 // display median (thermalSmoother.median, the same number /v1/status serves
 // as temp_max_c) rounded to 0.1 C; the raw gate reader is never involved. N
 // counts real samples, so a gap while the daemon was down is simply absent,
@@ -35,7 +35,7 @@ import (
 // (usage.go's horizon, so the JSON file doesn't grow unbounded). Persisted
 // every 5 minutes, plus Flush() before an API-triggered device reboot; a
 // crash between persists loses at most that much.
-const tempHistoryMethod = "Every bucket is the sample-weighted mean of the 1-minute samples that fell inside it in device-local time: hour = sum(c)/n over that hour's samples, day = sum(c)/n over that day's samples (never a mean of the hour means, so a partial hour after a restart does not get a full hour's weight). Each minute sample is the 14 s display median (thermalSmoother.median, the same number /v1/status serves as temp_max_c) rounded to 0.1 C; the raw gate reader is never involved. N counts real samples, so a gap while the daemon was down is simply absent."
+const tempHistoryMethod = "Every bucket is the sample-weighted mean of the 1-minute samples that fell inside it in device-local time: hour = sum(c)/n over that hour's samples, day = sum(c)/n over that day's samples (never a mean of the hour means, so a partial hour after a restart does not get a full hour's weight). Each minute sample is the 25 s display median (thermalSmoother.median, the same number /v1/status serves as temp_max_c) rounded to 0.1 C; the raw gate reader is never involved. N counts real samples, so a gap while the daemon was down is simply absent."
 
 const (
 	tempSampleEvery  = time.Minute

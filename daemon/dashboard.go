@@ -776,7 +776,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <div class="sgrow"><span>Average</span><b class="num" id="thAvg">—</b></div>
         <div class="sgrow"><span>Latest</span><b class="num" id="thLast">—</b></div>
       </div>
-      <div class="setmsg" id="thMsg">One sample a minute (the 14 s display median). Hour and day points are means of those samples.</div>
+      <div class="setmsg" id="thMsg">One sample a minute (the 25 s display median). Hour and day points are means of those samples.</div>
     </div>
     <div class="card">
       <div class="state-row"><span class="k">Thermal policy</span><span class="v"><span class="dot amber" id="policyDot"></span><span id="policyState">—</span></span></div>
@@ -926,7 +926,7 @@ const dashboardHTML = `<!DOCTYPE html>
           </select></div>
         </div>
         <button class="setbtn" id="cpuModeBtn">Apply CPU mode</button>
-        <div class="setmsg" id="cpuModeMsg">auto: performance with clients, eco idle; hot always reduces. Persists across reboots.</div>
+        <div class="setmsg" id="cpuModeMsg">auto: performance the whole time the hotspot is up, eco when it's off; hot always reduces. Persists across reboots.</div>
       </div>
       <div class="card">
         <div class="stat-head"><h2>Danger</h2></div>
@@ -935,7 +935,7 @@ const dashboardHTML = `<!DOCTYPE html>
           <button class="setbtn sec" id="rebootBtn" style="min-height:44px">Reboot device</button>
           <button class="setbtn sec" id="usageResetBtn" style="min-height:44px;grid-column:1/-1">Reset data usage</button>
         </div>
-        <div class="setmsg" id="dangerMsg">Cooldown parks the prime core + caps the mid cluster. Reboot restarts the whole phone; the module comes back by itself.</div>
+        <div class="setmsg" id="dangerMsg">Cooldown parks the prime core + caps the mid cluster for 5 minutes. Reboot restarts the whole phone; the module comes back by itself.</div>
       </div>
     </div>
     <div class="sec-label">Integrations</div>
@@ -1750,9 +1750,10 @@ const dashboardHTML = `<!DOCTYPE html>
   }
 
   // --- Bench mode (battery-less donor only). Hidden behind admin unlock.
-  var bmMsg=document.getElementById("bmMsg");
+  var bmMsg=document.getElementById("bmMsg"), benchNow=null;
   function renderBench(b){
     if(!b)return;
+    benchNow=b;
     document.getElementById("bmState").textContent=b.enabled?(b.tripped?"tripped":"on"):"off";
     document.getElementById("bmDot").className="dot "+(b.enabled&&!b.tripped?"red":(b.enabled?"amber":"off"));
     document.getElementById("bmZones").textContent=b.enabled?(b.zones_disabled||0)+"/95":"—";
@@ -1780,7 +1781,12 @@ const dashboardHTML = `<!DOCTYPE html>
     cpuModeMsg.textContent="applying…";
     post("/v1/cpu/mode",{mode:mode},rt).then(function(res){
       if(!res.ok){cpuModeMsg.textContent="Error: "+(res.j.error||"failed");return;}
-      cpuModeMsg.textContent="CPU mode: "+res.j.mode+" (persisted).";
+      // The gate can hold the enforced mode below the requested one (hot ->
+      // eco, or a manual cooldown hold): say so instead of "performance"
+      // over eco-running cores.
+      cpuModeMsg.textContent=(res.j.effective&&res.j.effective!==res.j.mode)
+        ?"Saved "+res.j.mode+"; running "+res.j.effective+" — "+(res.j.reason||"override")+"."
+        :"CPU mode: "+res.j.mode+" (persisted).";
     }).catch(function(e){cpuModeMsg.textContent="Error: "+e.message;});
   });
 
@@ -1911,7 +1917,11 @@ const dashboardHTML = `<!DOCTYPE html>
     setMsg.textContent="applying…";
     post("/v1/thermal/limits",body,rt).then(function(res){
       if(!res.ok){setMsg.textContent="Error: "+(res.j.error||"failed");return;}
-      setMsg.textContent="Applied: warn "+res.j.warn_c+"° · gate "+res.j.gate_c+"°"+(res.j.clamped?" (clamped, max "+res.j.gate_ceiling+")":"");
+      var m="Applied: warn "+res.j.warn_c+"° · gate "+res.j.gate_c+"°"+(res.j.clamped?" (clamped, max "+res.j.gate_ceiling+")":"");
+      // While bench is up the live gate is benchTripC, not the stored one —
+      // the values above take over only when bench drops.
+      if(benchNow&&benchNow.enabled&&!benchNow.tripped)m+=". Bench is holding the live gate at "+benchNow.trip_c+"°C until it drops.";
+      setMsg.textContent=m;
     }).catch(function(e){setMsg.textContent="Error: "+e.message;});
   });
   var wlMsg=document.getElementById("wlMsg");
