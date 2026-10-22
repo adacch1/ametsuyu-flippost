@@ -20,7 +20,7 @@ python3 -m json.tool "$ROOT/schemas/api.openapi.json" >/dev/null 2>&1 && pass "a
 python3 -m json.tool "$ROOT/schemas/config.schema.json" >/dev/null 2>&1 && pass "config.schema.json parses" || fail "config.schema.json parses" "invalid JSON"
 
 # --- required safety-policy tokens present in docs/schemas (plan acceptance grep) ---
-for tok in 'unsafe thermal' 'owner-only' 'ephemeral' 'loopback'; do
+for tok in 'unsafe thermal' 'owner-only' 'loopback' 'app_only'; do
   if grep -rqF -- "$tok" "$ROOT/docs" "$ROOT/schemas"; then pass "policy token present: $tok"; else fail "policy token present: $tok" "absent"; fi
 done
 
@@ -36,6 +36,12 @@ evid="$TMP/task2.txt"
 python3 "$V" --schemas "$ROOT/schemas" --docs "$ROOT/docs" --out "$evid" >/dev/null 2>"$TMP/h.err"; rc=$?
 [ "$rc" -eq 0 ] && pass "validate: exit 0" || fail "validate: exit 0" "rc=$rc :: $(cat "$TMP/h.err")"
 [ -e "$evid" ] && grep -q 'CONTRACTS_OK=1' "$evid" && pass "validate: CONTRACTS_OK=1 in evidence" || fail "validate: CONTRACTS_OK=1 in evidence" "$( [ -e "$evid" ] && cat "$evid" || echo no-file)"
+
+# --- negative: stripping app_only fails the validator ---
+mkdir -p "$TMP/neg"; cp -R "$ROOT/schemas" "$ROOT/docs" "$TMP/neg/"
+grep -rl app_only "$TMP/neg" | while read -r f; do sed -i.bak 's/app_only//g' "$f"; rm -f "$f.bak"; done
+out="$(python3 "$V" --schemas "$TMP/neg/schemas" --docs "$TMP/neg/docs" --out "$TMP/neg.txt" 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && echo "$out$(cat "$TMP/neg.txt" 2>/dev/null)" | grep -q 'policy_present:app_only=0' && pass "missing app_only: nonzero + policy_present:app_only=0" || fail "missing app_only: nonzero + policy_present:app_only=0" "rc=$rc :: $out"
 
 # --- good config accepted ---
 python3 "$V" --check-config "$HERE/fixtures/config-good.json" --schemas "$ROOT/schemas" >/dev/null 2>"$TMP/g.err"; rc=$?

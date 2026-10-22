@@ -19,7 +19,7 @@ import sys
 
 # Safety-policy tokens that MUST appear in docs/schemas, and unsafe
 # recommendations that must NOT. Mirrors the plan's Todo 2 acceptance greps.
-REQUIRED_TOKENS = ["unsafe thermal", "owner-only", "ephemeral", "loopback"]
+REQUIRED_TOKENS = ["unsafe thermal", "owner-only", "loopback", "app_only"]
 FORBIDDEN = re.compile(r"thermal bypass|kill thermal|0\.0\.0\.0|SMS forwarding by default")
 
 
