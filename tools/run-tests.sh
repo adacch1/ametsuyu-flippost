@@ -97,6 +97,17 @@ failures=0
     echo "SKIP discord relay (node absent)"
   fi
 
+  echo "=== NTFY RUNNER ==="
+  if command -v node >/dev/null 2>&1; then
+    if node --test "$ROOT"/tests/ntfy/ >/dev/null 2>&1; then
+      echo "PASS ntfy runner"; passes=$((passes + 1))
+    else
+      echo "FAIL ntfy runner"; failures=$((failures + 1))
+    fi
+  else
+    echo "SKIP ntfy runner (node absent)"
+  fi
+
   echo "=== CONTRACTS ==="
   if python3 "$ROOT/tools/validate-contracts.py" --schemas "$ROOT/schemas" --docs "$ROOT/docs" >/dev/null 2>&1; then
     echo "PASS validate-contracts"; passes=$((passes + 1))
