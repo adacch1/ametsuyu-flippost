@@ -5,17 +5,20 @@
     android:layout_height="match_parent"
     android:clipToOutline="true"
     android:orientation="vertical"
-    android:padding="12dp"
+    android:paddingHorizontal="10dp"
+    android:paddingVertical="8dp"
     android:background="@drawable/widget_bg">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginBottom="-8dp"
+        android:layout_marginTop="-8dp"
         android:gravity="center_vertical"
         android:orientation="horizontal">
         <ImageView
-            android:layout_width="34dp"
-            android:layout_height="34dp"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
             android:background="@drawable/widget_avatar_clip"
             android:clipToOutline="true"
             android:contentDescription="@null"
@@ -25,7 +28,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginStart="10dp"
+            android:layout_marginStart="8dp"
             android:orientation="vertical">
             <TextView
                 android:layout_width="wrap_content"
@@ -33,7 +36,8 @@
                 android:fontFamily="@font/nunito_family"
                 android:text="Hotspot"
                 android:textColor="#FEF7EE"
-                android:textSize="15sp"
+                android:includeFontPadding="false"
+                android:textSize="14sp"
                 android:textStyle="bold" />
             <TextView
                 android:id="@+id/widget_devices"
@@ -41,7 +45,8 @@
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/nunito_family"
                 android:textColor="#9EB1CB"
-                android:textSize="11.5sp" />
+                android:includeFontPadding="false"
+                android:textSize="11sp" />
         </LinearLayout>
         <ImageView
             android:id="@+id/widget_switch"
@@ -69,9 +74,10 @@
                 android:layout_height="wrap_content"
                 android:background="@drawable/widget_chip"
                 android:fontFamily="@font/nunito_family"
-                android:paddingHorizontal="9dp"
-                android:paddingVertical="3dp"
-                android:textSize="11.5sp"
+                android:includeFontPadding="false"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="2dp"
+                android:textSize="11sp"
                 android:textStyle="bold"
                 android:textColor="#FEF7EE" />
             <TextView
@@ -81,9 +87,10 @@
                 android:layout_marginStart="6dp"
                 android:background="@drawable/widget_chip"
                 android:fontFamily="@font/nunito_family"
-                android:paddingHorizontal="9dp"
-                android:paddingVertical="3dp"
-                android:textSize="11.5sp"
+                android:includeFontPadding="false"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="2dp"
+                android:textSize="11sp"
                 android:textStyle="bold"
                 android:drawablePadding="5dp"
                 android:drawableStart="@drawable/widget_dot_ok"
@@ -92,7 +99,7 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="2dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
             <TextView
@@ -103,7 +110,8 @@
                 android:letterSpacing="0.08"
                 android:text="DATA"
                 android:textColor="#9EB1CB"
-                android:textSize="10.5sp"
+                android:includeFontPadding="false"
+                android:textSize="11sp"
                 android:textStyle="bold" />
             <TextView
                 android:id="@+id/widget_data"
@@ -111,15 +119,16 @@
                 android:layout_height="wrap_content"
                 android:fontFamily="@font/nunito_family"
                 android:gravity="end"
+                android:includeFontPadding="false"
                 android:textColor="#9EB1CB"
-                android:textSize="13sp" />
+                android:textSize="12sp" />
         </LinearLayout>
         <ProgressBar
             android:id="@+id/widget_bar"
             style="?android:attr/progressBarStyleHorizontal"
             android:layout_width="match_parent"
-            android:layout_height="9dp"
-            android:layout_marginTop="5dp"
+            android:layout_height="8dp"
+            android:layout_marginTop="2dp"
             android:background="@drawable/widget_bar_track"
             android:clipToOutline="true"
             android:max="100"
@@ -140,15 +149,16 @@
     <Button
         android:id="@+id/widget_rotate"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_height="30dp"
+        android:layout_marginTop="4dp"
         android:background="@drawable/widget_pill"
         android:fontFamily="@font/nunito_family"
         android:gravity="center"
         android:minHeight="0dp"
         android:minWidth="0dp"
         android:paddingHorizontal="12dp"
-        android:paddingVertical="8dp"
+        android:paddingVertical="0dp"
+        android:includeFontPadding="false"
         android:stateListAnimator="@null"
         android:text="Rotate IP"
         android:textAllCaps="false"
