@@ -50,16 +50,20 @@ if [ "$i" -ge 5 ]; then
   exit 1
 fi
 
-# Launch the kiosk on the COVER display (id 1). Pinning the display matters once
-# the inner panel is gone/dead: without it the activity can land on display 0
-# (inner) instead of the cover. exported=true, so a root am can start it.
+# Launch the kiosk on the COVER display. Pinning the display matters once the
+# inner panel is gone/dead: without it the activity can land on the inner
+# screen. The cover's id differs by ROM (1 on stock, 0 on OnigiriDeX, which
+# makes the cover primary), so find it by its 748x720 panel size and fall back
+# to 1. exported=true, so a root am can start it.
 # Pass radio-control only when present (extra omitted otherwise).
+COVER=$(dumpsys display 2>/dev/null | grep -oE "displayId [0-9]+, [^}]*real 748 x 720" | grep -oE "^displayId [0-9]+" | head -1 | cut -d' ' -f2)
+COVER=${COVER:-1}
 if [ -n "$RC" ]; then
-  am start --user 0 --display 1 -n "$PKG/$ACT" -e token "$RS" -e rtoken "$RC" >/dev/null 2>&1 \
+  am start --user 0 --display "$COVER" -n "$PKG/$ACT" -e token "$RS" -e rtoken "$RC" >/dev/null 2>&1 \
     && echo "dashboard opened (kiosk, read-status + radio-control, cover, 127.0.0.1:${PORT})" \
     || echo "am start failed — is the kiosk APK (dist/zflip5-kiosk.apk) installed?"
 else
-  am start --user 0 --display 1 -n "$PKG/$ACT" -e token "$RS" >/dev/null 2>&1 \
+  am start --user 0 --display "$COVER" -n "$PKG/$ACT" -e token "$RS" >/dev/null 2>&1 \
     && echo "dashboard opened (kiosk, read-status scope, cover, 127.0.0.1:${PORT})" \
     || echo "am start failed — is the kiosk APK (dist/zflip5-kiosk.apk) installed?"
 fi

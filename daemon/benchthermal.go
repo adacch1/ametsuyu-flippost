@@ -98,9 +98,14 @@ func (b *BenchThermalController) Status() BenchThermalStatus {
 
 // allowThermalWrites injects the scoped SELinux allow live, so the bypass works
 // immediately without a reboot. magisk/sepolicy.rule carries the same rule for
-// next boot. Best-effort: on failure the zone writes fail and the trip stays
-// as the backstop.
+// next boot. The daemon's domain depends on the root manager: KernelSU runs it
+// as u:r:ksu:s0 (patched with ksud), Magisk as u:r:magisk:s0 (magiskpolicy).
+// Best-effort: on failure the zone writes fail and the trip stays as the
+// backstop.
 func allowThermalWrites() {
+	if exec.Command("ksud", "sepolicy", "patch", "allow ksu sysfs_thermal file write").Run() == nil {
+		return
+	}
 	_ = exec.Command("magiskpolicy", "--live", "allow magisk sysfs_thermal file write").Run()
 }
 

@@ -5,6 +5,10 @@
 #   root shell, u:r:magisk:s0: "can't create .../mode: Permission denied"
 #   target label: u:object_r:sysfs_thermal:s0 (/sys/class/thermal/thermal_zone*/mode
 #   and cooling_device*/cur_state). Reads are already permitted; only write was
-#   denied. The daemon also injects this rule live via `magiskpolicy --live`
-#   so bench mode works without a reboot; this file carries it across reboots.
-allow magisk sysfs_thermal file write
+#   denied. The daemon also injects this rule live (ksud sepolicy patch, or
+#   magiskpolicy --live) so bench mode works without a reboot; this file
+#   carries it across reboots.
+#
+# The device runs KernelSU, whose root domain is ksu. Under Magisk, change the
+# domain to magisk.
+allow ksu sysfs_thermal file write
