@@ -17,7 +17,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.zflip5.modem.ui.theme.FlippostColors
 
 @Composable
@@ -28,6 +30,7 @@ fun PillButton(
     enabled: Boolean = true,
     primary: Boolean = false,
     destructive: Boolean = false,
+    compact: Boolean = false,
 ) {
     val shape = RoundedCornerShape(22.dp)
     val face = when {
@@ -42,9 +45,13 @@ fun PillButton(
     }
     Box(
         modifier.alpha(if (enabled) 1f else 0.4f).heightIn(min = 48.dp).widthIn(min = 48.dp).then(face)
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick).padding(horizontal = 16.dp),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick).padding(horizontal = if (compact) 8.dp else 16.dp, vertical = if (compact) 8.dp else 0.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = textColor, style = MaterialTheme.typography.titleMedium)
+        val style = MaterialTheme.typography.titleMedium
+        Text(
+            text, color = textColor, style = if (compact) style.copy(fontSize = 12.5.sp) else style,
+            textAlign = TextAlign.Center, maxLines = 1, softWrap = false,
+        )
     }
 }

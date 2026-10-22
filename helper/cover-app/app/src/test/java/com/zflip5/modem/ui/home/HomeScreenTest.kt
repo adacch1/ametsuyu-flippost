@@ -3,6 +3,10 @@ package com.zflip5.modem.ui.home
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
@@ -133,5 +137,37 @@ class HomeScreenTest {
         rule.onNodeWithText("Rotate IP?").assertExists()
         rule.assertNoTargetInCutout()
         rule.assertTargetsAtLeast48dp()
+    }
+
+    @Test fun switchSitsInsideHotspotCard() {
+        show()
+        val card = rule.onNodeWithTag("hotspot_card").fetchSemanticsNode().boundsInRoot
+        val sw = rule.onNodeWithTag("hotspot_switch").fetchSemanticsNode().boundsInRoot
+        assertTrue("switch $sw outside card $card", sw.left >= card.left && sw.right <= card.right && sw.top >= card.top && sw.bottom <= card.bottom)
+        assertEquals("switch is vertically centred", card.center.y, sw.center.y, 1f)
+    }
+
+    @Test fun pillsAreBalancedAndSingleLine() {
+        show()
+        val rotate = rule.onNodeWithText("Rotate IP").fetchSemanticsNode()
+        val more = rule.onNodeWithText("More").fetchSemanticsNode()
+        for (n in listOf(rotate, more)) {
+            val results = mutableListOf<TextLayoutResult>()
+            n.config.getOrNull(SemanticsActions.GetTextLayoutResult)!!.action!!(results)
+            assertEquals(1, results.single().lineCount)
+        }
+        val d = rotate.layoutInfo.density.density
+        assertEquals(rotate.boundsInRoot.width, more.boundsInRoot.width, d)
+        assertEquals(rotate.boundsInRoot.height, more.boundsInRoot.height, d)
+    }
+
+    @Test @Config(qualifiers = "w1200dp-h700dp-land-xhdpi")
+    fun wideWindowKeepsDesignedWidthCentred() {
+        show()
+        val root = rule.onRoot().fetchSemanticsNode()
+        val d = root.layoutInfo.density.density
+        val c = rule.onNodeWithTag("home_content").fetchSemanticsNode().boundsInRoot
+        assertTrue("content ${c.width} px is wider than 352 dp", c.width <= 352 * d + 1)
+        assertEquals(root.size.width / 2f, c.center.x, 2 * d)
     }
 }
