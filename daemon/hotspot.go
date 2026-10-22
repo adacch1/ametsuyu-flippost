@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -73,6 +74,43 @@ type HotspotStatus struct {
 	// suppressed until this deadline.
 	OverrideUntil string `json:"override_until,omitempty"` // RFC3339
 	OverrideLeftS int    `json:"override_left_s,omitempty"`
+	DualBand      bool   `json:"dual_band"` // persisted dual-band setting (not the live bridged AP, see Dual)
+	Wifi6         *bool  `json:"wifi6"`     // nil when the start path is unknown
+}
+
+// APConfig is the saved SoftAP config. Band is "2", "5" or "6"; any other
+// helper value stays raw.
+type APConfig struct{ SSID, Band, Security string }
+
+// parseAPConfig reads the helper line "CFG ssid=<ssid> band=<n> sec=<n>". The
+// SSID may contain spaces, so it runs up to the last " band=".
+func parseAPConfig(out string) (APConfig, bool) {
+	for _, ln := range strings.Split(out, "\n") {
+		ln = strings.TrimSpace(ln)
+		rest, ok := strings.CutPrefix(ln, "CFG ssid=")
+		if !ok {
+			continue
+		}
+		i := strings.LastIndex(rest, " band=")
+		if i < 0 {
+			continue
+		}
+		ssid := strings.Trim(rest[:i], `"`)
+		band, sec, ok := strings.Cut(rest[i+len(" band="):], " sec=")
+		if !ok {
+			continue
+		}
+		switch band {
+		case "1":
+			band = "2"
+		case "2":
+			band = "5"
+		case "4":
+			band = "6"
+		}
+		return APConfig{ssid, band, strings.TrimSpace(sec)}, true
+	}
+	return APConfig{}, false
 }
 
 // ScanAP is one scanned network (dedup'd by SSID, strongest RSSI kept).
@@ -98,6 +136,9 @@ type HotspotController struct {
 	status        HotspotStatus
 	overrideUntil time.Time // zero when no forced-on override is active
 	lastScanOK    time.Time // last successful auto-loop scan; zero = none yet
+	dualBand      atomic.Bool
+	ap            APConfig // cached SoftAP config; valid only when apOK
+	apOK          bool
 
 	// Seams: tests swap these for stubs; NewHotspotController wires the real
 	// probes/actuators (same pattern as UsageTracker.now/readB in usage.go).
@@ -108,6 +149,8 @@ type HotspotController struct {
 	apUp  func() bool
 	start func() bool
 	stop  func() bool
+
+	readAP func() (APConfig, bool)
 }
 
 func NewHotspotController(whitelist []string) *HotspotController {
@@ -120,6 +163,9 @@ func NewHotspotController(whitelist []string) *HotspotController {
 		apUp:      hotspotActive,
 		start:     startHotspot,
 		stop:      stopHotspot,
+		readAP: func() (APConfig, bool) {
+			return parseAPConfig(helperRun("com.zflip5.tether.SetSoftApConfig", "get"))
+		},
 	}
 	h.loadOverride()
 	return h
@@ -194,21 +240,39 @@ func (h *HotspotController) SetOverride(d time.Duration) HotspotStatus {
 	return h.Status()
 }
 
-// SetBand switches the saved hotspot band ("dual" or "5"), keeping the SSID
-// and passphrase, and bounces a live AP so it takes effect (clients drop a few
-// seconds). Going dual pauses the whitelist loop (see bridgedAPUp).
+// SetBand writes the saved hotspot band ("dual" or "5") and keeps the SSID and
+// passphrase. It does not bounce a live AP; the caller restarts it.
 func (h *HotspotController) SetBand(band string) (HotspotStatus, error) {
 	out := helperRun("com.zflip5.tether.SetSoftApConfig", "band", band)
 	if !strings.Contains(out, "RESULT=OK") {
 		return h.Status(), fmt.Errorf("set band: %s", helperResultLine(out))
 	}
-	if h.apUp() {
-		h.stop()
-		time.Sleep(1500 * time.Millisecond) // let the teardown land before restart
-		h.start()
-	}
 	log.Printf("hotspot: band set to %s", band)
 	return h.Status(), nil
+}
+
+func (h *HotspotController) SetDualBand(on bool) { h.dualBand.Store(on) }
+func (h *HotspotController) DualBand() bool      { return h.dualBand.Load() }
+
+// APConfig returns the cached SoftAP config; ok is false until RefreshAPConfig
+// has read one.
+func (h *HotspotController) APConfig() (APConfig, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.ap, h.apOK
+}
+
+// RefreshAPConfig re-reads the SoftAP config through the helper (a slow root
+// call, so callers refresh on change, not per request). A failed read keeps
+// the previous cache.
+func (h *HotspotController) RefreshAPConfig() {
+	ap, ok := h.readAP()
+	if !ok {
+		return
+	}
+	h.mu.Lock()
+	h.ap, h.apOK = ap, true
+	h.mu.Unlock()
 }
 
 // OverrideLeft reports time remaining on a forced-on override, 0 when none is
@@ -253,6 +317,8 @@ func (h *HotspotController) Status() HotspotStatus {
 	st.Active = h.apUp()
 	st.Dual = st.Active && h.dual()
 	st.Auto = len(h.whitelist) > 0
+	st.DualBand = h.dualBand.Load()
+	st.Wifi6 = wifi6FromVia(readHotspotVia())
 	st.Whitelist = append([]string{}, h.whitelist...)
 	if !st.Auto { // feature off: drop stale scan facts, keep only the last action
 		st.Paused, st.PausedDetail, st.Matched, st.APCount, st.LastScan = "", "", nil, 0, ""

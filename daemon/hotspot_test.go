@@ -470,3 +470,50 @@ func TestWifi6FromVia(t *testing.T) {
 		t.Fatal("mapping")
 	}
 }
+
+func TestParseAPConfig(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want APConfig
+		ok   bool
+	}{
+		{"CFG ssid=\"Flippost\" band=2 sec=1\n", APConfig{"Flippost", "5", "1"}, true},
+		{"CFG ssid=My Net band=1 sec=0", APConfig{"My Net", "2", "0"}, true},
+		{"CFG ssid=X band=4 sec=3", APConfig{"X", "6", "3"}, true},
+		{"CFG ssid=X band=3 sec=1", APConfig{"X", "3", "1"}, true},
+		{"RESULT=FAILED reason=no_wifi_manager", APConfig{}, false},
+	} {
+		if got, ok := parseAPConfig(tc.in); ok != tc.ok || got != tc.want {
+			t.Errorf("%q: got %+v %v", tc.in, got, ok)
+		}
+	}
+}
+
+func TestStatusReportsDualBandAndWifi6(t *testing.T) {
+	h, _ := newTestHC(t, nil)
+	old := hotspotViaPath
+	hotspotViaPath = filepath.Join(t.TempDir(), "via")
+	t.Cleanup(func() { hotspotViaPath = old })
+	if st := h.Status(); st.DualBand || st.Wifi6 != nil {
+		t.Fatalf("%+v", st)
+	}
+	h.SetDualBand(true)
+	os.WriteFile(hotspotViaPath, []byte("tm\n"), 0o600)
+	if st := h.Status(); !st.DualBand || st.Wifi6 == nil || *st.Wifi6 {
+		t.Fatalf("%+v", st)
+	}
+}
+
+func TestRefreshAPConfigCaches(t *testing.T) {
+	h, _ := newTestHC(t, nil)
+	n := 0
+	h.readAP = func() (APConfig, bool) { n++; return APConfig{"Flippost", "5", "1"}, true }
+	h.RefreshAPConfig()
+	if ap, ok := h.APConfig(); !ok || ap.SSID != "Flippost" || n != 1 {
+		t.Fatal("not cached")
+	}
+	h.APConfig()
+	if n != 1 {
+		t.Fatal("APConfig re-read")
+	}
+}
