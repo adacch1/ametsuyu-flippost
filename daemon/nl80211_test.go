@@ -17,8 +17,8 @@ func TestParseStationsFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Station{
-		{MAC: "aa:bb:cc:dd:ee:ff", RXBytes: 5_000_000_000, TXBytes: 9_000_000_000, SignalDBm: -48, InactiveMs: 120},
-		{MAC: "11:22:33:44:55:66", RXBytes: 1000, TXBytes: 2000, SignalDBm: -71},
+		{MAC: "aa:bb:cc:dd:ee:ff", RXBytes: 5_000_000_000, TXBytes: 9_000_000_000, InactiveMs: 120},
+		{MAC: "11:22:33:44:55:66", RXBytes: 1000, TXBytes: 2000},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v", got)

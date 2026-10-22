@@ -12,7 +12,6 @@ type Station struct {
 	MAC        string
 	RXBytes    uint64
 	TXBytes    uint64
-	SignalDBm  int
 	InactiveMs uint32
 }
 
@@ -34,7 +33,6 @@ const (
 	staInfoInactive = 1
 	staInfoRX       = 2
 	staInfoTX       = 3
-	staInfoSignal   = 7
 	staInfoRX64     = 23
 	staInfoTX64     = 24
 
@@ -123,8 +121,6 @@ func parseStation(attrs []byte) (Station, bool, error) {
 					rx32 = uint64(binary.LittleEndian.Uint32(x))
 				case t == staInfoTX && len(x) >= 4:
 					tx32 = uint64(binary.LittleEndian.Uint32(x))
-				case t == staInfoSignal && len(x) >= 1:
-					s.SignalDBm = int(int8(x[0]))
 				case t == staInfoRX64 && len(x) >= 8:
 					rx64, have64rx = binary.LittleEndian.Uint64(x), true
 				case t == staInfoTX64 && len(x) >= 8:

@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,7 +41,6 @@ type ClientSpeed struct {
 	IPv4       *string `json:"ipv4"`
 	DownBytesS uint64  `json:"down_bytes_s"`
 	UpBytesS   uint64  `json:"up_bytes_s"`
-	SignalDBm  *int    `json:"signal_dbm"`
 }
 
 type SpeedSnap struct {
@@ -165,14 +165,18 @@ func (sp *speedSampler) tick(apIfaces []string, clients []Client) {
 			if v := ip[m]; v != "" {
 				cs.IPv4 = &v
 			}
-			if s.SignalDBm != 0 {
-				sig := s.SignalDBm
-				cs.SignalDBm = &sig
-			}
 			sumDown += cs.DownBytesS
 			sumUp += cs.UpBytesS
 			list = append(list, cs)
 		}
+		// Stable order: fastest first, then MAC (map iteration is random).
+		sort.Slice(list, func(i, j int) bool {
+			ri, rj := list[i].DownBytesS+list[i].UpBytesS, list[j].DownBytesS+list[j].UpBytesS
+			if ri != rj {
+				return ri > rj
+			}
+			return list[i].MAC < list[j].MAC
+		})
 		if len(stas) > 0 && !changed && wanDelta > 0 {
 			sp.still++
 		} else {

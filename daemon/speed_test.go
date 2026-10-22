@@ -28,13 +28,13 @@ var reach = []Client{{MAC: "aa:bb:cc:dd:ee:ff", IPv4: "192.168.1.23", State: "RE
 
 func TestSpeedPerClientAndPhone(t *testing.T) {
 	sp, now := newTestSampler([]string{dev(1_000_000, 100_000), dev(3_500_000, 400_000)},
-		[][]Station{{{MAC: "aa:bb:cc:dd:ee:ff", SignalDBm: -48}}, {{MAC: "aa:bb:cc:dd:ee:ff", TXBytes: 2_488_000, RXBytes: 296_000, SignalDBm: -48}}})
+		[][]Station{{{MAC: "aa:bb:cc:dd:ee:ff"}}, {{MAC: "aa:bb:cc:dd:ee:ff", TXBytes: 2_488_000, RXBytes: 296_000}}})
 	sp.tick([]string{"swlan0"}, reach)
 	*now = now.Add(time.Second)
 	sp.tick([]string{"swlan0"}, reach)
 	s := sp.Snapshot()
 	pc, ok := s.PerClient.([]ClientSpeed)
-	if !ok || len(pc) != 1 || pc[0].DownBytesS != 2_488_000 || pc[0].UpBytesS != 296_000 || *pc[0].IPv4 != "192.168.1.23" || *pc[0].SignalDBm != -48 {
+	if !ok || len(pc) != 1 || pc[0].DownBytesS != 2_488_000 || pc[0].UpBytesS != 296_000 || *pc[0].IPv4 != "192.168.1.23" {
 		t.Fatalf("per_client %+v", s.PerClient)
 	}
 	if s.WanDownBytesS != 2_500_000 || s.WanUpBytesS != 300_000 || *s.PhoneDownBytesS != 12_000 || *s.PhoneUpBytesS != 4_000 || s.IntervalMs != 1000 {
@@ -117,5 +117,24 @@ func TestSpeedNoAPIfaces(t *testing.T) {
 	b, _ := json.Marshal(s)
 	if !strings.Contains(string(b), `"per_client":[]`) || *s.PhoneDownBytesS != 1000 {
 		t.Fatalf("%s", b)
+	}
+}
+
+func TestSpeedClientsSortedByRateThenMAC(t *testing.T) {
+	a, b, c := "aa:00:00:00:00:01", "aa:00:00:00:00:02", "aa:00:00:00:00:03"
+	sp, now := newTestSampler([]string{dev(0, 0), dev(1000, 0)}, [][]Station{
+		{{MAC: c}, {MAC: b}, {MAC: a}},
+		{{MAC: c, TXBytes: 500}, {MAC: b}, {MAC: a}},
+	})
+	sp.tick([]string{"swlan0"}, nil)
+	*now = now.Add(time.Second)
+	sp.tick([]string{"swlan0"}, nil)
+	pc := sp.Snapshot().PerClient.([]ClientSpeed)
+	if len(pc) != 3 || pc[0].MAC != c || pc[1].MAC != a || pc[2].MAC != b {
+		t.Fatalf("order %+v", pc)
+	}
+	j, _ := json.Marshal(pc)
+	if strings.Contains(string(j), "signal") {
+		t.Fatalf("signal key present: %s", j)
 	}
 }
