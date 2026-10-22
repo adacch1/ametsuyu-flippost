@@ -4,13 +4,13 @@
   "title": "zflip5-modem-module daemon config",
   "type": "object",
   "additionalProperties": false,
-  "required": ["bind_host", "bind_port", "tokens", "ingress", "thermal", "sms", "rate_limits"],
+  "required": ["bind_host", "bind_port", "tokens", "thermal", "rate_limits"],
   "$comment": "cpu, hotspot, and quota are written by the first-boot template and/or persisted by the daemon; they are optional so older configs still validate.",
   "properties": {
     "bind_host": {
       "type": "string",
       "default": "127.0.0.1",
-      "description": "api-front listen address. Loopback-only unless ingress.mode enables a private tunnel. The pattern rejects any all-interfaces / public bind.",
+      "description": "api-front listen address. Loopback-only. The pattern rejects any all-interfaces / public bind.",
       "pattern": "^(127\\.0\\.0\\.1|::1|localhost)$"
     },
     "bind_port": { "type": "integer", "minimum": 1024, "maximum": 65535, "default": 18080 },
@@ -21,31 +21,7 @@
       "required": ["read-status"],
       "properties": {
         "read-status": { "$ref": "#/$defs/token" },
-        "sms": { "$ref": "#/$defs/token" },
         "radio-control": { "$ref": "#/$defs/token" }
-      }
-    },
-    "ingress": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["mode"],
-      "properties": {
-        "mode": {
-          "type": "string",
-          "enum": ["loopback", "tailscale"],
-          "default": "loopback",
-          "description": "loopback = local only. tailscale = userspace tailscaled + tailscale serve for the iPhone path; a separate public relay (holding no sms token) handles Discord."
-        },
-        "relay": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Public Discord relay. MUST NOT be granted the sms scope.",
-          "properties": {
-            "enabled": { "type": "boolean", "default": false },
-            "owner_user_ids": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-            "ed25519_replay_window_s": { "type": "integer", "maximum": 5, "default": 5 }
-          }
-        }
       }
     },
     "thermal": {
@@ -72,8 +48,7 @@
       "additionalProperties": false,
       "description": "Cover-screen (Flex Window) kiosk page. Owner-set from the control panel; the kiosk has no settings screen of its own.",
       "properties": {
-        "accent": { "type": "string", "enum": ["dawn", "sunflower", "coral", "breeze", "ocean", "wisteria", "slate"], "default": "sunflower", "description": "Which named accent gradient the cover screen paints its buttons with." },
-        "dim": { "type": "integer", "minimum": 0, "maximum": 255, "default": 30, "description": "Cover-panel brightness while the kiosk owns the Flex Window. The panel is always on, so it runs dim to limit burn-in and current draw. 0 leaves the owner's brightness alone; omit the key for the default." }
+        "accent": { "type": "string", "enum": ["dawn", "sunflower", "coral", "breeze", "ocean", "wisteria", "slate"], "default": "sunflower", "description": "Which named accent gradient the cover screen paints its buttons with." }
       }
     },
     "hotspot": {
@@ -81,6 +56,7 @@
       "additionalProperties": false,
       "description": "Data-sharing Wi-Fi hotspot behavior.",
       "properties": {
+        "dual_band": { "type": "boolean", "default": false },
         "enable_on_boot": { "type": "boolean", "default": true, "description": "Bring the hotspot up at boot from the saved SoftAP config." },
         "ssid_whitelist": { "type": "array", "items": { "type": "string", "maxLength": 32 }, "maxItems": 16, "default": [], "description": "Auto-toggle: hotspot turns OFF when any listed SSID is scanned nearby, back ON when none is seen. Empty disables the feature." }
       }
@@ -96,25 +72,13 @@
         "reset_day": { "type": "integer", "minimum": 1, "maximum": 28, "default": 1, "description": "Day of month the period resets (monthly only). Capped at 28 so every month has that day." }
       }
     },
-    "sms": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["enabled", "redact_default", "forward"],
-      "properties": {
-        "enabled": { "type": "boolean", "default": true },
-        "redact_default": { "type": "boolean", "const": true, "description": "Bodies redacted by default; full body is a separate off-by-default endpoint with its own credential + per-request confirm." },
-        "forward": { "type": "boolean", "const": false, "description": "No default forwarding of messages to any channel." },
-        "path": { "type": "string", "enum": ["iphone-tailscale"], "default": "iphone-tailscale", "description": "SMS never traverses the Discord relay." }
-      }
-    },
     "rate_limits": {
       "type": "object",
       "additionalProperties": false,
       "required": ["default_per_min"],
       "properties": {
-        "default_per_min": { "type": "integer", "minimum": 1, "default": 120 },
-        "sms_per_min": { "type": "integer", "minimum": 1, "default": 3 },
-        "radio_per_min": { "type": "integer", "minimum": 1, "default": 6 }
+        "default_per_min": { "type": "integer", "minimum": 1, "default": 600 },
+        "radio_per_min": { "type": "integer", "minimum": 1, "default": 60 }
       }
     }
   },

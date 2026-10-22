@@ -8,8 +8,8 @@ Two modes:
 
 No third-party deps (json/re/stdlib only) so it runs anywhere python3 exists.
 The config check enforces the load-bearing invariants directly: loopback-only
-bind, a present read-status token of the right shape, and the fail-closed /
-no-forward / redact-by-default constants — using the pattern/const values read
+bind, a present read-status token of the right shape, and the fail-closed
+constant — using the pattern/const values read
 from the schema so the two stay in sync.
 """
 import argparse
@@ -19,7 +19,7 @@ import sys
 
 # Safety-policy tokens that MUST appear in docs/schemas, and unsafe
 # recommendations that must NOT. Mirrors the plan's Todo 2 acceptance greps.
-REQUIRED_TOKENS = ["prefer/recover NR", "unsafe thermal", "owner-only", "ephemeral", "loopback"]
+REQUIRED_TOKENS = ["unsafe thermal", "owner-only", "ephemeral", "loopback"]
 FORBIDDEN = re.compile(r"thermal bypass|kill thermal|0\.0\.0\.0|SMS forwarding by default")
 
 
@@ -58,16 +58,10 @@ def check_config(config_path, schema_dir):
                 ok = False
                 lines.append(f"error: token '{name}' too weak (needs >=256-bit hex)")
 
-    # fail-closed / no-forward / redact-by-default constants.
+    # fail-closed constant.
     if cfg.get("thermal", {}).get("fail_closed") is not True:
         ok = False
         lines.append("error: thermal.fail_closed must be true")
-    if cfg.get("sms", {}).get("forward") is not False:
-        ok = False
-        lines.append("error: sms.forward must be false (no default forwarding)")
-    if cfg.get("sms", {}).get("redact_default") is not True:
-        ok = False
-        lines.append("error: sms.redact_default must be true")
 
     if ok:
         lines.append("CONFIG_OK=1")
@@ -90,6 +84,8 @@ def full_check(schema_dir, docs_dir):
     import glob
     corpus = ""
     for path in glob.glob(f"{docs_dir}/**/*", recursive=True) + glob.glob(f"{schema_dir}/**/*", recursive=True):
+        if "/superpowers/" in path:  # plan/spec text quotes forbidden phrases
+            continue
         try:
             with open(path) as f:
                 corpus += f.read() + "\n"

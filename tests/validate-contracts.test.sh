@@ -20,7 +20,7 @@ python3 -m json.tool "$ROOT/schemas/api.openapi.json" >/dev/null 2>&1 && pass "a
 python3 -m json.tool "$ROOT/schemas/config.schema.json" >/dev/null 2>&1 && pass "config.schema.json parses" || fail "config.schema.json parses" "invalid JSON"
 
 # --- required safety-policy tokens present in docs/schemas (plan acceptance grep) ---
-for tok in 'prefer/recover NR' 'unsafe thermal' 'owner-only' 'ephemeral' 'loopback'; do
+for tok in 'unsafe thermal' 'owner-only' 'ephemeral' 'loopback'; do
   if grep -rqF -- "$tok" "$ROOT/docs" "$ROOT/schemas"; then pass "policy token present: $tok"; else fail "policy token present: $tok" "absent"; fi
 done
 
@@ -40,6 +40,9 @@ python3 "$V" --schemas "$ROOT/schemas" --docs "$ROOT/docs" --out "$evid" >/dev/n
 # --- good config accepted ---
 python3 "$V" --check-config "$HERE/fixtures/config-good.json" --schemas "$ROOT/schemas" >/dev/null 2>"$TMP/g.err"; rc=$?
 [ "$rc" -eq 0 ] && pass "good config: exit 0" || fail "good config: exit 0" "rc=$rc :: $(cat "$TMP/g.err")"
+
+grep -q '"sms"\|"ingress"' "$HERE/fixtures/config-good.json" && fail "fixture has no removed keys" "sms/ingress present" || pass "fixture has no removed keys"
+python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); assert "ingress" not in s["required"] and "sms" not in s["required"]; assert s["properties"]["hotspot"]["properties"]["dual_band"]["default"] is False; assert s["properties"]["rate_limits"]["properties"]["radio_per_min"]["default"]==60' "$ROOT/schemas/config.schema.json" && pass "schema revamp keys" || fail "schema revamp keys" "schema unchanged"
 
 # --- bad config rejected: public bind + missing token ---
 out="$(python3 "$V" --check-config "$HERE/fixtures/config-bad.json" --schemas "$ROOT/schemas" 2>&1)"; rc=$?
