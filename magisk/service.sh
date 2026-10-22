@@ -16,6 +16,8 @@ BIN="$MODDIR/daemon/zflip5-modemd"
 
 # Never block boot: wait for boot_completed in the background, then supervise.
 {
+  sh "$MODDIR/firewall.sh"
+
   # wait (bounded) for the framework to finish booting
   i=0
   while [ "$(getprop sys.boot_completed)" != "1" ] && [ "$i" -lt 120 ]; do

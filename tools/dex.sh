@@ -43,11 +43,6 @@ stop_dex() {
   # One space-free word that only the helper's command line carries.
   root 'pkill -f "[D]exInput"'
   adb shell cmd desktopmode off >/dev/null 2>&1
-  # ponytail: scrcpy deletes /data/local/tmp/scrcpy-server.jar on exit, which
-  # is also the on-phone ws-scrcpy stack's server. Put its copy back while that
-  # stack exists; drop these lines once it is removed.
-  root 'J=/data/data/com.termux/files/home/ws-scrcpy/vendor/Genymobile/scrcpy/scrcpy-server.jar' \
-    '[ -f $J ] && cp $J /data/local/tmp/scrcpy-server.jar && chown shell:shell /data/local/tmp/scrcpy-server.jar && chmod 0644 /data/local/tmp/scrcpy-server.jar'
 }
 
 ID=$(dex_display)
