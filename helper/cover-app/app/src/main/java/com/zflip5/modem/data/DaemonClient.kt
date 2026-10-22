@@ -12,6 +12,21 @@ open class DaemonClient(private val base: String = "http://127.0.0.1:18080") {
     open suspend fun get(path: String, timeoutMs: Int = 3_000): JSONObject = call("GET", path, null, timeoutMs)
     open suspend fun post(path: String, body: JSONObject? = null, timeoutMs: Int = 10_000): JSONObject = call("POST", path, body, timeoutMs)
 
+    /** Raw GET for non-JSON bodies such as the `/v1/qr` PNG. */
+    open suspend fun getBytes(path: String, timeoutMs: Int = 3_000): ByteArray = withContext(Dispatchers.IO) {
+        val c = URL(base + path).openConnection() as HttpURLConnection
+        try {
+            c.connectTimeout = timeoutMs
+            c.readTimeout = timeoutMs
+            if (c.responseCode !in 200..299) throw DaemonException(c.responseCode, "HTTP ${c.responseCode}", null)
+            c.inputStream.use { it.readBytes() }
+        } catch (e: ConnectException) {
+            throw DaemonDownException(e)
+        } finally {
+            c.disconnect()
+        }
+    }
+
     suspend fun summary(): Summary = SummaryParser.parse(get("/v1/summary", 3_000))
     suspend fun tailscale(): TailscaleStatus = SummaryParser.tailscale(get("/v1/tailscale", 3_000))
     suspend fun tailscaleLogin(): LoginResult = post("/v1/tailscale/login", null, 30_000).let {

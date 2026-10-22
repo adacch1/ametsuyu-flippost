@@ -1,6 +1,7 @@
 package com.zflip5.modem
 
 import com.zflip5.modem.data.DaemonClient
+import com.zflip5.modem.data.DaemonException
 import org.json.JSONObject
 
 fun fixture(name: String): JSONObject =
@@ -20,6 +21,14 @@ open class FakeDaemonClient : DaemonClient("http://fake") {
         gets += path
         failures[path]?.let { throw it }
         return getResponses[path] ?: JSONObject()
+    }
+
+    val getBytesResponses = mutableMapOf<String, ByteArray>()
+
+    override suspend fun getBytes(path: String, timeoutMs: Int): ByteArray {
+        gets += path
+        failures[path]?.let { throw it }
+        return getBytesResponses[path] ?: throw DaemonException(404, "no fake bytes", null)
     }
 
     override suspend fun post(path: String, body: JSONObject?, timeoutMs: Int): JSONObject {
