@@ -29,12 +29,6 @@ type Config struct {
 		DualBand      bool     `json:"dual_band"`      // bridged 2.4 GHz + 5 GHz AP
 	} `json:"hotspot"`
 	HotspotPresets HotspotPresets `json:"hotspot_presets"` // named SoftAP configs + Wi-Fi-triggered auto-switch
-	Cover          struct {
-		// Accent: which of the seven named accent gradients the cover screen
-		// paints its buttons with. Owner-picked from the control panel, because
-		// the kiosk itself has no room for a settings screen.
-		Accent string `json:"accent"`
-	} `json:"cover"`
 	// Quota: optional data-cap meter (limit + reset schedule). Zero value means
 	// "unconfigured" -> the dashboard shows a first-run prompt. See usage.go's
 	// Quota doc comment: meter only, never a gate.
@@ -117,29 +111,6 @@ func persistThermalBench(path string, enabled bool) error {
 		m["thermal"] = th
 	}
 	th["bench"] = enabled
-	out, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeConfigAtomic(path, out)
-}
-
-// persistCoverAccent rewrites only cover.accent, preserving every other key.
-func persistCoverAccent(path, accent string) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		return err
-	}
-	cv, _ := m["cover"].(map[string]any)
-	if cv == nil {
-		cv = map[string]any{}
-		m["cover"] = cv
-	}
-	cv["accent"] = accent
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err

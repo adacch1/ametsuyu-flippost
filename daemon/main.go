@@ -42,8 +42,5 @@ func main() {
 	}
 	srv := NewServer(cfg, deviceCollector{})
 	srv.cfgPath = *cfgPath
-	// Hand back any brightness an older build saved. Done here rather than in
-	// NewServer: NewServer runs in tests, and this shells out to the device.
-	restoreCoverBrightness()
 	log.Fatal(srv.ListenAndServe())
 }

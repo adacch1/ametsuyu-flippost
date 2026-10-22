@@ -43,14 +43,6 @@
         "mode": { "type": "string", "enum": ["auto", "performance", "balanced", "eco", "off"], "default": "auto" }
       }
     },
-    "cover": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Cover-screen (Flex Window) kiosk page. Owner-set from the control panel; the kiosk has no settings screen of its own.",
-      "properties": {
-        "accent": { "type": "string", "enum": ["dawn", "sunflower", "coral", "breeze", "ocean", "wisteria", "slate"], "default": "sunflower", "description": "Which named accent gradient the cover screen paints its buttons with." }
-      }
-    },
     "hotspot": {
       "type": "object",
       "additionalProperties": false,

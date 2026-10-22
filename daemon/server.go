@@ -53,10 +53,6 @@ type Server struct {
 	// the future, applyCPUPolicyOnce forces eco instead of the configured mode.
 	// Zero value (no hold) needs no NewServer change.
 	coolHoldUntil atomic.Int64
-	// coverAccent: the cover screen's accent name, seeded from config and set
-	// from the control panel. atomic.Value because the kiosk reads it on every
-	// page load while a POST can rewrite it.
-	coverAccent atomic.Value
 	// cfgMu serializes the two config-mutating handlers (thermal limits, hotspot
 	// whitelist): they read-modify-write both s.cfg fields and config.json, so
 	// concurrent POSTs would otherwise race and lose updates.
@@ -118,7 +114,6 @@ func NewServer(cfg *Config, col Collector) *Server {
 	s.usage.SetQuota(q)
 	s.warnBits.Store(math.Float64bits(warn))
 	s.gateBits.Store(math.Float64bits(gate))
-	s.coverAccent.Store(normalizeCoverAccent(cfg.Cover.Accent))
 	s.openReads.Store(cfg.Dashboard.OpenReads)
 	s.openControl.Store(cfg.Dashboard.OpenControl)
 	// cfgPath is set on s AFTER NewServer (see main), so resolve it lazily.
@@ -258,14 +253,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/tailscale/logout", s.guardApp(http.MethodPost, func(w http.ResponseWriter, r *http.Request) { s.ts.handleLogout(w, r) }))
 	s.mux.HandleFunc("/v1/hotspot/dual", s.guardAuth("radio-control", http.MethodPost, s.handleHotspotDual))
 	s.mux.HandleFunc("/v1/thermal", s.guard("read-status", s.handleThermal))
-	s.mux.HandleFunc("/v1/battery", s.guard("read-status", s.handleBattery))
 	s.mux.HandleFunc("/v1/usage", s.guard("read-status", s.handleUsage))
 	// Quota config + manual reset: config/meter writes, not radio actions, so no
 	// thermal gate — but still radio-control, and rate-limited like every other
 	// write (radio_per_min).
 	s.mux.HandleFunc("/v1/usage/quota", s.guardAuth("radio-control", http.MethodPost, s.handleUsageQuota))
 	s.mux.HandleFunc("/v1/usage/reset", s.guardAuth("radio-control", http.MethodPost, s.handleUsageReset))
-	s.mux.HandleFunc("/v1/signal", s.guard("read-status", s.handleSignal))
 	s.mux.HandleFunc("/v1/clients", s.guard("read-status", s.handleClients))
 	s.mux.HandleFunc("/v1/cpu", s.guard("read-status", s.handleCPU))
 	// CPU policy mode: radio-control write, not thermal-gated (eco/off must
@@ -309,8 +302,7 @@ func (s *Server) routes() {
 	// kiosk WebView loads "/" with no path of its own, so the cover screen owns
 	// the root and the full control panel moved one path down. handleCover is
 	// also the 404 catch-all for every unmatched path.
-	s.mux.HandleFunc("/", s.handleCover)
-	s.mux.HandleFunc("/dashboard", s.handleDashboard)
+	s.mux.HandleFunc("/", s.handleRoot)
 	// PWA: manifest + service worker so the dashboard installs to the home screen.
 	// Static, no token (they carry no device data).
 	s.mux.HandleFunc("/manifest.webmanifest", s.handleManifest)
@@ -340,7 +332,6 @@ func (s *Server) routes() {
 	// Cover accent: repaints the kiosk's buttons. A config write, not a radio
 	// action, so it carries no thermal gate — but it is still radio-control,
 	// because anything that rewrites config.json is an owner action.
-	s.mux.HandleFunc("/v1/cover/accent", s.guardAuth("radio-control", http.MethodPost, s.handleCoverAccent))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
@@ -485,17 +476,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"battery":         s.col.Battery(),
 		"wan_ip":          deviceWanIP(),
 		"airplane":        airplaneOn(),
-		"cover_accent":    s.coverAccent.Load(),
 		"open_reads":      s.openReads.Load(),
 		"open_control":    s.openControl.Load(),
 		"bench":           s.bench.Status(),
 		"hotspot_presets": s.presets.statusRedacted(),
 		"service":         map[string]any{"daemon": "ok", "helper": map[string]any{"available": false}},
 	})
-}
-
-func (s *Server) handleBattery(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.col.Battery())
 }
 
 func (s *Server) handleTether(w http.ResponseWriter, r *http.Request) {
@@ -545,9 +531,6 @@ func (s *Server) handleUsbTetherToggle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleSignal(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, deviceSignal())
-}
 func (s *Server) handleClients(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, deviceClients())
 }
@@ -930,34 +913,6 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 		log.Printf("restart requested via API; exiting for watchdog respawn")
 		os.Exit(0)
 	}()
-}
-
-// handleCoverAccent repaints the cover screen. Body: {"accent":"coral"}.
-// Rejects anything outside the seven named accents: the value is substituted
-// into the served HTML, so an unvalidated string would be an injection point.
-func (s *Server) handleCoverAccent(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Accent string `json:"accent"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256)).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad body")
-		return
-	}
-	if !validCoverAccent(body.Accent) {
-		writeErr(w, http.StatusBadRequest, "accent must be one of "+strings.Join(coverAccents, ", "))
-		return
-	}
-	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
-	if s.cfgPath != "" {
-		if err := persistCoverAccent(s.cfgPath, body.Accent); err != nil {
-			writeErr(w, http.StatusInternalServerError, "persist failed: "+err.Error())
-			return
-		}
-	}
-	s.cfg.Cover.Accent = body.Accent
-	s.coverAccent.Store(body.Accent)
-	writeJSON(w, http.StatusOK, map[string]any{"cover_accent": body.Accent})
 }
 
 // handleDeviceReboot reboots the whole phone after replying. The module's
