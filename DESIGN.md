@@ -1,6 +1,6 @@
 ---
 name: Z Flip 5 Modem Dashboard
-description: Rainy-dusk skin from the Flippost logo, tuned for a 352px cover screen
+description: Rainy-dusk skin from the Flippost logo, tuned for the app, widget, and web UI
 colors:
   bg: "#1b2436"
   sky-top: "#2b3850"
@@ -95,7 +95,7 @@ components:
 
 **Creative North Star: "The Instrument Panel"**
 
-This is not an app that *has* data — the data *is* the interface. A rooted phone is doing a machine's job (5G modem, Wi-Fi hotspot), and its dashboard should read like the gauge cluster of that machine: a near-black ground, a few numbers sized to be read at a glance, and color spent only where it reports state. The primary surface is a folded phone's cover screen — roughly **352×339 CSS px, touched with a thumb, often outdoors** — so every choice bends toward legibility at arm's length and one-handed reach.
+This is not an app that *has* data — the data *is* the interface. A rooted phone is doing a machine's job (5G modem, Wi-Fi hotspot), and its dashboard should read like the gauge cluster of that machine: a near-black ground, a few numbers sized to be read at a glance, and color spent only where it reports state. The primary surfaces are the app, widget, and web UI — **touched with a thumb, often outdoors** — so every choice bends toward legibility at arm's length and one-handed reach.
 
 The system is deliberately quiet. There is one brand accent (teal); everything else is either neutral ink or a semantic status color. Depth comes from stacked dark surfaces and hairline borders, never shadows or blur. A colored dot means something is *live*; if it's decoration, it's deleted. The largest type on any screen is a datum — a percentage, a temperature, a throughput — and the chrome around it recedes into muted grey labels.
 
@@ -127,7 +127,7 @@ Reserved *semantic status* colors. These are not accents to reach for; each mean
 ### Neutral
 - **Ground** (#0b0d10): app background; the near-black the whole panel sits on.
 - **Surface** (#161b22): card background — the first step up from ground.
-- **Inset Surface** (#1b212a): fields, ghost buttons, speedtest cells — a step deeper *into* a card.
+- **Inset Surface** (#1b212a): fields, ghost buttons, stat cells — a step deeper *into* a card.
 - **Hairline** (#21262d) / **Soft Divider** (#1a1f27): 1px card borders and inner row rules.
 - **Track** (#242b34): the unfilled portion of rings and bars.
 - **Ink** (#e6edf3): primary text. **Ink-2** (#9aa5b1): secondary values/captions. **Ink-3** (#7d8794): uppercase micro-labels — held at 4.7:1 on Surface so it survives AA outdoors.
@@ -147,7 +147,6 @@ Reserved *semantic status* colors. These are not accents to reach for; each mean
 ### Hierarchy
 - **Data Hero** (700, clamp 34–46px, −0.03em): the one big reading per view — the data-usage ring percentage. Only one per screen.
 - **Stat** (700, 30px, −0.02em): card headline numbers — battery %, temperature, memory %, CPU load. Tabular.
-- **Speed cell** (700, 24px): the three throughput/ping figures in the speedtest.
 - **Body** (500, 13.5px, 1.4): state rows, captions, helper text. Ink or Ink-2.
 - **Label** (600, 10.5px, uppercase, 0.05–0.09em tracking): card headers, field labels, section kickers. Always Ink-3.
 
@@ -156,19 +155,19 @@ Reserved *semantic status* colors. These are not accents to reach for; each mean
 
 ## 4. Elevation
 
-**Flat. No shadows anywhere.** Depth is built entirely from a three-step tonal stack — Ground (#0b0d10) → Surface (#161b22) → Inset Surface (#1b212a) — separated by 1px hairline borders (#21262d). A control that sits "inside" a card (input, ghost button, speedtest cell) uses Inset Surface to read as recessed; a card reads as raised simply by being lighter than the ground it floats on. The only blur in the system is the bottom nav's `backdrop-filter`, so content scrolls softly under a fixed tab bar — a functional frosting, not decoration.
+**Flat. No shadows anywhere.** Depth is built entirely from a three-step tonal stack — Ground (#0b0d10) → Surface (#161b22) → Inset Surface (#1b212a) — separated by 1px hairline borders (#21262d). A control that sits "inside" a card (input, ghost button, stat cell) uses Inset Surface to read as recessed; a card reads as raised simply by being lighter than the ground it floats on. The only blur in the system is the bottom nav's `backdrop-filter`, so content scrolls softly under a fixed tab bar — a functional frosting, not decoration.
 
 ### Named Rules
 **The No-Shadow Rule.** Shadows are forbidden. If a surface needs to feel higher, step its background one tone lighter and give it a hairline border. A drop shadow on this ground reads as a 2014 app.
 
 ## 5. Components
 
-Every interactive element is at least 44px tall (cover-screen thumb target) and states are conveyed by color/fill, never by shadow.
+Every interactive element is at least 44px tall (thumb target) and states are conveyed by color/fill, never by shadow.
 
 ### Buttons
 - **Shape:** gently rounded (8–9px radius), full-width within a card, ≥46px tall, weight 700.
 - **Commit (primary):** solid **Signal Teal** fill (#3fb8af) with dark teal ink (#04211f). Reserved for actions that *write and persist* — "Apply thermal limits", "Save whitelist".
-- **Ghost (trigger):** Inset Surface (#1b212a) with a hairline border and teal text. For *occasional* actions that shouldn't shout — "Run speedtest", "Rotate IP". Same footprint as commit, a fraction of the volume.
+- **Ghost (trigger):** Inset Surface (#1b212a) with a hairline border and teal text. For *occasional* actions that shouldn't shout — "Rotate IP". Same footprint as commit, a fraction of the volume.
 - **Stateful:** fill *is* the state — **Go Green** when the press turns something on ("Turn hotspot ON"), **Limit Red** when the press turns it off. The label states the action a press performs.
 - **Mini (`.minibtn`):** Inset Surface + hairline + teal text, ~34–44px, for paired secondary actions and toggles ("Scan now", "Turn on / Turn off").
 - **Focus:** 2px teal outline, inset. **Disabled:** 0.5 opacity.
@@ -205,9 +204,9 @@ Every interactive element is at least 44px tall (cover-screen thumb target) and 
 - **Do** use one filled teal *commit* button per card; make every other action a ghost or mini.
 
 ### Don't:
-- **Don't** introduce a fourth accent. Blue is banned — it once crept onto the speedtest button and diluted the whole palette (see The One Accent Rule).
+- **Don't** introduce a fourth accent. Blue is banned — it once crept onto a ghost button and diluted the whole palette (see The One Accent Rule).
 - **Don't** put a colored dot, stripe, or accent anywhere it doesn't report live state. Decoration that doesn't convey state is deleted.
 - **Don't** stack multiple loud, differently-colored "primary" buttons in one card — one teal/stateful primary, ghosts around it.
 - **Don't** add shadows, glows, or glassmorphism (the nav blur is the sole, functional exception).
 - **Don't** drift toward the consumer-SaaS look this surface attracts: no gradient hero, no onboarding tour, no light mode, no marketing gloss. If it looks like a landing page, it's wrong.
-- **Don't** ship gray body text that fails 4.5:1 — Ink-3 is floored at 4.7:1 on Surface because the cover screen is read outdoors.
+- **Don't** ship gray body text that fails 4.5:1 — Ink-3 is floored at 4.7:1 on Surface because the screen is read outdoors.

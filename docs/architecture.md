@@ -1,84 +1,71 @@
-# Architecture — zflip5-modem-module
+# Architecture
 
-Rooted Samsung Galaxy Z Flip 5 (SM-F731B, OneUI 6.1 / Android 14, Magisk) used as
-a controllable cellular modem/hotspot, queried and safely controlled from the
-owner's iPhone (Apple Shortcuts) and Discord.
-
-Confirmed on-device by Todo 1: SELinux + dm-verity enforcing, Knox tripped
-(`warranty_bit=1`), bootloader unlocked, arm64-v8a only, carrier VINAPHONE on LTE.
+Ametsuyu Flippost turns a rooted Samsung Galaxy Z Flip 5 (SM-F731B) into a
+controllable cellular modem and Wi-Fi 6 hotspot. You operate it from a native
+app, a home-screen widget, and a web UI over Tailscale.
 
 ## Components
 
-| Dir | What | Runtime |
+| Path | What | Runtime |
 | --- | --- | --- |
-| `daemon/` | `api-front` (unprivileged, loopback TCP, bearer auth) **+** `root-broker` (Unix socket `0600`, `SO_PEERCRED`, named-verb allowlist) | static Go, arm64-v8a (`CGO_ENABLED=0 GOOS=linux GOARCH=arm64`) |
-| `helper/` | Android helper APK, foreground service, `READ_SMS` only, daemon-supervised | Kotlin/Gradle |
-| `relay/` | public Discord relay: Ed25519 verify + deferred-ephemeral responses | Cloudflare Worker / small VPS |
-| `magisk/` | `module.prop`, `service.sh` (late_start fork/watchdog), `uninstall.sh`, capped `sepolicy.rule` | Magisk module |
-| `schemas/` | `api.openapi.json`, `config.schema.json` | — |
-| `tools/` | discovery, packaging, lint, test, metrics collectors (bash) | host + device |
+| `daemon/` | Root Go daemon: loopback HTTP API, thermal gate, CPU policy, data meter, hotspot control, and the web UI | Static Go, arm64 |
+| `helper/` | The native app (`com.zflip5.modem`) with its widget, and the `tether.jar` root helpers | Kotlin and Gradle |
+| `magisk/` | `service.sh`, `firewall.sh`, `cleanup.sh`, `app-install.sh`, the ntfy runner, and the packaged daemon and APK | Magisk module |
+| `schemas/` | `api.openapi.json` and `config.schema.json` | None |
+| `tools/` | Build, packaging, lint, test, and `dex.sh` | Host |
+
+## Front ends
+
+Three front ends share one API:
+
+- **Native app and widget.** Kotlin and Compose with the Flippost look. The
+  app talks to the daemon on loopback and reads `/v1/summary` for the home
+  screen. It is the only front end that can sign Tailscale in or out and
+  change the open reads and open control switches.
+- **Web UI.** A single page the daemon serves at `/`. Tailscale reaches it
+  through `tailscale serve`. See [Web UI](dashboard.md).
+- **ntfy runner.** A device-local Node process that reads `/v1/summary` and
+  publishes alerts. See [ntfy alerts](ntfy.md).
 
 ## Trust boundaries
 
-- **The network bind is NOT a trust boundary.** Any installed app shares
-  `127.0.0.1`, so a loopback listener alone protects nothing. The real
-  boundaries are: (1) scoped bearer tokens, (2) the root-broker Unix socket with
-  `SO_PEERCRED` + a named-verb allowlist (no free-form shell strings), and (3)
-  the Tailscale ACL for remote reach.
-- **Default bind is loopback only.** A public / all-interfaces bind is rejected
-  by `config.schema.json` (`bind_host` pattern). Remote access is a private
-  Tailscale tunnel, never a port-forward (the cellular link is behind CGNAT).
-- **api-front never holds root.** State-changing and SMS verbs cross the broker
-  socket as allowlisted named verbs with typed args.
+- **The loopback bind is not a trust boundary.** Any installed app shares
+  `127.0.0.1`. The boundaries are the scoped bearer tokens, the app-UID check,
+  and the module firewall.
+- **App-UID authentication.** The daemon reads the caller's UID from the
+  socket. Only the app's UID passes the `app_only` guard. UID 0 is never
+  trusted, because `tailscale serve` traffic arrives as UID 0. A caller over
+  `adb forward` arrives as UID 2000 and also fails the guard.
+- **Loopback only.** The daemon refuses any other bind address. Remote access
+  is a private Tailscale tunnel, never a port forward.
+- **Module firewall.** `firewall.sh` drops port 5555 and the remote-screen
+  ports on every interface except `lo` and `tailscale0`, for IPv4 and IPv6.
+  See the [Threat model](threat-model.md).
 
 ## Endpoints
 
-See `schemas/api.openapi.json`. Read endpoints require the `read-status` scope;
-`/v1/sms/recent` and `/v1/notifications/recent` require `sms`; writes
-(`/v1/tether`, `/v1/prefer5g`, `/v1/cooldown`, `/v1/service/restart`,
-`/v1/usage/quota`, `/v1/usage/reset`) require `radio-control`.
+`schemas/api.openapi.json` lists every route, and a test pins the spec to the
+router. Read routes need the `read-status` scope. Write routes need
+`radio-control`. The Tailscale login and logout routes need the app UID.
 
-Both `sms`-scope reads are pull-only and neither is ever reachable from the
-Discord relay. Body redaction is compiled off on this donor phone
-(`redactBodies` in `daemon/sms.go`), so responses carry full text; the masking
-path is intact behind that const. Both also ride the `dashboard.open_reads`
-switch: with open reads on they serve without a token, like every other read;
-turning it off closes them again.
-
-`/v1/health` and the device-host block of `/v1/status` report CPU load (1/5/15m),
-core count, RAM used %, battery temp, and the hottest thermal zone — sourced from
-`/proc/loadavg`, `/proc/meminfo`, and `/sys/class/thermal` (reference collector:
-`tools/collect-metrics.sh`). The `/v1/status` view smooths `temp_max_c` to a
-25-second median so a single-sample TSENS spike doesn't flicker the display;
-the gate stays instantaneous, so `safe` and `policy_state` never lag. The
-daemon also records that same median once a minute into hour and day
-averages served by `GET /v1/thermal/history` (see [Temperature
-history](dashboard.md#temperature-history)); the gate never reads this
-history either.
+`/v1/summary` returns the fields the app, widget, web UI, and ntfy runner
+need in one call: signal, battery, data usage, hotspot, temperature, and
+`slow_age_s`. Clients treat `slow_age_s` over 30 as stale. The daemon smooths
+`temp_max_c` to a 25-second median for display, while the thermal gate stays
+instantaneous. See [Temperature history](dashboard.md#temperature-history).
 
 ## Safety semantics
 
-- **"Prefer 5G" == safe prefer/recover NR**, applied via
-  `cmd phone set-allowed-network-types-for-users` (Todo 1 proved the per-sub
-  `preferred_network_mode<sub>` setting is a no-op on this device). It is a
-  preference, never a force, and is refused in an unsafe thermal state.
-- **Thermal gate is PRIMARY on battery temp + `/sys/class/thermal` and fails
-  closed** (Android `getCurrentThermalStatus()` is advisory — often `NONE` on
-  Samsung). 44 °C is the warning threshold; writes are refused above `gate_c`.
-  In stock mode the module never disables, patches, or works around thermal
-  mitigation, and never edits vendor thermal files. Bench thermal mode (the
-  running configuration on this battery-less donor) is the documented
-  exception: it suspends the zones/cpufreq caps and replaces them with its own
-  70 °C trip — see the README's [Safety](../README.md#safety) section.
-- **SMS is owner-only, pull-only, redacted by default**, reachable only over the
-  iPhone/Tailscale path, and is never routed through the Discord relay. There is
-  no default forwarding of messages to any channel.
-- Sensitive Discord replies are **ephemeral**; the owner allowlist is
-  default-deny.
+- **The thermal gate fails closed.** It reads battery temperature and
+  `/sys/class/thermal`. The warning threshold is 44 °C, and writes are
+  refused over `gate_c`. Bench thermal mode is the documented exception: it
+  suspends the zones and replaces them with a 70 °C trip. See the README's
+  [Safety](../README.md#safety) section.
+- **No modem identity changes.** Nothing writes to the IMEI, baseband, SIM,
+  or eSIM.
 
 ## Config
 
-`config.schema.json` is authoritative. Key invariants enforced by schema:
-loopback-only default bind, scoped hex tokens (≥256-bit), `thermal.fail_closed`
-true, `sms.forward` false, `sms.redact_default` true, and a Discord relay that
-structurally cannot carry the `sms` scope.
+`config.schema.json` is authoritative. It enforces a loopback default bind,
+scoped hex tokens of at least 256 bits, and `thermal.fail_closed` set to
+true. The daemon still loads older configs that carry removed keys.

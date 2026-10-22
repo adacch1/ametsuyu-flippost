@@ -1,101 +1,71 @@
-# Admin dashboard
+# Web UI
 
-The daemon serves two self-contained pages:
+The daemon serves one self-contained web page at `/` on the tailnet. The page
+shows the same data as the native app, and it installs as a progressive web
+app (PWA). The page carries no data itself: it fetches everything from the
+`/v1/*` API.
 
-- `/` — the **cover screen**: clock and date, mobile data used this month
-  against the cap, battery, WAN IP, and three actions (hotspot toggle, IP
-  rotate, **Refresh status**). Sized for the Z Flip 5 Flex Window (352×308 px),
-  which is what the kiosk WebView loads. Polls every 10 s.
-- `/dashboard` — the **control panel**: seven tabs covering battery,
-  temperature, CPU load, memory, **mobile data usage (today / week / month)**,
-  thermal-policy state, network type, signal detail, clients, presets, the
-  Inbox, and ingress mode. See [Refresh cadence](#refresh-cadence) for how it
-  stays current.
+## Screens
 
-The cover screen is an always-on display. The kiosk holds the panel awake while
-it is in front, and `service.sh` stops the phone sleeping on a charger
-(`stay_on_while_plugged_in`), which `uninstall.sh` puts back. Because a lit OLED
-showing a fixed layout burns in, the panel runs dim while the kiosk owns it and
-the deck shifts a few pixels every minute. To tune the brightness, set
-`cover.dim` in `config.json` to 1-255, or to 0 to keep your own level.
+The main view shows the connection chip, signal, mobile data against the cap,
+battery, temperature, per-device speed, and the hotspot switch. Tap
+**Details** to open the other screens:
 
-The cover screen runs on a true-black ground with dimmed surfaces, because the
-Flex Window stays lit for as long as the phone is closed and an OLED panel spends
-no power on black pixels. To recolor its buttons, open **Settings > Cover screen
-buttons** on the control panel and pick one of the seven accents; the kiosk
-picks up the change within ten seconds. The choice persists in `cover.accent`.
+| Screen | Contents |
+|---|---|
+| **Devices** | Connected clients and their speeds. |
+| **Hotspot** | Band, presets, and the home-network SSID list. |
+| **Data** | Usage today, this week, and this month, plus the data cap. |
+| **System** | CPU, memory, thermal state, and temperature history. |
+| **Tailscale** | Read-only state, DNS name, and serve status. |
+| **Alerts** | A reminder that you set alerts on the phone. |
+| **Advanced** | Read-only switch state and daemon details. |
 
-Both pages are dark and compact. To pull live usage, battery, and IP without
-waiting for the next poll, press **Refresh status** — the floating button at
-the bottom right of the control panel, or the button in the cover screen's
-action row.
+The page treats the data as stale when the collector stops updating
+(`slow_age_s` over 30 seconds), and it disables writes until data is fresh
+again.
 
-To reach the control panel from the cover screen, tap the grid icon in the
-header.
+## Tailscale is read-only on the web
 
-## Refresh cadence
+The web UI shows the Tailscale state but never a login URL. Tailscale login
+and logout are owner-only: the daemon allows them only from the app's UID
+(`app_only`). A tailnet browser gets 403 for both calls. See
+[Tailscale](tailscale.md).
 
-The control panel refreshes each field on a schedule matched to how often its
-value actually changes, instead of re-fetching every field on one fixed
-interval. Three tiers cover it: the header status and signal, mobile data
-usage, hotspot state, and the client list refresh every 5 seconds; the CPU
-governor and the Settings tab's usage summary refresh every 15 seconds; band
-lock, USB tethering, and the temperature-history chart refresh every 60
-seconds, because those three reads cost the most on the phone and rarely
-change between polls.
+## Open the web UI
 
-A hotspot "forced on" countdown updates every second from a value the browser
-computes locally, so it counts down between polls without an extra request.
-The panel stops polling while its browser tab stays hidden, and it refreshes
-immediately once the tab becomes visible again. **Refresh status** still
-forces every visible field to update right away, regardless of its schedule.
+Over your tailnet, open `https://<name>.<tailnet>.ts.net/`. Over USB, forward
+the port first:
 
-## Open it
-
-The page needs a `read-status` token once; it stores it in `localStorage` and
-strips it from the URL:
-
-```
-# local (USB)
+```sh
 adb forward tcp:18080 tcp:18080
-open "http://127.0.0.1:18080/?token=$READ_STATUS"           # cover screen
-open "http://127.0.0.1:18080/dashboard?token=$READ_STATUS"  # control panel
+open "http://127.0.0.1:18080/"
 ```
 
-Over Tailscale (see [Tailscale ingress](tailscale.md)), `tailscale serve` exposes
-the same pages to your other devices:
+If **Open reads** is off, add `?token=<read-status token>` once. The page
+reads the token from the URL and keeps it in the browser.
 
-```
-https://zflip5.<tailnet>.ts.net/dashboard?token=$READ_STATUS
-```
+## Install as a PWA
 
-The **Add a device** QR in Settings encodes the control-panel URL, so a scanned
-device lands on the panel rather than the cover screen.
+Open the web UI in a browser on your phone or computer, then use the browser's
+install option (**Add to Home Screen** on iOS and Android, **Install** on
+desktop Chrome). The installed app opens the same page without browser chrome.
 
-The HTML itself carries no data — every number is fetched from the token-gated
-`/v1/*` API, so an unauthenticated viewer sees an empty shell.
+## Pair another device with the QR code
 
-## Inbox (messages + notifications)
+The app shows a pairing QR code on its **Advanced** screen. The QR code
+encodes the web UI URL (`/`). It carries a `?token=` parameter only when
+**Open reads** is off. When it is on, the URL carries no token.
 
-The **Inbox** tab reads the phone's SMS inbox (`/v1/sms/recent`, `content query`
-on `content://sms/inbox`) and its active notification shade
-(`/v1/notifications/recent`, root `dumpsys notification --noredact`). Both are
-pull-only: nothing can be sent, replied to, dismissed or forwarded from here.
+## Open reads and open control
 
-Bodies and titles are served **verbatim** — nothing masked, nothing truncated
-— because this is a donor phone the owner reads directly (`redactBodies = false`
-in `daemon/sms.go`; flip that const to restore the masked 120-char previews).
-Rows show two lines and expand on tap. Only the *active* shade is parsed; the
-dismissed `History Notification List:` block is skipped.
+Two switches control tokenless access over the tailnet:
 
-Both endpoints use the `sms` scope, which on this donor phone also follows the
-**Open reads** toggle: with it on, the tab loads with no token at all (the
-daemon embeds the `sms` token in the page and serves the two endpoints
-tokenless). With it off, paste the `sms` token once into the field at the bottom
-of the tab. `sms.enabled: false` in `config.json` turns the whole tab off.
+- **Open reads** serves read-only calls without a token.
+- **Open control** also allows radio-control writes without a token.
 
-Reads are rate-limited (`rate_limits.sms_per_min`, 3/min by default), so the tab
-refreshes at most once every 20 s on open; "Refresh" forces one.
+Both are off by default. You change them only in the app's **Advanced** screen.
+The web UI shows their state but cannot change them.
 
 ## Data usage source
 
@@ -126,8 +96,8 @@ the flush and the reboot itself is at risk; a hard reboot or power loss loses
 at most the 60-second persist interval of unsaved traffic.
 
 `today_bytes`, `week_bytes`, `month_bytes`, and `period_bytes` are always
-exact byte counts. Their `*_human` counterparts, the dashboard, and the cover
-screen format them in SI decimal units — 1 GB = 10⁹ bytes — matching carrier
+exact byte counts. Their `*_human` counterparts, the app, and the web UI
+format them in SI decimal units — 1 GB = 10⁹ bytes — matching carrier
 data meters and Android's own data usage screen, not the 1024-based GiB a
 filesystem tool would use.
 
@@ -135,7 +105,7 @@ filesystem tool would use.
 device's local time zone (`persist.sys.timezone`), not rolling windows: today
 is the local calendar date, week is the ISO week to date (Monday through
 now), and month is the calendar month to date (the 1st through now). The
-dashboard, the cover screen, and both bots already treat `month_bytes` as
+app and the web UI treat `month_bytes` as
 month-to-date against a monthly cap, so a rolling 30-day total read high
 against that cap. The data cap described in the following section is a
 separate meter from these three fields.
@@ -144,13 +114,12 @@ separate meter from these three fields.
 
 The daemon tracks the data cap as a separate meter, `period_bytes`: bytes
 used since the last reset, exact from the reset instant. Configure the limit
-and schedule from the dashboard's **Data limit** settings card, or with
+and schedule from the **Data** screen, or with
 `POST /v1/usage/quota` (`radio-control` scope). The body takes `limit_bytes`
 (bytes) and `period` (`daily`, `weekly`, `monthly`, or `manual`). It also
 takes `reset_time` (device-local `HH:MM`) and `reset_day` (1–28, monthly
 only, capped so every month has that day). A `limit_bytes` of `0` means the
-owner hasn't set a cap yet, and the dashboard prompts for one on the home
-screen and in Settings.
+owner hasn't set a cap yet, and the app prompts you to set one.
 
 Every period except `manual` resets automatically at the configured time;
 `manual` resets only when triggered. `GET /v1/usage` reports the schedule
@@ -188,7 +157,7 @@ on their own.
 ## Temperature history
 
 `GET /v1/thermal/history` (`read-status` scope) reports minute, hour, and
-day temperature buckets for the dashboard's **System** tab. The daemon
+day temperature buckets for the **System** screen. The daemon
 samples the same 25-second display median that `/v1/status` reports as
 `temp_max_c`, once a minute, and stores the buckets in
 `/data/adb/zflip5-modem/temps.json` (mode 0600). The thermal gate never
@@ -210,27 +179,9 @@ retention, `temps.json` holds around 26 KB. The daemon writes the file
 every 5 minutes, and immediately before an API-triggered device reboot, so
 a crash between writes loses at most 5 minutes of samples.
 
-The System tab's **Temperature · history** card fetches
-`/v1/thermal/history` on the 60-second slow tier described in
-[Refresh cadence](#refresh-cadence), and only while that tab stays open, to
+The **System** screen's **Temperature · history** card fetches
+`/v1/thermal/history` once a minute, and only while that screen stays open, to
 bound mobile data and rate-limit use for a remote Tailscale viewer. Its four
 range buttons — **1h**, **24h**, **7d**, and **40d** — switch between the
 minute, hour, and day series already in memory, with no new fetch.
 
-## Always-on the cover screen (Z Flip 5)
-
-Samsung does not let arbitrary apps run on the cover screen out of the box.
-Recommended path:
-
-1. Install **Good Lock** → **MultiStar** → enable "I ♥ Galaxy Foldable" /
-   "Cover screen apps" (lets you whitelist any app on the cover display).
-2. Whitelist a lightweight browser (or a WebView kiosk app) on the cover screen.
-3. Point it at the dashboard URL above (local loopback or the Tailscale URL) and
-   pin it. Keep the screen-timeout long or use an always-on setting.
-
-The WebView kiosk APK now ships: `helper/build-apk.sh` builds
-`dist/zflip5-kiosk.apk` (`CoverKioskActivity`, fullscreen, shows-when-locked),
-and the Magisk **Action** button launches it on the cover screen via
-`magisk/action.sh`. Good Lock + a browser remains a no-code fallback. The token
-is seeded once via the `?token=` URL and kept in the WebView's `localStorage`,
-so shared views never expose it.

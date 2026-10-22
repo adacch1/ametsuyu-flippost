@@ -1,37 +1,55 @@
-# Rollback & uninstall
+# Rollback and uninstall
 
-The module changes no persistent device state beyond its own module dir and
-`/data/adb/zflip5-modem`. It never edits radio firmware, thermal config, vendor
-files, or SIM/eSIM. Any runtime radio probe is reverted by the daemon/tools.
+The module changes no persistent device state beyond its own module directory
+and `/data/adb/zflip5-modem`. It never edits radio firmware, thermal config,
+vendor files, or SIM and eSIM settings.
 
-## Disable (keep installed)
-Magisk Manager → Modules → toggle off → reboot. The daemon stops; nothing else
-changes.
+## Disable the module
 
-## Uninstall (full removal)
-```
-adb shell su -c 'magisk --remove-modules'        # or remove in Magisk Manager
+In the KernelSU manager, switch the module off and reboot. The daemon stops.
+
+## Uninstall the module
+
+```sh
+printf '%s\n' 'ksud module uninstall zflip5_modem' | adb shell su
 adb reboot
 ```
-`uninstall.sh` runs on removal and wipes `/data/adb/zflip5-modem` (config +
-tokens + logs), so no secrets linger.
 
-## Revoke / rotate a leaked token
-Edit `/data/adb/zflip5-modem/config.json` (root, `0600`) — replace the affected
-token with a fresh 64-hex value, or delete the whole file to regenerate all three
-on next boot. Then update the iPhone/Discord side. A rotated token invalidates the
-old one immediately on daemon restart:
+`uninstall.sh` restores the stay-on setting and wipes `/data/adb/zflip5-modem`
+(config, tokens, and logs). Uninstall keeps `/data/adb/service.d/50-zf5-firewall.sh`,
+so the firewall stays active after removal. Delete that file yourself if you
+want the rules gone.
+
+## Roll back the daemon
+
+Before you replace the daemon binary, keep the old one as
+`/data/adb/zflip5-modem/modemd.prev`:
+
+```sh
+printf '%s\n' 'BIN=/data/adb/modules/zflip5_modem/daemon/zflip5-modemd' \
+  'cp "$BIN" /data/adb/zflip5-modem/modemd.prev' | adb shell su
 ```
-adb shell su -c 'pkill -x zflip5-modemd'         # watchdog restarts it
+
+To roll back, copy `modemd.prev` over the binary with the rename-first steps in
+the README, then run `pkill -x zflip5-modemd`. The watchdog restarts it.
+
+## Go back to the WebView kiosk
+
+The older WebView kiosk is gone from the tree. To restore it, rebuild the kiosk
+from git history with a higher `versionCode` than the installed app, then
+install that APK with `pm install -r`. Android refuses a lower `versionCode`.
+
+## Rotate a leaked token
+
+Edit `/data/adb/zflip5-modem/config.json` (root, `0600`). Replace the token
+with a new 64-character hex value, or delete the file to regenerate all tokens
+on the next boot. Then restart the daemon:
+
+```sh
+printf '%s\n' 'pkill -x zflip5-modemd' | adb shell su
 ```
 
 ## Recover from a bad boot
-If a module change ever prevented boot (it should not — `service.sh` never blocks
-boot), boot to Magisk safe mode (hold volume-down during boot) to disable all
-modules, then remove the zip.
 
-## Verify clean state
-```
-adb shell su -c 'ls /data/adb/modules/zflip5_modem 2>/dev/null; ls /data/adb/zflip5-modem 2>/dev/null'
-```
-Both absent after uninstall = fully removed.
+If a module change ever blocks boot, boot to safe mode to disable all modules,
+then remove the module.

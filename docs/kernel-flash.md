@@ -20,7 +20,7 @@ adb shell su -c id          # uid=0(root)
 adb shell uname -r          # 5.15.148-android13-8...
 ```
 
-Power rule: this phone has no battery. Flash only on a stable bench supply. Do not run speedtests/load while flashing.
+Power rule: this phone has no battery. Flash only on a stable bench supply. Do not run load while flashing.
 
 ---
 
@@ -111,7 +111,7 @@ curl -sS -H "Authorization: Bearer <read-status-token>" http://127.0.0.1:18080/v
 curl -sS -H "Authorization: Bearer <read-status-token>" http://127.0.0.1:18080/v1/status
 ```
 
-Bench should still be `enabled:true` (config persists, daemon reapplies after boot). Run a speedtest only after confirming the baseband is attached.
+Bench should still be `enabled:true` (config persists, daemon reapplies after boot). Test throughput only after confirming the baseband is attached.
 
 ---
 

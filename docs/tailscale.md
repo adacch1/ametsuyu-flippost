@@ -6,7 +6,7 @@ The phone sits behind carrier CGNAT, so it has no public inbound address. The mo
 
 The daemon binds loopback (`127.0.0.1`) only. `tailscale serve` is the sole bridge between your tailnet and the daemon, and your tailnet ACL decides who can reach it.
 
-The daemon talks to `tailscaled` over its LocalAPI socket at `/data/adb/tailscale/tailscaled.sock`. The module needs no auth key, bundles no Tailscale binaries, and has no ingress setting.
+The daemon talks to `tailscaled` over its LocalAPI socket at `/data/adb/tailscale/tailscaled.sock`. The module needs no auth key, and bundles no Tailscale binaries.
 
 ## Check status
 
@@ -40,9 +40,9 @@ A sign-in request fails with a reason code in these cases:
 
 ## Reach the web UI
 
-After sign-in, open `https://<name>.<tailnet>.ts.net` from any device on your tailnet. The iPhone Shortcuts in `docs/shortcuts.md` and the Discord relay in `docs/discord.md` use the same address.
+After sign-in, open `https://<name>.<tailnet>.ts.net` from any device on your tailnet.
 
-Because `tailscale serve` forwards requests from loopback, the daemon treats tailnet callers as remote and keeps them read-only for sign-in and sign-out.
+The daemon sees `tailscale serve` requests as loopback traffic and never treats them as the app, so they cannot sign in or out.
 
 ## Troubleshoot
 
