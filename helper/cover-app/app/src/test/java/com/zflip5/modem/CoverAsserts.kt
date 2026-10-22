@@ -46,7 +46,7 @@ private fun ComposeContentTestRule.cutout(): Rect {
     return Rect(w - 174 * d.density, h - 31 * d.density, w, h)
 }
 
-private fun ComposeContentTestRule.clickables() = onAllNodes(hasClickAction(), useUnmergedTree = true).fetchSemanticsNodes()
+private fun ComposeContentTestRule.clickables() = onAllNodes(hasClickAction(), useUnmergedTree = true).fetchSemanticsNodes().filter { !it.touchBoundsInRoot.isEmpty }  // lazy items prefetched but not placed have empty bounds
 
 fun ComposeContentTestRule.assertNoTargetInCutout() {
     val cutout = cutout()
