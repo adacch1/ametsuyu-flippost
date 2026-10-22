@@ -21,11 +21,13 @@ set -u
 adb get-state >/dev/null 2>&1 || { echo "dex.sh: no device over adb" >&2; exit 1; }
 
 # The DeX display is the virtual one Samsung names "Desktop". Its id is not
-# fixed (it was 2 in testing), so look it up after starting DeX.
+# fixed (it was 2 in testing), so look it up after starting DeX. Only accept
+# it while it is ON: after `cmd desktopmode off` the display lingers in state
+# OFF, and mirroring that gives a black window.
 dex_display() {
   adb shell dumpsys display | grep 'mBaseDisplayInfo=' \
-    | grep 'virtual:android,1000,Desktop' | grep -oE 'displayId [0-9]+' \
-    | head -1 | cut -d' ' -f2
+    | grep 'virtual:android,1000,Desktop' | grep 'state ON' \
+    | grep -oE 'displayId [0-9]+' | head -1 | cut -d' ' -f2
 }
 
 JAR=/data/adb/modules/zflip5_modem/tether/tether.jar
