@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -280,5 +282,62 @@ func TestPersistHotspotPresetsRoundTripPreservesKeys(t *testing.T) {
 	}
 	if hpm["active"] != "home" || hpm["auto_switch"] != true {
 		t.Errorf("preset state not round-tripped: %v", hpm)
+	}
+}
+
+func TestValidatePresetRejectsDual(t *testing.T) {
+	p := Preset{Name: "Home", SSID: "Flippost", Security: "wpa2", Passphrase: "12345678", Band: "dual"}
+	if err := validatePreset(p); err == nil || err.Error() != "band must be 2, 5, or 6" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestMigrateDualBand(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(p, []byte(`{"hotspot":{"enable_on_boot":true}}`), 0o600)
+	pm := NewPresetManager(HotspotPresets{Presets: []Preset{{ID: "a", Band: "dual"}, {ID: "b", Band: "2"}}}, func() string { return p })
+	if !pm.MigrateDualBand() || pm.MigrateDualBand() {
+		t.Fatal("want true then false")
+	}
+	b, _ := os.ReadFile(p)
+	if strings.Contains(string(b), `"dual"`) || !strings.Contains(string(b), `"enable_on_boot": true`) {
+		t.Fatalf("%s", b)
+	}
+	if pm.statusRedacted()["presets"].([]map[string]any)[0]["band"] != "5" {
+		t.Fatal("in-memory band not migrated")
+	}
+}
+
+func TestApplyBusy(t *testing.T) {
+	pm := NewPresetManager(HotspotPresets{}, nil)
+	pm.applyMu.Lock()
+	if !pm.ApplyBusy() {
+		t.Fatal("held lock not reported")
+	}
+	pm.applyMu.Unlock()
+	if pm.ApplyBusy() {
+		t.Fatal("free lock reported busy")
+	}
+}
+
+func TestApplyPresetLiveBandArgs(t *testing.T) {
+	oh, oa := helperRun, apProbe
+	t.Cleanup(func() { helperRun, apProbe = oh, oa })
+	apProbe = func() bool { return false }
+	var got []string
+	helperRun = func(c string, a ...string) string { got = a; return "RESULT=OK" }
+	p := Preset{SSID: "Flippost", Security: "wpa2", Passphrase: "12345678"}
+	for _, tc := range []struct {
+		band string
+		dual bool
+		tail []string
+	}{{"5", false, []string{"5", "149"}}, {"5", true, []string{"dual"}}, {"2", false, []string{"2"}}, {"", false, []string{"5", "149"}}} {
+		p.Band = tc.band
+		if err := applyPresetLive(p, tc.dual); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got[4:], tc.tail) {
+			t.Errorf("band %q dual %v: args %v", tc.band, tc.dual, got)
+		}
 	}
 }

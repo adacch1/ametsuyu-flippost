@@ -39,7 +39,7 @@ type Preset struct {
 	SSID       string   `json:"ssid"`
 	Passphrase string   `json:"passphrase"`
 	Security   string   `json:"security"` // open | wpa2 | wpa3
-	Band       string   `json:"band"`     // 2 | 5 | 6 | dual (bridged 2.4+5, one SSID)
+	Band       string   `json:"band"`     // 2 | 5 | 6
 	Triggers   []string `json:"triggers"` // SSIDs whose presence means "apply me"
 }
 
@@ -69,9 +69,9 @@ func validatePreset(p Preset) error {
 		return fmt.Errorf("security must be open, wpa2, or wpa3")
 	}
 	switch p.Band {
-	case "2", "5", "6", "dual":
+	case "2", "5", "6":
 	default:
-		return fmt.Errorf("band must be 2, 5, 6, or dual")
+		return fmt.Errorf("band must be 2, 5, or 6")
 	}
 	if len(p.Triggers) > maxTriggers {
 		return fmt.Errorf("too many triggers (max %d)", maxTriggers)
@@ -133,18 +133,47 @@ type PresetManager struct {
 	lastMatch  string        // id of last auto-matched preset (edge-trigger state)
 	cfgPath    func() string // resolved at persist time (main sets cfgPath after NewServer)
 	apply      func(Preset) error
+	dual       func() bool // reports whether the dual-band setting is on; nil means off
 
 	applyMu sync.Mutex // serializes device applies (manual vs auto)
 }
 
 func NewPresetManager(hp HotspotPresets, cfgPath func() string) *PresetManager {
-	return &PresetManager{
+	pm := &PresetManager{
 		presets:    append([]Preset(nil), hp.Presets...),
 		activeID:   hp.Active,
 		autoSwitch: hp.AutoSwitch,
 		cfgPath:    cfgPath,
-		apply:      applyPresetLive,
 	}
+	pm.apply = func(p Preset) error { return applyPresetLive(p, pm.dual != nil && pm.dual()) }
+	return pm
+}
+
+// MigrateDualBand rewrites every "dual" preset band to "5" in memory and in
+// config.json. It reports whether anything changed.
+func (pm *PresetManager) MigrateDualBand() bool {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	changed := false
+	for i := range pm.presets {
+		if pm.presets[i].Band == "dual" {
+			pm.presets[i].Band = "5"
+			changed = true
+		}
+	}
+	if changed {
+		pm.persistLocked()
+	}
+	return changed
+}
+
+// ApplyBusy reports whether a preset apply is running.
+func (pm *PresetManager) ApplyBusy() bool {
+	if !pm.applyMu.TryLock() {
+		return true
+	}
+	pm.applyMu.Unlock()
+	return false
 }
 
 func (pm *PresetManager) findLocked(id string) (Preset, bool) {
@@ -364,20 +393,24 @@ func helperResultLine(out string) string {
 // applyPresetLive pushes a preset's config to the SoftAP via the root helper,
 // then bounces the AP if it's up so the new SSID/passphrase takes effect
 // (clients drop for a few seconds — unavoidable when renaming a live network).
-func applyPresetLive(p Preset) error {
+func applyPresetLive(p Preset, dual bool) error {
 	sec := p.Security
 	if sec == "" {
 		sec = "wpa2"
 	}
-	band := p.Band
-	if band == "" {
-		band = "5"
+	band := []string{p.Band}
+	switch {
+	case dual:
+		band = []string{"dual"}
+	case p.Band == "" || p.Band == "5":
+		band = []string{"5", "149"}
 	}
-	out := helperRun("com.zflip5.tether.SetSoftApConfig", "set", p.SSID, sec, p.Passphrase, band)
+	args := append([]string{"com.zflip5.tether.SetSoftApConfig", "set", p.SSID, sec, p.Passphrase}, band...)
+	out := helperRun(args[0], args[1:]...)
 	if !strings.Contains(out, "RESULT=OK") {
 		return fmt.Errorf("set softap config: %s", helperResultLine(out))
 	}
-	if hotspotActive() {
+	if apProbe() {
 		stopHotspot()
 		time.Sleep(1500 * time.Millisecond) // let the teardown land before restart
 		restartHotspotRetry()
