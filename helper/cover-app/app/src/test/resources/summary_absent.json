@@ -1,0 +1,10 @@
+{
+  "v": 1, "updated_at": "2026-10-22T10:00:00+07:00", "slow_age_s": 3,
+  "signal": {},
+  "usage": {"period_bytes": 1, "limit_bytes": 0, "today_bytes": 1, "period": "monthly"},
+  "speed": {"interval_ms": 1000, "wan_down_bytes_s": 0, "wan_up_bytes_s": 0, "per_client": [{"mac": "aa:bb:cc:dd:ee:ff", "down_bytes_s": 1, "up_bytes_s": 1}]},
+  "hotspot": {"active": false, "clients": 0, "dual_band": false, "dual_active": false},
+  "temperature": {"raw_c": 41.8, "state": "SAFE", "safe": true, "warn_c": 44, "gate_c": 46, "bench": false},
+  "battery": {},
+  "tailscale": {"state": "stopped"}
+}

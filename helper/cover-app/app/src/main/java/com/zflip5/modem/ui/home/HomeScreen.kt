@@ -1,5 +1,6 @@
 package com.zflip5.modem.ui.home
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -23,10 +24,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.zflip5.modem.R
 import com.zflip5.modem.data.DaemonClient
 import com.zflip5.modem.data.Format
 import com.zflip5.modem.data.SummaryState
@@ -63,7 +68,10 @@ fun HomeScreen(state: SummaryState, client: DaemonClient, onRefresh: () -> Unit,
     Box(Modifier.fillMaxSize().drizzle()) {
         Column(Modifier.fillMaxSize().padding(11.dp)) {
             Row(faded.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.size(44.dp).background(MaterialTheme.colorScheme.surface, CircleShape).border(3.dp, dim, CircleShape))
+                Image(
+                    painterResource(R.drawable.flippost_logo), contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.testTag("home_avatar").size(44.dp).clip(CircleShape).border(3.dp, dim, CircleShape),
+                )
                 GlassCard(Modifier.weight(1f)) {
                     Text("Hotspot · ${s?.hotspot?.ssid ?: NONE}", color = text, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(s?.let { Format.hotspotSubtitle(it.hotspot) } ?: NONE, color = muted, style = small, maxLines = 1, overflow = TextOverflow.Ellipsis)

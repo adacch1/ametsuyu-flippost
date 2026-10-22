@@ -92,7 +92,7 @@ fun SystemScreen(state: SummaryState, client: DaemonClient, onRefresh: () -> Uni
         ScreenScaffold("System", onBack) {
             item {
                 GlassCard(Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
-                    s?.battery?.let { Note("Battery ${it.level}%") }
+                    s?.battery?.let { Note("Battery ${it.level?.let { l -> "$l%" } ?: "—"}") }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Bench mode", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleSmall)
                         OptimisticSwitch(

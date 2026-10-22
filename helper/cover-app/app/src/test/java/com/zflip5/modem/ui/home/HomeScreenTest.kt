@@ -74,6 +74,22 @@ class HomeScreenTest {
         assertLayout()
     }
 
+    private fun assertRendersDashes(f: String) {
+        show(state(fixture(f)))
+        rule.onNodeWithText("Hotspot · —").assertExists()
+        assertLayout()
+    }
+
+    @Test fun nullFieldsRender() = assertRendersDashes("summary_allnull.json")
+    @Test fun absentFieldsRender() = assertRendersDashes("summary_absent.json")
+
+    @Test fun avatarIsLeftOfHotspotCard() {
+        show()
+        val a = rule.onNodeWithTag("home_avatar").assertExists().fetchSemanticsNode().boundsInRoot
+        val c = rule.onNodeWithText("Hotspot · Flippost").fetchSemanticsNode().boundsInRoot
+        assertTrue(a.right <= c.left)
+    }
+
     @Test fun longValuesStillFit() {
         val j = fixture("summary.json")
         j.getJSONObject("hotspot").put("ssid", "Flippost-super-long-ssid-32-char")

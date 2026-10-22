@@ -16,11 +16,11 @@ object SummaryParser {
         val sp = o.getJSONObject("speed")
         val h = o.getJSONObject("hotspot")
         val t = o.getJSONObject("temperature")
-        val ts = o.getJSONObject("tailscale")
+        val ts = o.optJSONObject("tailscale") ?: JSONObject()
         return Summary(
             v = o.getInt("v"), updatedAt = o.getString("updated_at"), slowAgeS = o.getInt("slow_age_s"),
             signal = o.optJSONObject("signal")?.let {
-                SignalInfo(it.getString("display"), it.getString("tech"), it.getString("operator"), it.int("bars"))
+                SignalInfo(it.str("display"), it.str("tech"), it.str("operator"), it.int("bars"))
             },
             usage = UsageInfo(u.getLong("period_bytes"), u.getLong("limit_bytes"), u.getLong("today_bytes"),
                 u.long("left_bytes"), u.getString("period"), u.str("next_reset")),
@@ -38,9 +38,9 @@ object SummaryParser {
             temperature = TempInfo(t.dbl("c"), t.getDouble("raw_c"), t.getString("state"), t.getBoolean("safe"),
                 t.getDouble("warn_c"), t.getDouble("gate_c"), t.getBoolean("bench")),
             battery = o.optJSONObject("battery")?.let {
-                BatteryInfo(it.getInt("level"), it.getString("plugged"), it.getDouble("temp_c"))
+                BatteryInfo(it.int("level"), it.str("plugged"), it.dbl("temp_c"))
             },
-            tailscale = TailscaleBrief(ts.getString("state"), ts.str("ip")),
+            tailscale = TailscaleBrief(ts.str("state") ?: "unknown", ts.str("ip")),
             airplane = o.bool("airplane"),
         )
     }

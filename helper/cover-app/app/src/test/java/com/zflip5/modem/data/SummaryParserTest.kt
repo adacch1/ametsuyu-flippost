@@ -21,4 +21,8 @@ import org.robolectric.RobolectricTestRunner
   @Test fun parsesTailscaleStatus() { val t = SummaryParser.tailscale(fixture("tailscale_running.json"))
     assertEquals("zflip5.tailXXXX.ts.net", t.dnsName); assertEquals(listOf("100.110.36.27","fd7a:115c:a1e0::1"), t.ips)
     assertTrue(t.serveOk); assertNull(t.error) }
+  @Test fun everyNullableFieldNullOrAbsentParses() { for (f in listOf("summary_allnull.json", "summary_absent.json")) {
+    val s = SummaryParser.parse(fixture(f))
+    assertNull(s.signal!!.operator); assertNull(s.battery!!.level); assertNull(s.tailscale.ip); assertNull(s.speed.perClient!![0].ipv4)
+    assertNull(s.wanIp); assertNull(s.airplane); assertNull(s.temperature.c); assertNull(s.hotspot.ssid) } }
 }
