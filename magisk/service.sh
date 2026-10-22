@@ -26,6 +26,7 @@ BIN="$MODDIR/daemon/zflip5-modemd"
 
   mkdir -p "$DATADIR"
   chmod 700 "$DATADIR"
+  sh "$MODDIR/cleanup.sh" >> "$LOG" 2>&1
 
   # First-boot: generate scoped >=256-bit hex tokens and a loopback config.
   if [ ! -f "$CONFIG" ]; then
@@ -59,11 +60,8 @@ EOF
   setprop ctl.stop vendor.cnss_diag
 
   # Cooler idle: stop charging at Samsung's protect-battery threshold (80%)
-  # instead of holding 100% on USB, and skip window/transition animations.
+  # instead of holding 100% on USB.
   settings put global protect_battery 1
-  settings put global window_animation_scale 0
-  settings put global transition_animation_scale 0
-  settings put global animator_duration_scale 0
 
   # Wi-Fi 6 gate (One UI 7): without it the Sem start runs 11axmode=0 (ac only).
   # A wipe resets it, so set it on every boot, before the first start.
@@ -96,11 +94,10 @@ EOF
   # The zip does not preserve the exec bit; ensure the binary is runnable.
   [ -f "$BIN" ] && chmod 0755 "$BIN"
 
-  # Always-on cover display, half of it: never sleep while on a charger (7 =
-  # AC|USB|wireless), so the kiosk stays readable on a phone that lives on a
-  # cable. The other half is FLAG_KEEP_SCREEN_ON in the kiosk activity, which
-  # covers the unplugged case. Recorded first so uninstall.sh can put the
-  # owner's value back rather than guessing a default.
+  # Keep the screen on while the phone charges (7 = AC|USB|wireless), so the
+  # app stays readable on a phone that lives on a cable. The app's
+  # FLAG_KEEP_SCREEN_ON covers the unplugged case. The module records the
+  # previous value first so uninstall.sh restores it instead of guessing.
   if [ ! -f "$DATADIR/stay-on.prev" ]; then
     settings get global stay_on_while_plugged_in > "$DATADIR/stay-on.prev" 2>/dev/null
   fi
