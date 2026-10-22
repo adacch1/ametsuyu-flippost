@@ -2,6 +2,8 @@ package main
 
 import (
 	"net/http/httptest"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -91,5 +93,53 @@ func TestPairTargetTokenRule(t *testing.T) {
 	s.openReads.Store(false)
 	if got := s.pairTarget(r); got != "https://zflip5.tail1.ts.net/?token="+strings.Repeat("a", 64) {
 		t.Errorf("closed reads: %q", got)
+	}
+}
+
+var webRouteRe = regexp.MustCompile(`/v1/[a-z0-9/]+[a-z0-9]`)
+
+func webRoutes() []string {
+	m := map[string]bool{}
+	for _, p := range webRouteRe.FindAllString(string(webIndexHTML), -1) {
+		m[p] = true
+	}
+	var out []string
+	for p := range m {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+func TestWebUIRoutesExist(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	rs := webRoutes()
+	if len(rs) < 20 {
+		t.Fatalf("only %d routes: %v", len(rs), rs)
+	}
+	for _, p := range rs {
+		if w := do(s, "PATCH", p, ""); w.Code == 404 {
+			t.Errorf("page calls unregistered %s", p)
+		}
+	}
+}
+func TestWebUIForbiddenRoutes(t *testing.T) {
+	for _, bad := range []string{"/v1/tailscale/login", "/v1/tailscale/logout", "/v1/dashboard/open", "/v1/dashboard/control", "/v1/signal", "/v1/battery", `"/dashboard"`, "serviceWorker.register("} {
+		if strings.Contains(string(webIndexHTML), bad) {
+			t.Errorf("page contains %s", bad)
+		}
+	}
+}
+func TestWebUIPollsSummary(t *testing.T) {
+	for _, want := range []string{"const POLL_MS = 2000;", "/v1/summary", "getRegistrations", "/*PURE-START*/", "/*PURE-END*/", "slow_age_s"} {
+		if !strings.Contains(string(webIndexHTML), want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+}
+func TestWebUIScreens(t *testing.T) {
+	for _, n := range []string{"home", "devices", "hotspot", "data", "system", "tailscale", "alerts", "advanced"} {
+		if !strings.Contains(string(webIndexHTML), `id="screen-`+n+`"`) {
+			t.Errorf("missing screen %s", n)
+		}
 	}
 }

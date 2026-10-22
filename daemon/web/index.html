@@ -6,8 +6,523 @@
 <title>Flippost</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/logo.png">
+<style>
+:root{--bg:#1b2436;--sky-top:#2b3850;--surface:rgba(213,231,253,.07);--surface-inset:rgba(14,20,33,.45);--line:rgba(213,231,253,.15);--line-soft:rgba(213,231,253,.08);--ink:#fef7ee;--ink-2:#c9d7ea;--ink-3:#9eb1cb;--teal:#a9cdfb;--teal-2:#6fa4f0;--green:#9ee6c3;--amber:#ffd49a;--red:#ff9aa6;--violet:#c4b5ff;--blush:#fbd3d0;--track:rgba(213,231,253,.12);--on-teal:#1b2436}
+*{box-sizing:border-box;min-width:0}
+html{background:var(--bg)}
+body{margin:0;min-height:100vh;color:var(--ink);background:linear-gradient(180deg,var(--sky-top),var(--bg) 280px) var(--bg);font:500 13.5px/1.4 Nunito,ui-rounded,system-ui,sans-serif;font-feature-settings:"tnum" 1;overflow-wrap:anywhere;overflow-x:hidden}
+main{max-width:640px;margin:0 auto;padding:16px 16px 40px;display:grid;gap:10px}
+h1{margin:0;font-size:20px;font-weight:700;letter-spacing:-.02em}
+h2{margin:0 0 8px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:14px;backdrop-filter:blur(8px)}
+.top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.back{color:var(--teal);text-decoration:none;font-weight:700}
+.pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700;background:linear-gradient(135deg,var(--teal),var(--teal-2));color:var(--on-teal)}
+.pill.warn{background:linear-gradient(135deg,var(--amber),#f0a85c)}
+.hero{font-size:clamp(34px,11vw,46px);font-weight:700;line-height:1;letter-spacing:-.03em}
+.muted{color:var(--ink-3)} .ink2{color:var(--ink-2)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid var(--line-soft)}
+.row:first-of-type{border-top:0}
+.row>span:first-child{flex:1}
+.bar{height:10px;border-radius:999px;background:var(--track);overflow:hidden;margin:10px 0}
+.bar>i{display:block;height:100%;border-radius:999px;background:repeating-linear-gradient(135deg,var(--teal) 0 8px,var(--teal-2) 8px 16px)}
+.bar.hot>i{background:repeating-linear-gradient(135deg,var(--amber) 0 8px,#f0a85c 8px 16px)}
+button,.btn{font:inherit;font-weight:700;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--line);background:var(--surface-inset);color:var(--teal);cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+button.commit{background:var(--teal);color:var(--on-teal);border-color:transparent}
+button.danger{color:var(--red)}
+button:disabled{opacity:.45;cursor:not-allowed}
+input,select,textarea{font:inherit;width:100%;min-height:44px;padding:11px 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface-inset);color:var(--ink)}
+textarea{min-height:88px}
+label.f{display:grid;gap:4px;margin:8px 0;font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.sw{position:relative;display:inline-block;width:52px;height:30px;flex:none}
+.sw input{position:absolute;inset:0;opacity:0;width:100%;height:100%;min-height:0;margin:0;cursor:pointer}
+.sw i{position:absolute;inset:0;border-radius:999px;background:var(--track);transition:background .15s}
+.sw i::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:var(--ink);transition:transform .15s}
+.sw input:checked+i{background:linear-gradient(135deg,var(--green),var(--teal))}
+.sw input:checked+i::after{transform:translateX(22px)}
+.sw input:disabled+i{opacity:.4}
+details.nav summary{list-style:none}
+details.nav summary::-webkit-details-marker{display:none}
+details.nav a{display:block;padding:12px 4px;color:var(--ink);text-decoration:none;border-top:1px solid var(--line-soft)}
+body.stale .live{opacity:.5;filter:grayscale(1)}
+body.stale button:not(.keep),body.stale .sw,body.stale input,body.stale select,body.stale textarea{pointer-events:none;opacity:.45}
+#toast{position:fixed;left:16px;right:16px;bottom:16px;max-width:608px;margin:0 auto;padding:12px 14px;border-radius:12px;background:#0e1421;border:1px solid var(--red);color:var(--ink);display:none;z-index:10}
+dialog{max-width:min(92vw,420px);border:1px solid var(--line);border-radius:22px;background:var(--bg);color:var(--ink);padding:16px}
+dialog::backdrop{background:rgba(0,0,0,.55)}
+dialog .btns{display:grid;gap:8px;margin-top:12px}
+.qr{width:100%;max-width:240px;border-radius:12px;background:#fff;display:block;margin:8px auto}
+.err{color:var(--red)}
+</style>
 </head>
 <body>
-<main id="app"></main>
+<main>
+  <div class="top"><h1>Flippost</h1><span id="chip" class="pill">Connecting</span></div>
+
+  <section id="screen-home" class="screen">
+    <div id="home"></div>
+  </section>
+  <section id="screen-devices" class="screen" hidden><a class="back" href="#/">Back</a><div id="devices"></div></section>
+  <section id="screen-hotspot" class="screen" hidden><a class="back" href="#/">Back</a><div id="hotspot"></div></section>
+  <section id="screen-data" class="screen" hidden><a class="back" href="#/">Back</a><div id="data"></div></section>
+  <section id="screen-system" class="screen" hidden><a class="back" href="#/">Back</a><div id="system"></div></section>
+  <section id="screen-tailscale" class="screen" hidden><a class="back" href="#/">Back</a><div id="tailscale"></div></section>
+  <section id="screen-alerts" class="screen" hidden>
+    <a class="back" href="#/">Back</a>
+    <div class="card"><h2>Alerts</h2><p>Alerts are set on the phone.</p></div>
+  </section>
+  <section id="screen-advanced" class="screen" hidden><a class="back" href="#/">Back</a><div id="advanced"></div></section>
+</main>
+<div id="toast" role="alert"></div>
+<dialog id="dlg"></dialog>
+<script>
+/*PURE-START*/
+const POLL_MS = 2000;
+function fmtBytes(n) {
+  if (n < 1000) return n + " B";
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1000, i = 0;
+  while (v >= 1000 && i < units.length - 1) { v /= 1000; i++; }
+  return v.toFixed(2) + " " + units[i];
+}
+function fmtRate(b) {
+  const bits = b * 8;
+  if (bits < 1e6) return Math.round(bits / 1e3) + " kbps";
+  if (bits < 1e8) return (bits / 1e6).toFixed(1) + " Mbps";
+  return Math.round(bits / 1e6) + " Mbps";
+}
+function hotspotLine(h) {
+  const bands = { "2": "2.4 GHz", "5": "5 GHz", "6": "6 GHz", dual: "2.4 + 5 GHz" };
+  const parts = [];
+  if (h.wifi6 != null) parts.push(h.wifi6 ? "Wi-Fi 6" : "Wi-Fi 6 unavailable");
+  if (h.band != null) parts.push(bands[h.band] || h.band + " GHz");
+  parts.push(h.clients === 1 ? "1 device" : h.clients + " devices");
+  return parts.join(" · ");
+}
+function deviceRows(speed) {
+  if (!Array.isArray(speed.per_client)) return [];
+  const rows = speed.per_client.map(c => ({ label: c.ipv4 ?? c.mac, down: c.down_bytes_s, up: c.up_bytes_s }));
+  if (speed.phone_down_bytes_s != null && speed.phone_up_bytes_s != null) {
+    rows.push({ label: "This phone (approximate)", down: speed.phone_down_bytes_s, up: speed.phone_up_bytes_s });
+  }
+  return rows;
+}
+function isStale(lastOkMs, nowMs, slowAgeS = 0) {
+  return nowMs - lastOkMs > 5000 || slowAgeS > 30;
+}
+function dualBlockText(block) {
+  if (block === "whitelist") return "Clear the allowlist first: dual band stops Wi-Fi scanning.";
+  if (block === "auto_switch") return "Turn off preset auto-switch first: dual band stops Wi-Fi scanning.";
+  return "";
+}
+/*PURE-END*/
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const mbps = b => (b * 8 / 1e6).toFixed(1);
+const rates = (d, u) => "↓" + mbps(d) + " ↑" + mbps(u) + " Mb/s";
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } },
+};
+const S = { sum: null, lastOk: 0, readFail: 0 };
+
+// Move ?token= into storage, then drop it from the address bar.
+try {
+  const u = new URL(location.href), t = u.searchParams.get("token");
+  if (t) {
+    store.set("zf5tok", t);
+    u.searchParams.delete("token");
+    history.replaceState(null, "", u.pathname + u.search + u.hash);
+  }
+} catch (e) { /* ignore */ }
+
+// Old versions registered a service worker. Remove any that remain.
+try {
+  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(() => {});
+} catch (e) { /* no service worker support */ }
+
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => { t.style.display = "none"; }, 5000);
+}
+
+function ask(title, text, buttons) {
+  return new Promise(res => {
+    const d = $("dlg");
+    d.innerHTML = "<h2>" + esc(title) + "</h2><p>" + esc(text) + "</p><div class=\"btns\">" +
+      buttons.map((b, i) => "<button class=\"keep " + (b.cls || "") + "\" data-i=\"" + i + "\">" + esc(b.label) + "</button>").join("") + "</div>";
+    d.onclick = e => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      d.onclose = null;
+      d.close();
+      res(buttons[+b.dataset.i].value);
+    };
+    d.onclose = () => res(undefined);
+    d.showModal();
+  });
+}
+const confirmBox = (title, text, label, danger) =>
+  ask(title, text, [{ label, value: true, cls: danger ? "danger" : "commit" }, { label: "Cancel", value: false }]);
+
+function promptToken() {
+  return new Promise(res => {
+    const d = $("dlg");
+    d.innerHTML = "<h2>Control token</h2><p>Enter the control token from the Flippost app on the phone.</p>" +
+      "<input id=\"tokIn\" type=\"password\" autocomplete=\"off\"><div class=\"btns\"><button class=\"keep commit\" id=\"tokSave\">Save</button><button class=\"keep\" id=\"tokNo\">Cancel</button></div>";
+    d.onclick = e => {
+      if (e.target.id !== "tokSave" && e.target.id !== "tokNo") return;
+      if (e.target.id === "tokSave" && $("tokIn").value.trim()) store.set("zf5rtok", $("tokIn").value.trim());
+      d.onclose = null;
+      d.close();
+      res(e.target.id === "tokSave");
+    };
+    d.onclose = () => res(false);
+    d.showModal();
+  });
+}
+
+async function http(method, path, body, token, timeoutMs) {
+  const h = {};
+  if (token) h.Authorization = "Bearer " + token;
+  if (body !== undefined) h["Content-Type"] = "application/json";
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs || 15000);
+  try {
+    return await fetch(path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), signal: ac.signal });
+  } finally { clearTimeout(timer); }
+}
+async function read(path) {
+  const r = await http("GET", path, undefined, store.get("zf5tok"));
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Request failed (" + r.status + ")");
+  return r;
+}
+async function readJSON(path) { return (await read(path)).json(); }
+
+// Writes return the parsed body. Failures show the daemon's error and throw.
+async function write(path, body, timeoutMs) {
+  if (document.body.classList.contains("stale")) { toast("The phone is not responding. Try again when it shows Live."); throw new Error("stale"); }
+  let r;
+  try {
+    r = await http("POST", path, body === undefined ? {} : body, store.get("zf5rtok"), timeoutMs);
+  } catch (e) {
+    toast(e.name === "AbortError" ? "The request timed out." : "Cannot reach the phone.");
+    throw e;
+  }
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) {
+    if (await promptToken()) toast("Token saved. Try again.");
+    throw new Error("unauthorized");
+  }
+  if (!r.ok) { toast(j.error || "Request failed (" + r.status + ")"); throw Object.assign(new Error(j.error || "failed"), { reason: j.reason }); }
+  return j;
+}
+
+/* ---------- Home ---------- */
+function barsSvg(n) {
+  let s = "<svg width=\"34\" height=\"28\" viewBox=\"0 0 34 28\" role=\"img\" aria-label=\"Signal " + (n ?? 0) + " of 4 bars\">";
+  for (let i = 0; i < 4; i++) {
+    const h = 7 + i * 6;
+    s += "<rect x=\"" + (i * 9) + "\" y=\"" + (28 - h) + "\" width=\"7\" height=\"" + h + "\" rx=\"2\" fill=\"" + (n != null && i < n ? "var(--teal)" : "var(--track)") + "\"/>";
+  }
+  return s + "</svg>";
+}
+
+function renderHome() {
+  const s = S.sum;
+  if (!s) { $("home").innerHTML = "<div class=\"card muted\">" + (S.readFail ? "Cannot read the phone. Open the pairing link from the Flippost app." : "Loading") + "</div>"; return; }
+  const sg = s.signal, u = s.usage, h = s.hotspot, sp = s.speed;
+  let html = "<div class=\"card live\"><h2>Signal</h2><div class=\"top\"><div>" +
+    (sg ? "<div class=\"hero\">" + esc(sg.display) + "</div><div class=\"ink2\">" + esc(sg.operator) + "</div>" : "<div class=\"ink2\">No signal data</div>") +
+    "</div>" + barsSvg(sg ? sg.bars : null) + "</div></div>";
+
+  const pct = u.limit_bytes > 0 ? Math.min(100, u.period_bytes / u.limit_bytes * 100) : 0;
+  html += "<div class=\"card live\"><h2>Data used</h2><div class=\"hero\">" + fmtBytes(u.period_bytes) + "</div>" +
+    (u.limit_bytes > 0 ? "<div class=\"bar" + (pct >= 90 ? " hot" : "") + "\"><i style=\"width:" + pct.toFixed(1) + "%\"></i></div><div class=\"muted\">of " + fmtBytes(u.limit_bytes) + "</div>" : "") +
+    "<div class=\"top\"><span>Today " + fmtBytes(u.today_bytes) + "</span>" + (u.left_bytes != null ? "<span class=\"ink2\">" + fmtBytes(u.left_bytes) + " left</span>" : "") + "</div></div>";
+
+  const rows = deviceRows(sp);
+  html += "<div class=\"card live\"><h2>Speed</h2><div class=\"hero\" style=\"font-size:26px\" title=\"" + esc(fmtRate(sp.wan_down_bytes_s) + " down, " + fmtRate(sp.wan_up_bytes_s) + " up") + "\">" + rates(sp.wan_down_bytes_s, sp.wan_up_bytes_s) + "</div>" +
+    (rows.length ? rows.map(r => "<div class=\"row\"><span>" + esc(r.label.replace("approximate", "approx.")) + "</span><span>" + rates(r.down, r.up) + "</span></div>").join("") : "<div class=\"muted\">Per-device speed unavailable</div>") + "</div>";
+
+  html += "<div class=\"card live\"><h2>Hotspot</h2><div class=\"row\"><div><b>" + esc(h.ssid || "Hotspot") + "</b><div class=\"ink2\">" + esc(hotspotLine(h)) + "</div></div>" +
+    "<label class=\"sw\"><input type=\"checkbox\" id=\"hsSw\" data-act=\"tether\"" + (h.active ? " checked" : "") + "><i></i></label></div></div>";
+
+  html += "<details class=\"nav card\"><summary class=\"btn keep\">Details</summary>" +
+    ["devices:Devices", "hotspot:Hotspot", "data:Data", "system:System", "tailscale:Tailscale", "alerts:Alerts", "advanced:Advanced"]
+      .map(x => "<a href=\"#/" + x.split(":")[0] + "\">" + x.split(":")[1] + "</a>").join("") + "</details>";
+  // Keep the Details list open across polls.
+  const open = $("home").querySelector("details")?.open;
+  $("home").innerHTML = html;
+  if (open) $("home").querySelector("details").open = true;
+}
+
+/* ---------- Polling ---------- */
+function render() {
+  const now = Date.now();
+  const stale = !S.sum || isStale(S.lastOk, now, S.sum.slow_age_s);
+  document.body.classList.toggle("stale", stale);
+  const chip = $("chip");
+  chip.className = "pill" + (stale ? " warn" : "");
+  chip.textContent = !S.sum ? (S.readFail ? "Offline" : "Connecting") :
+    stale ? "Updated " + Math.max(Math.round((now - S.lastOk) / 1000), S.sum.slow_age_s || 0) + " s ago" : "Live";
+}
+async function poll() {
+  if (document.hidden) return;
+  try {
+    S.sum = await readJSON("/v1/summary");
+    S.lastOk = Date.now();
+    S.readFail = 0;
+  } catch (e) { S.readFail++; }
+  render();
+  if (currentRoute() === "home") renderHome();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+
+/* ---------- Routing ---------- */
+const SCREENS = ["home", "devices", "hotspot", "data", "system", "tailscale", "alerts", "advanced"];
+function currentRoute() {
+  const r = location.hash.replace(/^#\/?/, "");
+  return SCREENS.includes(r) ? r : "home";
+}
+function route() {
+  const r = currentRoute();
+  SCREENS.forEach(n => { $("screen-" + n).hidden = n !== r; });
+  if (r === "home") renderHome(); else if (loaders[r]) loaders[r]();
+}
+window.addEventListener("hashchange", route);
+
+function fail(id, e) { $(id).innerHTML = "<div class=\"card err\">" + esc(e.message || e) + "</div>"; }
+const switchRow = (label, id, act, on, disabled, hint) =>
+  "<div class=\"row\"><span>" + label + (hint ? "<div class=\"muted\">" + esc(hint) + "</div>" : "") + "</span><label class=\"sw\"><input type=\"checkbox\" id=\"" + id + "\" data-act=\"" + act + "\"" + (on ? " checked" : "") + (disabled ? " disabled" : "") + "><i></i></label></div>";
+
+/* ---------- Details screens ---------- */
+const loaders = {
+  async devices() {
+    try {
+      const [cl] = await Promise.all([readJSON("/v1/clients"), poll()]);
+      const sp = S.sum ? S.sum.speed : {};
+      const per = Array.isArray(sp.per_client) ? sp.per_client : [];
+      const rows = deviceRows(sp);
+      const byLabel = Object.fromEntries(rows.map(r => [r.label, r]));
+      let html = "<div class=\"card\"><h2>Devices</h2>";
+      html += (cl.clients || []).map(c => {
+        const label = c.ipv4 || c.mac, r = byLabel[label], p = per.find(x => x.mac === c.mac);
+        return "<div class=\"row\"><span><b>" + esc(label) + "</b><div class=\"muted\">" + esc(c.mac) + " · " + esc(c.state) + (p && p.signal_dbm != null ? " · " + p.signal_dbm + " dBm" : "") + "</div></span><span>" + (r ? rates(r.down, r.up) : "") + "</span></div>";
+      }).join("") || "<div class=\"muted\">No devices connected</div>";
+      const phone = rows.find(r => r.label.startsWith("This phone"));
+      if (phone) html += "<div class=\"row\"><span>This phone (approx.)</span><span>" + rates(phone.down, phone.up) + "</span></div>";
+      if (!rows.length) html += "<div class=\"muted\">Per-device speed unavailable</div>";
+      $("devices").innerHTML = html + "</div>";
+    } catch (e) { fail("devices", e); }
+  },
+
+  async hotspot() {
+    try {
+      const [hs, pr, usb] = await Promise.all([readJSON("/v1/hotspot"), readJSON("/v1/presets"), readJSON("/v1/usbtether"), poll()]);
+      const sh = S.sum ? S.sum.hotspot : {};
+      const block = dualBlockText(sh.dual_band_block);
+      let html = "<div class=\"card\"><h2>Hotspot</h2>" +
+        switchRow("Dual band", "dualSw", "dual", hs.dual_band, !hs.dual_band && !!block, block) +
+        switchRow("USB tethering", "usbSw", "usb", usb.active) + "</div>";
+
+      html += "<div class=\"card\"><h2>Presets</h2>" + ((pr.presets || []).map(p =>
+        "<div class=\"row\"><span><b>" + esc(p.name || p.id) + "</b>" + (pr.active === p.id ? " <span class=\"pill\">Active</span>" : "") + "<div class=\"muted\">" + esc(p.ssid) + " · " + esc(p.security) + " · " + esc(p.band) + " GHz</div></span>" +
+        "<span><button data-act=\"presetApply\" data-id=\"" + esc(p.id) + "\">Apply</button> <button class=\"danger\" data-act=\"presetDel\" data-id=\"" + esc(p.id) + "\">Delete</button></span></div>").join("") || "<div class=\"muted\">No presets</div>") +
+        switchRow("Auto-switch", "autoSw", "auto", pr.auto_switch) +
+        "<h2 style=\"margin-top:12px\">Add or edit a preset</h2>" +
+        "<label class=\"f\">ID (leave empty for a new preset)<input id=\"pId\"></label>" +
+        "<label class=\"f\">Name<input id=\"pName\"></label><label class=\"f\">Network name<input id=\"pSsid\"></label>" +
+        "<label class=\"f\">Passphrase (empty keeps the saved one)<input id=\"pPass\" type=\"password\" autocomplete=\"off\"></label>" +
+        "<div class=\"grid\"><label class=\"f\">Security<select id=\"pSec\"><option>wpa2</option><option>wpa3</option><option>open</option></select></label>" +
+        "<label class=\"f\">Band<select id=\"pBand\"><option>5</option><option>2</option><option>6</option></select></label></div>" +
+        "<label class=\"f\">Trigger networks (comma separated)<input id=\"pTrig\"></label>" +
+        "<button class=\"commit\" data-act=\"presetSave\">Save preset</button></div>";
+
+      html += "<div class=\"card\"><h2>Allowlist</h2><p class=\"muted\">The hotspot starts when one of these networks is in range. One network name per line.</p>" +
+        "<textarea id=\"wl\">" + esc((hs.whitelist || []).join("\n")) + "</textarea>" +
+        "<div class=\"grid\" style=\"margin-top:8px\"><button class=\"commit\" data-act=\"wlSave\">Save allowlist</button><button data-act=\"scan\">Scan</button></div>" +
+        ((hs.nearby || []).length ? "<h2 style=\"margin-top:12px\">Nearby</h2>" + hs.nearby.map(n => "<div class=\"row\"><span>" + esc(n.ssid) + "<span class=\"muted\"> " + n.rssi + " dBm</span></span><button data-act=\"wlAdd\" data-ssid=\"" + esc(n.ssid) + "\">Add</button></div>").join("") : "") +
+        (hs.paused ? "<p class=\"err\">Scanning paused: " + esc(hs.paused === "location_off" ? "turn on location on the phone." : hs.paused) + "</p>" : "") + "</div>";
+
+      html += "<div class=\"card\"><h2>Force on</h2><p class=\"muted\">" + (hs.override_left_s ? "Forced on for " + Math.ceil(hs.override_left_s / 60) + " more minutes." : "Ignore the allowlist for a set time.") + "</p>" +
+        "<label class=\"f\">Hours (0 to 24, 0 cancels)<input id=\"ovH\" type=\"number\" min=\"0\" max=\"24\" step=\"1\" value=\"0\"></label><button class=\"commit\" data-act=\"override\">Set</button></div>";
+      $("hotspot").innerHTML = html;
+    } catch (e) { fail("hotspot", e); }
+  },
+
+  async data() {
+    try {
+      const u = await readJSON("/v1/usage");
+      const opt = (v, cur) => "<option" + (v === cur ? " selected" : "") + ">" + v + "</option>";
+      $("data").innerHTML = "<div class=\"card\"><h2>Data cap</h2>" +
+        "<div class=\"row\"><span>Used this period</span><b>" + fmtBytes(u.period_bytes) + "</b></div>" +
+        "<div class=\"row\"><span>Next reset</span><span>" + esc(u.next_reset ? new Date(u.next_reset).toLocaleString() : "Manual") + "</span></div>" +
+        "<label class=\"f\">Cap in GB (0 for none)<input id=\"qGb\" type=\"number\" min=\"0\" step=\"0.1\" value=\"" + (u.limit_bytes / 1e9) + "\"></label>" +
+        "<label class=\"f\">Period<select id=\"qPer\">" + ["daily", "weekly", "monthly", "manual"].map(v => opt(v, u.period)).join("") + "</select></label>" +
+        "<div class=\"grid\"><label class=\"f\">Reset time<input id=\"qTime\" type=\"time\" value=\"" + esc(u.reset_time) + "\"></label>" +
+        "<label class=\"f\">Reset day (monthly)<input id=\"qDay\" type=\"number\" min=\"1\" max=\"28\" value=\"" + u.reset_day + "\"></label></div>" +
+        "<div class=\"grid\" style=\"margin-top:8px\"><button class=\"commit\" data-act=\"quotaSave\">Save</button><button class=\"danger\" data-act=\"usageReset\">Reset</button></div></div>";
+    } catch (e) { fail("data", e); }
+  },
+
+  async system() {
+    try {
+      const [bench, th, cpu] = await Promise.all([readJSON("/v1/thermal/bench"), readJSON("/v1/thermal"), readJSON("/v1/cpu"), poll()]);
+      const s = S.sum || {}, t = s.temperature || {}, b = s.battery;
+      const opt = (v, cur) => "<option" + (v === cur ? " selected" : "") + ">" + v + "</option>";
+      $("system").innerHTML =
+        "<div class=\"card\"><h2>Status</h2><div class=\"row\"><span>Temperature</span><b>" + (t.c != null ? t.c + " °C" : "Unknown") + " · " + esc(t.state || "unknown") + "</b></div>" +
+        (b ? "<div class=\"row\"><span>Battery</span><b>" + b.level + "%</b></div>" : "") +
+        "<div class=\"row\"><span>Battery cap</span><span class=\"muted\">Set on the phone</span></div></div>" +
+        "<div class=\"card\"><h2>Thermal</h2>" + switchRow("Bench mode", "benchSw", "bench", bench.enabled, false, "Lifts the 48 °C limit. Trips at 70 °C.") +
+        "<div class=\"grid\"><label class=\"f\">Warn at °C<input id=\"thW\" type=\"number\" step=\"0.5\" value=\"" + th.warn_c + "\"></label><label class=\"f\">Gate at °C<input id=\"thG\" type=\"number\" step=\"0.5\" value=\"" + th.gate_c + "\"></label></div>" +
+        "<button class=\"commit\" data-act=\"limits\">Save limits</button></div>" +
+        "<div class=\"card\"><h2>CPU</h2><label class=\"f\">Mode<select id=\"cpuMode\" data-act=\"cpu\">" + ["auto", "performance", "balanced", "eco", "off"].map(v => opt(v, cpu.requested)).join("") + "</select></label>" +
+        "<p class=\"muted\">Running: " + esc(cpu.mode) + (cpu.reason ? " (" + esc(cpu.reason) + ")" : "") + "</p><button data-act=\"cooldown\">Cool down for 5 minutes</button></div>" +
+        "<div class=\"card\"><h2>Airplane mode</h2><div class=\"grid\"><button data-act=\"air\" data-mode=\"on\">Turn on</button><button data-act=\"air\" data-mode=\"off\">Turn off</button></div>" +
+        "<p class=\"muted\">Airplane is " + (s.airplane ? "on" : "off") + ".</p><button class=\"commit\" data-act=\"rotate\">Rotate IP</button><p id=\"rotOut\" class=\"ink2\"></p></div>";
+    } catch (e) { fail("system", e); }
+  },
+
+  async tailscale() {
+    try {
+      const t = await readJSON("/v1/tailscale");
+      const row = (k, v) => "<div class=\"row\"><span>" + k + "</span><span>" + esc(v ?? "None") + "</span></div>";
+      $("tailscale").innerHTML = "<div class=\"card\"><h2>Tailscale</h2>" + row("State", t.state) + row("IP", t.ip) + row("MagicDNS", t.dns_name) +
+        row("Key expiry", t.key_expiry ? new Date(t.key_expiry).toLocaleString() : null) + row("Serve", t.serve_ok ? "Working" : "Not working") +
+        "<p class=\"muted\">Sign in and sign out from the Flippost app on the phone.</p></div>";
+    } catch (e) { fail("tailscale", e); }
+  },
+
+  async advanced() {
+    $("advanced").innerHTML = "<div class=\"card\"><h2>Service</h2><div class=\"grid\"><button data-act=\"restart\">Restart service</button><button class=\"danger\" data-act=\"reboot\">Reboot phone</button></div></div>" +
+      "<div class=\"card\"><h2>Pair another device</h2><img id=\"qr\" class=\"qr\" alt=\"QR code that opens Flippost on another device\" hidden><p id=\"qrMsg\" class=\"muted\">Loading</p></div>";
+    try {
+      const url = URL.createObjectURL(await (await read("/v1/qr")).blob());
+      const img = $("qr");
+      img.onload = () => URL.revokeObjectURL(url);
+      img.src = url; img.hidden = false; $("qrMsg").hidden = true;
+    } catch (e) { $("qrMsg").textContent = "Cannot load the QR code: " + e.message; }
+  },
+};
+
+/* ---------- Actions ---------- */
+const val = id => $(id).value;
+const reloadScreen = () => route();
+const acts = {
+  async tether(el) {
+    const on = el.checked;
+    try { await write("/v1/tether?action=" + (on ? "start" : "stop")); } catch (e) { el.checked = !on; return; }
+    poll();
+  },
+  async usb(el) {
+    const on = el.checked;
+    try { await write("/v1/usbtether/toggle?action=" + (on ? "start" : "stop")); } catch (e) { el.checked = !on; }
+  },
+  async auto(el) {
+    const on = el.checked;
+    try { await write("/v1/presets/auto", { on }); } catch (e) { el.checked = !on; }
+    reloadScreen();
+  },
+  async dual(el) {
+    const enabled = el.checked;
+    el.checked = !enabled;
+    let applyNow = true;
+    if (enabled) {
+      const c = await ask("Turn on dual band", "Dual band runs 2.4 GHz and 5 GHz together and stops Wi-Fi scanning.", [
+        { label: "Apply now (clients drop about 10 s)", value: "now", cls: "commit" }, { label: "At next start", value: "later" }, { label: "Cancel", value: null }]);
+      if (!c) return;
+      applyNow = c === "now";
+    }
+    try { await write("/v1/hotspot/dual", { enabled, apply_now: applyNow }, 40000); } catch (e) { /* toast shown */ }
+    reloadScreen();
+  },
+  async presetApply(el) { try { await write("/v1/presets/apply", { id: el.dataset.id }, 40000); toast("Preset applied."); } catch (e) { /* toast shown */ } reloadScreen(); },
+  async presetDel(el) {
+    if (!await confirmBox("Delete preset", "Delete the preset " + el.dataset.id + "?", "Delete", true)) return;
+    try { await write("/v1/presets/delete", { id: el.dataset.id }); } catch (e) { /* toast shown */ }
+    reloadScreen();
+  },
+  async presetSave() {
+    const p = { id: val("pId").trim(), name: val("pName").trim(), ssid: val("pSsid").trim(), passphrase: val("pPass"), security: val("pSec"), band: val("pBand"),
+      triggers: val("pTrig").split(",").map(x => x.trim()).filter(Boolean) };
+    try { await write("/v1/presets", p); } catch (e) { return; }
+    reloadScreen();
+  },
+  async wlSave() {
+    const ssids = val("wl").split("\n").map(x => x.trim()).filter(Boolean);
+    try { await write("/v1/hotspot/whitelist", { ssids }); toast("Allowlist saved."); } catch (e) { /* toast shown */ }
+    reloadScreen();
+  },
+  wlAdd(el) { const t = $("wl"); t.value = (t.value.trim() ? t.value.trim() + "\n" : "") + el.dataset.ssid; },
+  async scan(el) { el.disabled = true; try { await write("/v1/hotspot/scan", {}, 40000); } catch (e) { /* toast shown */ } reloadScreen(); },
+  async override() {
+    const hours = parseInt(val("ovH"), 10);
+    if (!(hours >= 0 && hours <= 24)) { toast("Hours must be 0 to 24."); return; }
+    try { await write("/v1/hotspot/override", { hours }); } catch (e) { /* toast shown */ }
+    reloadScreen();
+  },
+  async quotaSave() {
+    const body = { limit_bytes: Math.round(parseFloat(val("qGb") || "0") * 1e9), period: val("qPer"), reset_time: val("qTime"), reset_day: parseInt(val("qDay"), 10) };
+    try { await write("/v1/usage/quota", body); toast("Saved."); } catch (e) { /* toast shown */ }
+    reloadScreen();
+  },
+  async usageReset() {
+    if (!await confirmBox("Reset data used", "Set the data used this period back to zero?", "Reset", true)) return;
+    try { await write("/v1/usage/reset"); } catch (e) { /* toast shown */ }
+    reloadScreen();
+  },
+  async bench(el) {
+    const enabled = el.checked;
+    if (enabled && !await confirmBox("Turn on bench mode", "Bench mode lifts the 48 °C limit and trips at 70 °C. Use it only on a bench.", "Turn on", true)) { el.checked = false; return; }
+    try { await write("/v1/thermal/bench", { enabled }); } catch (e) { el.checked = !enabled; }
+  },
+  async limits() {
+    try { await write("/v1/thermal/limits", { warn_c: parseFloat(val("thW")), gate_c: parseFloat(val("thG")) }); toast("Limits saved."); } catch (e) { /* toast shown */ }
+    reloadScreen();
+  },
+  async cpu(el) { try { await write("/v1/cpu/mode", { mode: el.value }); } catch (e) { /* toast shown */ } reloadScreen(); },
+  async cooldown() { try { await write("/v1/cooldown"); toast("CPU cooldown on for 5 minutes."); } catch (e) { /* toast shown */ } },
+  async air(el) {
+    try { await write("/v1/airplane", { mode: el.dataset.mode }, 60000); } catch (e) { /* toast shown */ }
+    poll();
+  },
+  async rotate() {
+    if (!await confirmBox("Rotate IP", "Rotating the IP turns airplane mode on and off. Clients disconnect for up to a minute.", "Rotate IP", false)) return;
+    $("rotOut").textContent = "Rotating";
+    try {
+      const r = await write("/v1/airplane", { mode: "cycle" }, 60000);
+      $("rotOut").textContent = (r.old_ip || "unknown") + " → " + (r.new_ip || "unknown");
+    } catch (e) { $("rotOut").textContent = ""; }
+  },
+  async restart() {
+    if (!await confirmBox("Restart service", "The service restarts and is back in about 10 seconds.", "Restart", false)) return;
+    try { await write("/v1/service/restart"); toast("Restarting."); } catch (e) { /* toast shown */ }
+  },
+  async reboot() {
+    if (!await confirmBox("Reboot phone", "The phone reboots and the hotspot is down for about a minute.", "Reboot", true)) return;
+    try { await write("/v1/device/reboot"); toast("Rebooting."); } catch (e) { /* toast shown */ }
+  },
+};
+function dispatch(e) {
+  const el = e.target.closest("[data-act]");
+  if (!el) return;
+  const isInput = el.tagName === "INPUT" || el.tagName === "SELECT";
+  if ((e.type === "change") !== isInput) return;
+  acts[el.dataset.act](el);
+}
+document.addEventListener("click", dispatch);
+document.addEventListener("change", dispatch);
+
+route();
+poll();
+setInterval(poll, POLL_MS);
+setInterval(render, 1000);
+</script>
 </body>
 </html>
