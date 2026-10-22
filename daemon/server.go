@@ -61,6 +61,10 @@ type Server struct {
 	// whitelist): they read-modify-write both s.cfg fields and config.json, so
 	// concurrent POSTs would otherwise race and lose updates.
 	cfgMu sync.Mutex
+	// speed, ts and sum feed /v1/summary (summary.go); ts is wired by main.
+	speed *speedSampler
+	ts    *tailscaleClient
+	sum   summaryState
 }
 
 // clampThermal enforces the hard safety envelope on the gate: it can be retuned
@@ -100,7 +104,8 @@ func NewServer(cfg *Config, col Collector) *Server {
 	cfg.RateLimits = normalizeRateLimits(cfg.RateLimits)
 	s := &Server{cfg: cfg, col: col, mux: http.NewServeMux(), rl: newRateLimiter(),
 		pol: NewPolicyEngine(warn, gate), usage: NewUsageTracker(usagePath),
-		cpu: NewCPUController(), hs: NewHotspotController(cfg.Hotspot.SSIDWhitelist)}
+		cpu: NewCPUController(), hs: NewHotspotController(cfg.Hotspot.SSIDWhitelist),
+		speed: newSpeedSampler()}
 	// Quota: clamp at load exactly like the thermal gate above — a bad
 	// hand-edited value must never fail Validate (headless device).
 	q, err := normalizeQuota(cfg.Quota)
