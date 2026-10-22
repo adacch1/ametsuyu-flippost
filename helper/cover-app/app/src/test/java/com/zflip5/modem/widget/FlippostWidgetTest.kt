@@ -59,12 +59,14 @@ class FlippostWidgetTest {
         WidgetRefresh.cancel(ctx)
     }
 
-    // The content measures about 129 dp with real font metrics, so 130 dp is the smallest height that does not clip.
     @Test fun layoutFitsCompactSize() {
         val d = ctx.resources.displayMetrics.density
         val w = (250 * d).toInt()
-        val h = (130 * d).toInt()
+        val h = (110 * d).toInt()
         val root = LayoutInflater.from(ctx).inflate(R.layout.widget_flippost, FrameLayout(ctx), false)
+        root.findViewById<android.widget.TextView>(R.id.widget_data).text = "38 / 120 GB"
+        root.findViewById<android.widget.TextView>(R.id.widget_ip).text = "192.168.43.1"
+        root.findViewById<android.widget.TextView>(R.id.widget_temp).text = "41°C"
         root.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY))
         root.layout(0, 0, w, h)
         val rotate = root.findViewById<View>(R.id.widget_rotate)

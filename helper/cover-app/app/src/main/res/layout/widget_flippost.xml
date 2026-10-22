@@ -6,7 +6,7 @@
     android:clipToOutline="true"
     android:orientation="vertical"
     android:paddingHorizontal="10dp"
-    android:paddingVertical="8dp"
+    android:paddingVertical="4dp"
     android:background="@drawable/widget_bg">
 
     <LinearLayout
@@ -76,7 +76,7 @@
                 android:fontFamily="@font/nunito_family"
                 android:includeFontPadding="false"
                 android:paddingHorizontal="8dp"
-                android:paddingVertical="2dp"
+                android:paddingVertical="1dp"
                 android:textSize="11sp"
                 android:textStyle="bold"
                 android:textColor="#FEF7EE" />
@@ -89,7 +89,7 @@
                 android:fontFamily="@font/nunito_family"
                 android:includeFontPadding="false"
                 android:paddingHorizontal="8dp"
-                android:paddingVertical="2dp"
+                android:paddingVertical="1dp"
                 android:textSize="11sp"
                 android:textStyle="bold"
                 android:drawablePadding="5dp"
@@ -103,9 +103,8 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
             <TextView
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
                 android:fontFamily="@font/nunito_family"
                 android:letterSpacing="0.08"
                 android:text="DATA"
@@ -113,6 +112,17 @@
                 android:includeFontPadding="false"
                 android:textSize="11sp"
                 android:textStyle="bold" />
+            <ProgressBar
+                android:id="@+id/widget_bar"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="8dp"
+                android:layout_marginHorizontal="8dp"
+                android:background="@drawable/widget_bar_track"
+                android:clipToOutline="true"
+                android:max="100"
+                android:progressDrawable="@drawable/widget_bar" />
             <TextView
                 android:id="@+id/widget_data"
                 android:layout_width="wrap_content"
@@ -123,16 +133,6 @@
                 android:textColor="#9EB1CB"
                 android:textSize="12sp" />
         </LinearLayout>
-        <ProgressBar
-            android:id="@+id/widget_bar"
-            style="?android:attr/progressBarStyleHorizontal"
-            android:layout_width="match_parent"
-            android:layout_height="8dp"
-            android:layout_marginTop="2dp"
-            android:background="@drawable/widget_bar_track"
-            android:clipToOutline="true"
-            android:max="100"
-            android:progressDrawable="@drawable/widget_bar" />
     </LinearLayout>
 
     <TextView
