@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -369,5 +371,102 @@ func TestStepDualBandNoScan(t *testing.T) {
 	}
 	if got := h.Status().Paused; got != "dual_band" {
 		t.Fatalf("Paused = %q, want dual_band", got)
+	}
+}
+
+// stubStart replaces the hotspot start seams and returns the recorded calls:
+// helper modes (args[0]) and settings invocations. outs maps a helper mode to
+// its successive outputs; the last repeats. Output with STARTED raises *up.
+func stubStart(t *testing.T, outs map[string][]string, up *bool) *[]string {
+	t.Helper()
+	oh, oa, og, os_, ov := helperRun, apProbe, semRetryGap, settingsCmd, hotspotViaPath
+	t.Cleanup(func() { helperRun, apProbe, semRetryGap, settingsCmd, hotspotViaPath = oh, oa, og, os_, ov })
+	hotspotViaPath = filepath.Join(t.TempDir(), "via")
+	semRetryGap = 0
+	calls := &[]string{}
+	idx := map[string]int{}
+	helperRun = func(class string, args ...string) string {
+		mode := args[0]
+		*calls = append(*calls, mode)
+		o := outs[mode]
+		if len(o) == 0 {
+			return ""
+		}
+		i := idx[mode]
+		if i >= len(o) {
+			i = len(o) - 1
+		}
+		idx[mode]++
+		if strings.Contains(o[i], "STARTED") {
+			*up = true
+		}
+		return o[i]
+	}
+	apProbe = func() bool { return *up }
+	settingsCmd = func(name string, a ...string) string { *calls = append(*calls, strings.Join(a, " ")); return "" }
+	return calls
+}
+
+func TestStartHotspotSemFirst(t *testing.T) {
+	up := false
+	calls := stubStart(t, map[string][]string{"sem": {"RESULT=FAILED reason=sem_rejected", "RESULT=STARTED via=SemWifiManager.setWifiApEnabled"}}, &up)
+	if !startHotspot() || readHotspotVia() != "sem" {
+		t.Fatal("sem start not recorded")
+	}
+	want := []string{"get secure wifi_ap_11ax_mode_checked", "put secure wifi_ap_11ax_mode_checked 1",
+		"get global wifi_ap_11ax_mode_checked", "put global wifi_ap_11ax_mode_checked 1", "sem", "sem"}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("calls %v", *calls)
+	}
+}
+
+func TestStartHotspotFallsBackToTM(t *testing.T) {
+	up := false
+	calls := stubStart(t, map[string][]string{"sem": {"RESULT=FAILED reason=sem_rejected"}, "tm": {"RESULT=STARTED via=TetheringManager"}}, &up)
+	if !startHotspot() || readHotspotVia() != "tm" {
+		t.Fatal("tm fallback not recorded")
+	}
+	n := 0
+	for _, c := range *calls {
+		if c == "sem" {
+			n++
+		}
+	}
+	if n != 3 || (*calls)[len(*calls)-1] != "tm" {
+		t.Fatalf("calls %v", *calls)
+	}
+}
+
+func TestStartHotspotAllFail(t *testing.T) {
+	up := false
+	stubStart(t, map[string][]string{"sem": {"RESULT=FAILED reason=sem_rejected"}, "tm": {"RESULT=FAILED code=3"}}, &up)
+	if startHotspot() || readHotspotVia() != "" {
+		t.Fatal("failure reported as success")
+	}
+}
+
+func TestStartHotspotAlreadyUp(t *testing.T) {
+	up := true
+	calls := stubStart(t, map[string][]string{}, &up)
+	if !startHotspot() || len(*calls) != 0 {
+		t.Fatalf("calls %v", *calls)
+	}
+}
+
+func TestEnsureWifi6GateSkipsWhenSet(t *testing.T) {
+	up := false
+	calls := stubStart(t, nil, &up)
+	settingsCmd = func(name string, a ...string) string { *calls = append(*calls, strings.Join(a, " ")); return "1\n" }
+	ensureWifi6Gate()
+	for _, c := range *calls {
+		if strings.HasPrefix(c, "put") {
+			t.Fatalf("re-put a set gate: %v", *calls)
+		}
+	}
+}
+
+func TestWifi6FromVia(t *testing.T) {
+	if *wifi6FromVia("sem") != true || *wifi6FromVia("tm") != false || wifi6FromVia("") != nil {
+		t.Fatal("mapping")
 	}
 }

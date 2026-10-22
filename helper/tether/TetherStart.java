@@ -44,7 +44,12 @@ public final class TetherStart {
         // ieee80211ac=1 / 11axmode=1 and the AP runs 802.11ax HE80 (1200Mbps).
         // TetheringManager/ConnectivityManager both hand SoftApModeManager a null
         // config, which lands the AP on 802.11n HT40 (300Mbps).
-        if (args.length == 0 || args[0].equals("sem")) {
+        // "sem" mode: Sem only, no fallthrough, so the caller decides when to
+        // fall back. "tm" mode: TetheringManager only. No argument keeps the
+        // legacy Sem-then-TM behavior.
+        boolean semOnly = args.length > 0 && args[0].equals("sem");
+        if (args.length == 0 || semOnly) {
+            String semFail = "sem_rejected";
             try {
                 Class<?> semClass = Class.forName("com.samsung.android.wifi.SemWifiManager");
                 Object sem = ctx.getClass().getMethod("getSystemService", Class.class).invoke(ctx, semClass);
@@ -64,8 +69,13 @@ public final class TetherStart {
                 }
             } catch (Throwable t) {
                 System.out.println("NOTE sem_enable_unavailable=" + t);
+                semFail = "sem_unavailable";
             }
-            // fall through to the TetheringManager path below
+            if (semOnly) {
+                System.out.println("RESULT=FAILED reason=" + semFail);
+                System.exit(1);
+            }
+            // no argument: fall through to the TetheringManager path below
         }
 
         // "hotspot" arg: bring the AP up via WifiManager.startTetheredHotspot(cfg)

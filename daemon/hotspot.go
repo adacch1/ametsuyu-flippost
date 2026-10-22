@@ -198,7 +198,7 @@ func (h *HotspotController) SetOverride(d time.Duration) HotspotStatus {
 // and passphrase, and bounces a live AP so it takes effect (clients drop a few
 // seconds). Going dual pauses the whitelist loop (see bridgedAPUp).
 func (h *HotspotController) SetBand(band string) (HotspotStatus, error) {
-	out := runHelper("com.zflip5.tether.SetSoftApConfig", "band", band)
+	out := helperRun("com.zflip5.tether.SetSoftApConfig", "band", band)
 	if !strings.Contains(out, "RESULT=OK") {
 		return h.Status(), fmt.Errorf("set band: %s", helperResultLine(out))
 	}
@@ -423,12 +423,12 @@ func runHelper(class string, args ...string) string {
 // (helper's RESULT=FAIL reason, or "no output") so the dashboard can show
 // something more actionable than "paused".
 func scanAPs() ([]ScanAP, bool, string) {
-	out := runHelper("com.zflip5.tether.WifiScan")
+	out := helperRun("com.zflip5.tether.WifiScan")
 	aps, ok := parseScanAPs(out)
 	if !ok {
 		rearmScanning()
 		time.Sleep(5 * time.Second) // aborted/busy scans usually pass on a retry
-		out = runHelper("com.zflip5.tether.WifiScan")
+		out = helperRun("com.zflip5.tether.WifiScan")
 		if aps, ok = parseScanAPs(out); !ok {
 			return nil, false, scanFailReason(out)
 		}
@@ -493,19 +493,98 @@ func waitFor(want bool, probe func() bool, budget, interval time.Duration) bool 
 	}
 }
 
-// startHotspot reports whether the AP is UP, not merely whether the command was
-// accepted. code=5 is the framework's "already active".
-func startHotspot() bool {
-	out := runHelper("com.zflip5.tether.TetherStart")
-	if !strings.Contains(out, "RESULT=STARTED") && !strings.Contains(out, "code=5") {
-		return false
+// Seams for tests. semRetryGap spaces the Sem attempts; hotspotViaPath records
+// which start path won so the status can say whether Wi-Fi 6 is available.
+var (
+	helperRun      = runHelper
+	apProbe        = hotspotActive
+	semRetryGap    = 2 * time.Second
+	settingsCmd    = runCmd
+	hotspotViaPath = "/data/adb/zflip5-modem/hotspot-via"
+)
+
+const (
+	wifi6GateKey = "wifi_ap_11ax_mode_checked"
+	semAttempts  = 3
+)
+
+// ensureWifi6Gate sets the One UI 7 11ax gate in both settings tables. Without
+// it the Sem start runs 11axmode=0 and the AP drops to 11ac.
+func ensureWifi6Gate() {
+	for _, table := range []string{"secure", "global"} {
+		if strings.TrimSpace(settingsCmd("settings", "get", table, wifi6GateKey)) == "1" {
+			continue
+		}
+		settingsCmd("settings", "put", table, wifi6GateKey, "1")
+		log.Printf("hotspot: set %s %s=1", table, wifi6GateKey)
 	}
-	return waitFor(true, hotspotActive, hotspotSettle, hotspotPollWait)
+}
+
+// readHotspotVia returns "sem", "tm" or "" when no start path is recorded.
+func readHotspotVia() string {
+	b, err := os.ReadFile(hotspotViaPath)
+	if err != nil {
+		return ""
+	}
+	if v := strings.TrimSpace(string(b)); v == "sem" || v == "tm" {
+		return v
+	}
+	return ""
+}
+
+// wifi6FromVia maps the recorded start path to the Wi-Fi 6 flag: nil when unknown.
+func wifi6FromVia(via string) *bool {
+	var v bool
+	switch via {
+	case "sem":
+		v = true
+	case "tm":
+		v = false
+	default:
+		return nil
+	}
+	return &v
+}
+
+// startHotspot reports whether the AP is UP, not merely whether a command was
+// accepted. It tries SemWifiManager (the only 802.11ax path) up to semAttempts
+// times, then TetheringManager once, and records the winner in hotspotViaPath.
+func startHotspot() bool {
+	if apProbe() {
+		return true
+	}
+	ensureWifi6Gate()
+	via := ""
+	for i := 0; i < semAttempts && via == ""; i++ {
+		if i > 0 {
+			time.Sleep(semRetryGap)
+		}
+		out := helperRun("com.zflip5.tether.TetherStart", "sem")
+		if strings.Contains(out, "via=SemWifiManager") {
+			via = "sem"
+		} else {
+			log.Printf("hotspot sem try %d: %s", i+1, strings.TrimSpace(out))
+		}
+	}
+	if via == "" {
+		out := helperRun("com.zflip5.tether.TetherStart", "tm")
+		if strings.Contains(out, "RESULT=STARTED") {
+			via = "tm"
+			log.Printf("hotspot: Sem failed, started via TetheringManager (Wi-Fi 6 unavailable)")
+		} else {
+			log.Printf("hotspot tm fallback failed: %s", strings.TrimSpace(out))
+			return false
+		}
+	}
+	if err := os.WriteFile(hotspotViaPath, []byte(via+"\n"), 0o600); err != nil {
+		log.Printf("hotspot: record start path: %v", err)
+	}
+	return waitFor(true, apProbe, hotspotSettle, hotspotPollWait)
 }
 
 // stopHotspot reports whether the AP is actually down.
 func stopHotspot() bool {
-	if !strings.Contains(runHelper("com.zflip5.tether.TetherStart", "stop"), "RESULT=STOPPED") {
+	if !strings.Contains(helperRun("com.zflip5.tether.TetherStart", "stop"), "RESULT=STOPPED") {
 		return false
 	}
 	return !waitFor(false, hotspotActive, hotspotSettle, hotspotPollWait)

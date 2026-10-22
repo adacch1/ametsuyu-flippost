@@ -373,7 +373,7 @@ func applyPresetLive(p Preset) error {
 	if band == "" {
 		band = "5"
 	}
-	out := runHelper("com.zflip5.tether.SetSoftApConfig", "set", p.SSID, sec, p.Passphrase, band)
+	out := helperRun("com.zflip5.tether.SetSoftApConfig", "set", p.SSID, sec, p.Passphrase, band)
 	if !strings.Contains(out, "RESULT=OK") {
 		return fmt.Errorf("set softap config: %s", helperResultLine(out))
 	}
