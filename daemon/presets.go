@@ -6,7 +6,6 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"time"
 )
 
 // Hotspot presets: named SoftAP configurations (SSID / passphrase / security /
@@ -411,9 +410,7 @@ func applyPresetLive(p Preset, dual bool) error {
 		return fmt.Errorf("set softap config: %s", helperResultLine(out))
 	}
 	if apProbe() {
-		stopHotspot()
-		time.Sleep(1500 * time.Millisecond) // let the teardown land before restart
-		restartHotspotRetry()
+		bounceHotspot()
 	}
 	return nil
 }
