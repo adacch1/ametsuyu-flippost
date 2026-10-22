@@ -3,7 +3,7 @@
  "info": {
   "title": "zflip5-modem-module local API",
   "version": "1.0.0",
-  "description": "Local-only, loopback-bound, bearer-authenticated control API for a rooted Z Flip 5 used as a modem. Sensitive replies are owner-only. SMS is pull-only, redacted by default, and reachable only over the iPhone/Tailscale path (never a Discord relay). Radio and tether writes are discovery-gated and thermal-gated: 'prefer 5G' means safe prefer/recover NR, never any bypass of thermal mitigation."
+  "description": "Local-only, loopback-bound, bearer-authenticated control API for a rooted Z Flip 5 used as a modem. Sensitive replies are owner-only. Radio and tether writes are discovery-gated and thermal-gated: they never bypass thermal mitigation."
  },
  "servers": [
   {
@@ -16,7 +16,7 @@
    "bearerAuth": {
     "type": "http",
     "scheme": "bearer",
-    "description": "Scoped bearer token. Scopes: read-status, sms, radio-control. Tokens are >=256-bit, 0600 under /data/adb, independently revocable."
+    "description": "Scoped bearer token. Scopes: read-status, radio-control. Tokens are >=256-bit, 0600 under /data/adb, independently revocable."
    }
   },
   "schemas": {
@@ -36,6 +36,10 @@
      },
      "detail": {
       "type": "string"
+     },
+     "reason": {
+      "type": "string",
+      "description": "machine-readable token on every 409 and every app-only 403"
      }
     }
    },
@@ -143,56 +147,6 @@
      }
     }
    },
-   "ThermalHistory": {
-    "type": "object",
-    "description": "Minute/hour/day temperature history, sourced from the same 25 s display median /v1/status serves as temp_max_c -- never the raw safety-gate reading. Every bucket is the sample-weighted mean of the 1-minute samples that fell inside it in device-local time: hour = sum(c)/n over that hour's samples, day = sum(c)/n over that day's samples (never a mean of the hour means, so a partial hour after a restart does not get a full hour's weight). Retention: 24h of minute samples, 7d of hour buckets, 40d of day buckets.",
-    "required": [
-     "method",
-     "minutes",
-     "hours",
-     "days"
-    ],
-    "additionalProperties": false,
-    "properties": {
-     "method": {
-      "type": "string",
-      "description": "The aggregation method, in prose (see this schema's description)."
-     },
-     "minutes": {
-      "type": "array",
-      "description": "[unix_seconds, temp_c] pairs, oldest first, one per recorded minute.",
-      "items": {
-       "type": "array",
-       "prefixItems": [
-        { "type": "number", "description": "unix_seconds" },
-        { "type": "number", "description": "temp_c" }
-       ],
-       "minItems": 2,
-       "maxItems": 2
-      }
-     },
-     "hours": {
-      "type": "array",
-      "description": "Hour buckets, ascending by t.",
-      "items": { "$ref": "#/components/schemas/ThermalHistoryPoint" }
-     },
-     "days": {
-      "type": "array",
-      "description": "Day buckets, ascending by t.",
-      "items": { "$ref": "#/components/schemas/ThermalHistoryPoint" }
-     }
-    }
-   },
-   "ThermalHistoryPoint": {
-    "type": "object",
-    "required": ["t", "c", "n"],
-    "additionalProperties": false,
-    "properties": {
-     "t": { "type": "string", "description": "Local hour (\"2006-01-02T15\") or day (\"2006-01-02\") key." },
-     "c": { "type": "number", "description": "Sample-weighted mean temp_c for this bucket." },
-     "n": { "type": "integer", "description": "Number of minute samples folded into this bucket." }
-    }
-   },
    "UsageReport": {
     "type": "object",
     "required": [
@@ -262,7 +216,12 @@
      },
      "period": {
       "type": "string",
-      "enum": ["daily", "weekly", "monthly", "manual"],
+      "enum": [
+       "daily",
+       "weekly",
+       "monthly",
+       "manual"
+      ],
       "description": "Reset cadence for period_bytes/last_reset."
      },
      "reset_time": {
@@ -403,53 +362,6 @@
     }
    }
   },
-  "/v1/health": {
-   "get": {
-    "summary": "Device host CPU/RAM/temperature",
-    "security": [
-     {
-      "bearerAuth": [
-       "read-status"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "ok",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Health"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     }
-    }
-   }
-  },
-  "/v1/network": {
-   "get": {
-    "summary": "Detailed cellular service state (no IMEI/IMSI)",
-    "security": [
-     {
-      "bearerAuth": [
-       "read-status"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "ok"
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     }
-    }
-   }
-  },
   "/v1/thermal": {
    "get": {
     "summary": "Thermal gate state (sysfs+battery primary)",
@@ -477,36 +389,6 @@
     }
    }
   },
-  "/v1/thermal/history": {
-   "get": {
-    "summary": "Minute/hour/day temperature history (display-path median, never the raw gate)",
-    "security": [
-     {
-      "bearerAuth": [
-       "read-status"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "ok",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/ThermalHistory"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
   "/v1/battery": {
    "get": {
     "summary": "Battery level/temp/plugged/health",
@@ -523,60 +405,6 @@
      },
      "401": {
       "$ref": "#/components/responses/Unauthorized"
-     }
-    }
-   }
-  },
-  "/v1/sms/recent": {
-   "get": {
-    "summary": "Recent SMS (pull-only, owner's device, iPhone/Tailscale path only)",
-    "description": "Requires the sms scope, or no token when dashboard.open_reads is on. Never exposed to the Discord relay. Bodies are served verbatim on this donor phone; the masking path is compiled off via redactBodies in daemon/sms.go.",
-    "security": [
-     {
-      "bearerAuth": [
-       "sms"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "message list"
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "403": {
-      "$ref": "#/components/responses/Forbidden"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
-  "/v1/notifications/recent": {
-   "get": {
-    "summary": "Active notification shade (pull-only, owner's device)",
-    "description": "Requires the sms scope (same asset class as SMS), or no token when dashboard.open_reads is on. Reads the active shade via root dumpsys; dismissed/history notifications are never returned. Text is verbatim (redactBodies off). Never exposed to the Discord relay.",
-    "security": [
-     {
-      "bearerAuth": [
-       "sms"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "notification list"
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "403": {
-      "$ref": "#/components/responses/Forbidden"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
      }
     }
    }
@@ -624,55 +452,6 @@
      },
      "409": {
       "description": "refused: thermal gate not safe",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/v1/prefer5g": {
-   "post": {
-    "summary": "Report current allowed-network-types (NR-preference write not enabled)",
-    "security": [
-     {
-      "bearerAuth": [
-       "radio-control"
-      ]
-     }
-    ],
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "enable"
-        ],
-        "additionalProperties": false,
-        "properties": {
-         "enable": {
-          "type": "boolean"
-         }
-        }
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "preference applied via cmd phone set-allowed-network-types-for-users"
-     },
-     "403": {
-      "$ref": "#/components/responses/Forbidden"
-     },
-     "409": {
-      "description": "refused: unsafe thermal state",
       "content": {
        "application/json": {
         "schema": {
@@ -772,10 +551,32 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-         "limit_bytes": { "type": "integer", "minimum": 0, "description": "Bytes per period. 0 = no limit configured. Omit to keep the current limit; a limit-only edit never touches the period meter." },
-         "period": { "type": "string", "enum": ["daily", "weekly", "monthly", "manual"], "description": "Reset cadence. weekly always resets Monday; manual never resets on its own." },
-         "reset_time": { "type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$", "description": "Device-local time of day the period resets, HH:MM." },
-         "reset_day": { "type": "integer", "minimum": 1, "maximum": 28, "description": "Day of month the period resets (monthly only)." }
+         "limit_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bytes per period. 0 = no limit configured. Omit to keep the current limit; a limit-only edit never touches the period meter."
+         },
+         "period": {
+          "type": "string",
+          "enum": [
+           "daily",
+           "weekly",
+           "monthly",
+           "manual"
+          ],
+          "description": "Reset cadence. weekly always resets Monday; manual never resets on its own."
+         },
+         "reset_time": {
+          "type": "string",
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+          "description": "Device-local time of day the period resets, HH:MM."
+         },
+         "reset_day": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 28,
+          "description": "Day of month the period resets (monthly only)."
+         }
         }
        }
       }
@@ -897,36 +698,6 @@
     }
    }
   },
-  "/v1/bands": {
-   "get": {
-    "summary": "Allowed radio band/type report (read-only)",
-    "security": [
-     {
-      "bearerAuth": [
-       "read-status"
-      ]
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "ok",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     },
-     "401": {
-      "$ref": "#/components/responses/Unauthorized"
-     },
-     "429": {
-      "$ref": "#/components/responses/TooManyRequests"
-     }
-    }
-   }
-  },
   "/v1/cpu": {
    "get": {
     "summary": "CPU power/perf policy state + per-core telemetry",
@@ -1016,6 +787,16 @@
      },
      "400": {
       "description": "invalid ssids"
+     },
+     "409": {
+      "description": "reason dual_band: turn off dual band first",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
      }
     }
    }
@@ -1136,7 +917,14 @@
       "$ref": "#/components/responses/TooManyRequests"
      },
      "409": {
-      "description": "an airplane operation is already in progress"
+      "description": "reason busy: an airplane operation is already in progress",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
      }
     }
    }
@@ -1167,6 +955,258 @@
      },
      "429": {
       "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/summary": {
+   "get": {
+    "summary": "Everything the app home, widget and web main view need in one call, served from memory (slow_age_s above 30 means the collector is stuck)",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "summary v1",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/tailscale": {
+   "get": {
+    "summary": "Tailscale status from the LocalAPI (3 s timeout, always 200; never returns keys or a login URL)",
+    "security": [
+     {
+      "bearerAuth": [
+       "read-status"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "state, ips, dns_name, serve_ok, web_url and more",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     }
+    }
+   }
+  },
+  "/v1/tailscale/login": {
+   "post": {
+    "summary": "Start an interactive Tailscale login (app UID only)",
+    "responses": {
+     "200": {
+      "description": "state plus login_url, or state running with login_url null",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "app_only",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "409": {
+      "description": "reason needs_machine_auth or busy",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "reason localapi",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "reason not_running",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "504": {
+      "description": "reason no_login_url",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/tailscale/logout": {
+   "post": {
+    "summary": "Log Tailscale out after saving prefs (app UID only)",
+    "responses": {
+     "200": {
+      "description": "state needs_login",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "403": {
+      "description": "app_only",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "502": {
+      "description": "reason localapi",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "503": {
+      "description": "reason not_running",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/hotspot/dual": {
+   "post": {
+    "summary": "Turn bridged dual band on or off (body {\"enabled\":bool,\"apply_now\":bool}, apply_now defaults to false)",
+    "security": [
+     {
+      "bearerAuth": [
+       "radio-control"
+      ]
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "dual_band, applied (now or next_start) and hotspot status",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "bad body"
+     },
+     "401": {
+      "$ref": "#/components/responses/Unauthorized"
+     },
+     "403": {
+      "$ref": "#/components/responses/Forbidden"
+     },
+     "409": {
+      "description": "reason busy, whitelist or auto_switch; disabling is never blocked",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     },
+     "429": {
+      "$ref": "#/components/responses/TooManyRequests"
+     },
+     "502": {
+      "description": "reason helper",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/Error"
+        }
+       }
+      }
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "enabled": {
+          "type": "boolean"
+         },
+         "apply_now": {
+          "type": "boolean",
+          "default": false
+         }
+        },
+        "required": [
+         "enabled"
+        ]
+       }
+      }
      }
     }
    }

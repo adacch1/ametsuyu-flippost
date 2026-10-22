@@ -61,7 +61,9 @@ type Server struct {
 	// whitelist): they read-modify-write both s.cfg fields and config.json, so
 	// concurrent POSTs would otherwise race and lose updates.
 	cfgMu sync.Mutex
-	// speed, ts and sum feed /v1/summary (summary.go); ts is wired by main.
+	// app identifies the Flippost app by socket UID; speed, ts and sum feed
+	// /v1/summary (summary.go).
+	app   *appAuth
 	speed *speedSampler
 	ts    *tailscaleClient
 	sum   summaryState
@@ -125,6 +127,10 @@ func NewServer(cfg *Config, col Collector) *Server {
 	if cfg.Thermal.Bench {
 		s.bench.Enable()
 	}
+	s.hs.SetDualBand(cfg.Hotspot.DualBand)
+	s.presets.dual = s.hs.DualBand
+	s.app = newAppAuth()
+	s.ts = newTailscaleClient(tailscaleSock, cfg.BindPort)
 	s.syncPolicyLimits()
 	s.routes()
 	return s
@@ -244,6 +250,13 @@ func (s *Server) runHotspotAuto() {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/status", s.guard("read-status", s.handleStatus))
+	s.mux.HandleFunc("/v1/summary", s.guard("read-status", s.handleSummary))
+	s.mux.HandleFunc("/v1/tailscale", s.guard("read-status", func(w http.ResponseWriter, r *http.Request) { s.ts.handleStatus(w, r) }))
+	// Tailscale login and logout, and the open-reads/open-control switches, are
+	// owner actions for the app only: a remote browser must never reach them.
+	s.mux.HandleFunc("/v1/tailscale/login", s.guardApp(http.MethodPost, func(w http.ResponseWriter, r *http.Request) { s.ts.handleLogin(w, r) }))
+	s.mux.HandleFunc("/v1/tailscale/logout", s.guardApp(http.MethodPost, func(w http.ResponseWriter, r *http.Request) { s.ts.handleLogout(w, r) }))
+	s.mux.HandleFunc("/v1/hotspot/dual", s.guardAuth("radio-control", http.MethodPost, s.handleHotspotDual))
 	s.mux.HandleFunc("/v1/thermal", s.guard("read-status", s.handleThermal))
 	s.mux.HandleFunc("/v1/battery", s.guard("read-status", s.handleBattery))
 	s.mux.HandleFunc("/v1/usage", s.guard("read-status", s.handleUsage))
@@ -308,10 +321,10 @@ func (s *Server) routes() {
 	// be able to read to share access).
 	s.mux.HandleFunc("/v1/qr", s.guard("read-status", s.handleQR))
 	// Toggle open-reads (tokenless read-status over the tailnet). radio-control.
-	s.mux.HandleFunc("/v1/dashboard/open", s.guardAuth("radio-control", http.MethodPost, s.handleDashboardOpen))
+	s.mux.HandleFunc("/v1/dashboard/open", s.guardApp(http.MethodPost, s.handleDashboardOpen))
 	// Toggle open-control (tokenless radio-control writes). radio-control gated —
 	// to ENABLE it you still need the token once (it starts off).
-	s.mux.HandleFunc("/v1/dashboard/control", s.guardAuth("radio-control", http.MethodPost, s.handleDashboardControl))
+	s.mux.HandleFunc("/v1/dashboard/control", s.guardApp(http.MethodPost, s.handleDashboardControl))
 	// tether/cooldown/restart make their own thermal decision (stopping the
 	// hotspot or cooling down must work WHILE hot), so they take the auth-only
 	// guard; the handler makes the thermal call itself.
@@ -347,6 +360,10 @@ func (s *Server) guard(need string, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if s.app.IsApp(r) {
+			h(w, r)
 			return
 		}
 		have := s.cfg.authScope(r)
@@ -385,6 +402,10 @@ func (s *Server) guardAuth(need, method string, h http.HandlerFunc) http.Handler
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
+		if s.app.IsApp(r) {
+			h(w, r)
+			return
+		}
 		have := s.cfg.authScope(r)
 		if have == "" {
 			// Open-control mode: radio-control WRITES allowed WITHOUT a token
@@ -406,6 +427,22 @@ func (s *Server) guardAuth(need, method string, h http.HandlerFunc) http.Handler
 		}
 		if !s.rl.allow(have, s.limitFor(have)) {
 			writeErr(w, http.StatusTooManyRequests, "rate limited")
+			return
+		}
+		h(w, r)
+	}
+}
+
+// guardApp admits only the Flippost app, identified by socket UID. Tokens,
+// open-reads and open-control never satisfy it.
+func (s *Server) guardApp(method string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		if !s.app.IsApp(r) {
+			writeErrReason(w, http.StatusForbidden, "app only", "app_only")
 			return
 		}
 		h(w, r)
@@ -584,7 +621,7 @@ func (s *Server) handleAirplane(w http.ResponseWriter, r *http.Request) {
 	// Serialize airplane operations: a cycle blocks for tens of seconds, and
 	// overlapping toggles would interleave airplane on/off messily.
 	if !s.airplaneBusy.CompareAndSwap(false, true) {
-		writeErr(w, http.StatusConflict, "an airplane operation is already in progress")
+		writeErrReason(w, http.StatusConflict, "an airplane operation is already in progress", "busy")
 		return
 	}
 	defer s.airplaneBusy.Store(false)
@@ -651,9 +688,11 @@ func (s *Server) handleHotspotBand(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "band must be dual or 5")
 		return
 	}
-	st, err := s.hs.SetBand(body.Band)
+	// Deprecated alias for POST /v1/hotspot/dual; it always applies now.
+	w.Header().Set("Deprecation", "true")
+	st, _, code, reason, err := s.applyDualBand(body.Band == "dual", true)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, err.Error())
+		writeErrReason(w, code, err.Error(), reason)
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
@@ -723,12 +762,13 @@ func (s *Server) handlePresetApply(w http.ResponseWriter, r *http.Request) {
 	p, err := s.presets.Apply(body.ID)
 	if err != nil {
 		if err == errApplyBusy {
-			writeErr(w, http.StatusConflict, err.Error())
+			writeErrReason(w, http.StatusConflict, err.Error(), "busy")
 			return
 		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	s.hs.RefreshAPConfig()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"applied": p.ID, "ssid": p.SSID,
 		"hotspot": s.hs.Status(), "hotspot_presets": s.presets.statusRedacted(),
@@ -744,7 +784,14 @@ func (s *Server) handlePresetAuto(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad body")
 		return
 	}
+	s.cfgMu.Lock()
+	if body.On && s.hs.DualBand() {
+		s.cfgMu.Unlock()
+		writeErrReason(w, http.StatusConflict, errDualScan, "dual_band")
+		return
+	}
 	s.presets.SetAuto(body.On)
+	s.cfgMu.Unlock()
 	writeJSON(w, http.StatusOK, s.presets.statusRedacted())
 }
 
@@ -769,6 +816,11 @@ func (s *Server) handleHotspotWhitelist(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	s.cfgMu.Lock()
+	if len(body.SSIDs) > 0 && s.hs.DualBand() {
+		s.cfgMu.Unlock()
+		writeErrReason(w, http.StatusConflict, errDualScan, "dual_band")
+		return
+	}
 	s.hs.SetWhitelist(body.SSIDs)
 	s.cfg.Hotspot.SSIDWhitelist = body.SSIDs
 	if s.cfgPath != "" {
@@ -957,7 +1009,12 @@ func (rl *rateLimiter) allow(key string, perMin int) bool {
 	return true
 }
 
+const errDualScan = "turn off dual band first: it stops Wi-Fi scanning"
+
 func (s *Server) ListenAndServe() error {
+	s.presets.MigrateDualBand()
+	s.collectSlow()
+	go s.runSummary()
 	// Background data-usage sampler so day/week/month accrue even without
 	// hits. 15 s cadence (nextUsageWake), shortened so one sample lands just
 	// after local midnight instead of up to one interval late.
@@ -978,6 +1035,6 @@ func (s *Server) ListenAndServe() error {
 	go s.smooth.run()
 	addr := s.cfg.BindHost + ":" + itoa(s.cfg.BindPort)
 	log.Printf("zflip5-modemd listening on %s (loopback)", addr)
-	srv := &http.Server{Addr: addr, Handler: s, ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: s, ReadHeaderTimeout: 5 * time.Second, ConnContext: s.app.ConnContext}
 	return srv.ListenAndServe()
 }

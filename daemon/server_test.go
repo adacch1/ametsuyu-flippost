@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -560,5 +561,136 @@ func TestLoadConfigLegacyKeys(t *testing.T) {
 	}
 	if s := NewServer(cfg, fakeCollector{safe: true}); s.cfg.RateLimits != (RateLimits{600, 60}) || s.cfg.Hotspot.DualBand {
 		t.Fatalf("%+v", s.cfg.RateLimits)
+	}
+}
+
+func appReq(s *Server, method, path, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r.WithContext(withPeerUID(r.Context(), 10234)))
+	return w
+}
+
+func appServer(t *testing.T, radioPerMin int) *Server {
+	cfg := testCfg()
+	cfg.RateLimits.RadioPerMin = radioPerMin
+	s := NewServer(cfg, fakeCollector{safe: true})
+	s.app.read = func(string) ([]byte, error) { return []byte("com.zflip5.modem 10234 0 /x\n"), nil }
+	return s
+}
+
+func TestAppUIDSkipsTokenAndRateLimit(t *testing.T) {
+	s := appServer(t, 2)
+	for i := 0; i < 5; i++ {
+		if w := appReq(s, "POST", "/v1/cooldown", ""); w.Code != 200 {
+			t.Fatalf("call %d: %d", i, w.Code)
+		}
+	}
+	if w := appReq(s, "GET", "/v1/status", ""); w.Code != 200 {
+		t.Fatalf("app read: %d", w.Code)
+	}
+	if w := do(s, "POST", "/v1/cooldown", ""); w.Code != 401 {
+		t.Fatalf("non-app tokenless: %d", w.Code)
+	}
+}
+
+func TestGuardAppRejectsNonApp(t *testing.T) { // Review Focus 5
+	s := appServer(t, 60)
+	s.openControl.Store(true)
+	for _, p := range []string{"/v1/tailscale/login", "/v1/tailscale/logout", "/v1/dashboard/open", "/v1/dashboard/control"} {
+		if w := do(s, "POST", p, strings.Repeat("c", 64)); w.Code != 403 || !strings.Contains(w.Body.String(), `"reason":"app_only"`) {
+			t.Errorf("%s token: %d %s", p, w.Code, w.Body.String())
+		}
+		if w := do(s, "GET", p, strings.Repeat("c", 64)); w.Code != 405 {
+			t.Errorf("%s GET: %d", p, w.Code)
+		}
+		for _, uid := range []int{0, 2000} {
+			r := httptest.NewRequest("POST", p, nil)
+			w := httptest.NewRecorder()
+			s.ServeHTTP(w, r.WithContext(withPeerUID(r.Context(), uid)))
+			if w.Code != 403 {
+				t.Errorf("%s uid %d: %d", p, uid, w.Code)
+			}
+		}
+	}
+}
+
+func TestSummaryAndTailscaleRoutes(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	s.ts = newTailscaleClient(filepath.Join(t.TempDir(), "x.sock"), 18080)
+	if w := do(s, "GET", "/v1/summary", strings.Repeat("a", 64)); w.Code != 200 || !strings.Contains(w.Body.String(), `"v":1`) {
+		t.Fatalf("summary %d %s", w.Code, w.Body.String())
+	}
+	if w := do(s, "GET", "/v1/summary", ""); w.Code != 401 {
+		t.Fatalf("summary no token: %d", w.Code)
+	}
+	if w := do(s, "GET", "/v1/tailscale", strings.Repeat("a", 64)); w.Code != 200 || !strings.Contains(w.Body.String(), `"state":"not_running"`) {
+		t.Fatalf("tailscale %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHotspotBandAliasDeprecated(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	s.hs.SetWhitelist([]string{"Home"})
+	w := postJSON(s, "/v1/hotspot/band", strings.Repeat("c", 64), `{"band":"dual"}`)
+	if w.Code != 409 || w.Header().Get("Deprecation") != "true" || !strings.Contains(w.Body.String(), `"reason":"whitelist"`) {
+		t.Fatalf("%d %v %s", w.Code, w.Header(), w.Body.String())
+	}
+}
+
+func TestWhitelist409WhenDualBand(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	s.hs.SetDualBand(true)
+	if w := postJSON(s, "/v1/hotspot/whitelist", strings.Repeat("c", 64), `{"ssids":["Home"]}`); w.Code != 409 || !strings.Contains(w.Body.String(), `"reason":"dual_band"`) {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if w := postJSON(s, "/v1/hotspot/whitelist", strings.Repeat("c", 64), `{"ssids":[]}`); w.Code != 200 {
+		t.Fatalf("clearing blocked: %d", w.Code)
+	}
+}
+
+// Review Focus 3: run with -race.
+func TestDualWhitelistRace(t *testing.T) {
+	s, _, _ := dualServer(t, "RESULT=OK")
+	for i := 0; i < 50; i++ {
+		s.applyDualBand(false, false)
+		s.hs.SetWhitelist(nil)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); s.applyDualBand(true, false) }()
+		go func() {
+			defer wg.Done()
+			postJSON(s, "/v1/hotspot/whitelist", strings.Repeat("c", 64), `{"ssids":["Home"]}`)
+		}()
+		wg.Wait()
+		if s.hs.DualBand() && len(s.hs.Whitelist()) > 0 {
+			t.Fatalf("iteration %d: dual band and allowlist both on", i)
+		}
+	}
+}
+
+func TestPresetAuto409WhenDualBand(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	s.hs.SetDualBand(true)
+	if w := postJSON(s, "/v1/presets/auto", strings.Repeat("c", 64), `{"on":true}`); w.Code != 409 || !strings.Contains(w.Body.String(), `"reason":"dual_band"`) {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if w := postJSON(s, "/v1/presets/auto", strings.Repeat("c", 64), `{"on":false}`); w.Code != 200 {
+		t.Fatalf("auto off blocked: %d", w.Code)
+	}
+}
+
+func TestPresetsRejectDualBand(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	w := postJSON(s, "/v1/presets", strings.Repeat("c", 64), `{"name":"Home","ssid":"Flippost","security":"wpa2","passphrase":"12345678","band":"dual"}`)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "band must be 2, 5, or 6") {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDualRouteRadioControl(t *testing.T) {
+	s := NewServer(testCfg(), fakeCollector{safe: true})
+	if w := postJSON(s, "/v1/hotspot/dual", strings.Repeat("a", 64), `{"enabled":false}`); w.Code != 403 {
+		t.Fatalf("read token: %d", w.Code)
 	}
 }
