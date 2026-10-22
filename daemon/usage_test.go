@@ -732,3 +732,15 @@ func TestUsageBoundaryBracket(t *testing.T) {
 		t.Fatalf("NextWake right after a fired reset = %v, want > 0 (busy-loop risk)", w)
 	}
 }
+
+func TestUsageSnapshotDoesNotSample(t *testing.T) {
+	u := NewUsageTracker(filepath.Join(t.TempDir(), "u.json"))
+	calls := 0
+	u.readB = func() uint64 { calls++; return 1000 }
+	u.Sample()
+	before := calls
+	r := u.Snapshot()
+	if calls != before || r.PeriodBytes != u.Report().PeriodBytes {
+		t.Fatal("Snapshot sampled or disagrees with Report")
+	}
+}

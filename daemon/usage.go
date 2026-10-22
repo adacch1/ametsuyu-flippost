@@ -473,6 +473,17 @@ func (u *UsageTracker) Report() UsageReport {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.sampleLocked() // refresh before reporting
+	return u.reportLocked()
+}
+
+// Snapshot is Report without the sample, so it does no I/O.
+func (u *UsageTracker) Snapshot() UsageReport {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.reportLocked()
+}
+
+func (u *UsageTracker) reportLocked() UsageReport {
 	r := sumWindows(u.st.Days, u.now())
 	r.PeriodBytes = u.st.PeriodBytes
 	r.PeriodHuman = humanBytes(u.st.PeriodBytes)
