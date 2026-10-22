@@ -98,6 +98,9 @@ EOF
     [ -n "$VIA" ] && echo "$VIA" > "$DATADIR/hotspot-via"
   fi
 
+  # Native app: install or update the bundled Flippost APK when it is newer.
+  sh "$MODDIR/app-install.sh" "$MODDIR" >> "$LOG" 2>&1
+
   # The zip does not preserve the exec bit; ensure the binary is runnable.
   [ -f "$BIN" ] && chmod 0755 "$BIN"
 
@@ -110,10 +113,6 @@ EOF
     settings get global stay_on_while_plugged_in > "$DATADIR/stay-on.prev" 2>/dev/null
   fi
   settings put global stay_on_while_plugged_in 7
-
-  # Cover-screen home: keep the kiosk on the Flex Window. See coverwatch.sh for
-  # why this is a watcher rather than a home-activity declaration.
-  sh "$MODDIR/coverwatch.sh" &
 
   # Watchdog: restart the daemon if it dies. Backoff avoids a tight crash loop.
   # ZF5_MODDIR lets the daemon find the helper jar (tether/wifi-scan).
