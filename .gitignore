@@ -38,9 +38,7 @@ daemon/modemd
 # built tether helper dex shipped in module (build via tools/build-tether.sh)
 magisk/tether/tether.jar
 
-# self-hosted stack secrets + deps
-selfhost/bot/.env
-selfhost/telegram-bot/.env
+# self-hosted stack deps
 selfhost/**/node_modules/
 
 # Superpowers brainstorm companion (local mockups and session state)

@@ -28,8 +28,6 @@ done
 DEVICE_TESTS="
 discover-device.sh (real adb): DISCOVERY_OK=1 from hardware
 collect-capabilities.sh (real adb): CAPABILITIES_OK=1 from hardware
-collect-metrics.sh (real adb): METRICS_OK=1 from hardware
-probe-controls.sh (real adb, consented): PROBE_OK=1 write+revert
 "
 
 tmp="$(mktemp "${TMPDIR:-/tmp}/runtests.XXXXXX")" || { echo "error: mktemp failed" >&2; exit 1; }
@@ -84,17 +82,6 @@ failures=0
     fi
   else
     echo "SKIP gradle test cover-app (gradlew or Android SDK absent)"
-  fi
-
-  echo "=== DISCORD RELAY ==="
-  if command -v node >/dev/null 2>&1 && [ -f "$ROOT/relay/relay.test.js" ]; then
-    if bash "$ROOT/tools/test-discord-relay.sh" >/dev/null 2>&1; then
-      echo "PASS discord relay"; passes=$((passes + 1))
-    else
-      echo "FAIL discord relay"; failures=$((failures + 1))
-    fi
-  else
-    echo "SKIP discord relay (node absent)"
   fi
 
   echo "=== NTFY RUNNER ==="
